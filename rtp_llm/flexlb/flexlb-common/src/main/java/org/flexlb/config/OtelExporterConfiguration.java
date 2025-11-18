@@ -17,28 +17,28 @@ import java.util.concurrent.TimeUnit;
 @EnableConfigurationProperties(OtelExporterProperties.class)
 public class OtelExporterConfiguration {
 
-    @Bean
-    @ConditionalOnProperty(value = "trace.otel.exporter.otlp.enabled", matchIfMissing = true)
-    OtlpGrpcSpanExporter otelOtlpGrpcSpanExporter(OtelExporterProperties properties) {
-        OtlpGrpcSpanExporterBuilder builder = OtlpGrpcSpanExporter.builder();
-        String endpoint = properties.getOtlp().getEndpoint();
-        if (StringUtils.hasText(endpoint)) {
-            builder.setEndpoint(endpoint);
-        }
-        Long timeout = properties.getOtlp().getTimeout();
-        if (timeout != null) {
-            builder.setTimeout(timeout, TimeUnit.MILLISECONDS);
-        }
-        Map<String, String> headers = properties.getOtlp().getHeaders();
-        if (!headers.isEmpty()) {
-            headers.forEach(builder::addHeader);
-        }
-        return builder.build();
+  @Bean
+  @ConditionalOnProperty(value = "trace.otel.exporter.otlp.enabled", matchIfMissing = true)
+  OtlpGrpcSpanExporter otelOtlpGrpcSpanExporter(OtelExporterProperties properties) {
+    OtlpGrpcSpanExporterBuilder builder = OtlpGrpcSpanExporter.builder();
+    String endpoint = properties.getOtlp().getEndpoint();
+    if (StringUtils.hasText(endpoint)) {
+      builder.setEndpoint(endpoint);
     }
+    Long timeout = properties.getOtlp().getTimeout();
+    if (timeout != null) {
+      builder.setTimeout(timeout, TimeUnit.MILLISECONDS);
+    }
+    Map<String, String> headers = properties.getOtlp().getHeaders();
+    if (!headers.isEmpty()) {
+      headers.forEach(builder::addHeader);
+    }
+    return builder.build();
+  }
 
-    @Bean
-    @ConditionalOnProperty(value = "trace.otel.exporter.logging.enabled", matchIfMissing = true)
-    LoggingSpanExporter otelOtlpLoggingSpanExporter(OtelExporterProperties properties) {
-        return LoggingSpanExporter.create();
-    }
+  @Bean
+  @ConditionalOnProperty(value = "trace.otel.exporter.logging.enabled", matchIfMissing = true)
+  LoggingSpanExporter otelOtlpLoggingSpanExporter(OtelExporterProperties properties) {
+    return LoggingSpanExporter.create();
+  }
 }

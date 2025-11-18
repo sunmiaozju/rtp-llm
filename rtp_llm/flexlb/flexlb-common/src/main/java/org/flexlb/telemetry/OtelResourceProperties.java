@@ -7,6 +7,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties("trace.otel.resource")
 public class OtelResourceProperties {
 
-    private String roleEnv = "role";
-    private String env;
+  private String roleEnv = "role";
+  private String env;
 }

@@ -1,18 +1,18 @@
 package org.flexlb.util;
 
-public class CommonUtils {
+import lombok.AccessLevel;
+import lombok.NoArgsConstructor;
 
-    private CommonUtils() {
+@NoArgsConstructor(access = AccessLevel.PRIVATE)
+public final class CommonUtils {
 
-    }
-
-    /**
-     * Convert HTTP port to gRPC port
-     *
-     * @param httpPort http port
-     * @return gRPC port
-     */
-    public static int toGrpcPort(int httpPort) {
-        return httpPort + 1;
-    }
+  /**
+   * Convert HTTP port to gRPC port
+   *
+   * @param httpPort http port
+   * @return gRPC port
+   */
+  public static int toGrpcPort(int httpPort) {
+    return httpPort + 1;
+  }
 }

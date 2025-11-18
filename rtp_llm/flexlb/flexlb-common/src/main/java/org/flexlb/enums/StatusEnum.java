@@ -14,79 +14,86 @@ import java.util.function.Function;
 
 @Getter
 public enum StatusEnum {
-    /*--------------------------------------------------- 成功 ------------------------------------------------------*/
+  /*--------------------------------------------------- 成功 ------------------------------------------------------*/
 
-    SUCCESS(200, "Success", "Success.", FlexLBException.class),
+  SUCCESS(200, "Success", "Success.", FlexLBException.class),
 
-    /*-------------------------------------------------- 服务端错误 --------------------------------------------------*/
+  /*-------------------------------------------------- 服务端错误 --------------------------------------------------*/
 
-    INTERNAL_ERROR(500, "InternalError", "Internal server error!", FlexLBException.class),
-    NETTY_CATCH_ERROR(519, "NettyCatchError", "Netty catch error!", NettyCatchException.class),
-    JSON_MAPPER_ERROR(522, "JsonMapperError", "Json mapper error!", JsonMapperException.class),
-    READ_TIME_OUT(523, "ReadEngineTimeout", "Read Engine time out!", EngineReadTimeoutException.class),
+  INTERNAL_ERROR(500, "InternalError", "Internal server error!", FlexLBException.class),
+  NETTY_CATCH_ERROR(519, "NettyCatchError", "Netty catch error!", NettyCatchException.class),
+  JSON_MAPPER_ERROR(522, "JsonMapperError", "Json mapper error!", JsonMapperException.class),
+  READ_TIME_OUT(
+      523, "ReadEngineTimeout", "Read Engine time out!", EngineReadTimeoutException.class),
 
-    ALL(-9, "ALL", "All.", FlexLBException.class),
+  ALL(-9, "ALL", "All.", FlexLBException.class),
 
-    /*-------------------------------------------------- 可重试错误 80xx ----------------------------------------------*/
+  /*-------------------------------------------------- 可重试错误 80xx ----------------------------------------------*/
 
-    ENGINE_ABNORMAL_DISCONNECT_EXCEPTION(8000, "EngineAbnormalDisconnectException", "Engine abnormal disconnect!", EngineAbnormalDisconnectException.class),
+  ENGINE_ABNORMAL_DISCONNECT_EXCEPTION(
+      8000,
+      "EngineAbnormalDisconnectException",
+      "Engine abnormal disconnect!",
+      EngineAbnormalDisconnectException.class),
+  ;
 
-    ;
+  private final int code;
 
-    private final int code;
+  private final String name;
 
-    private final String name;
+  private final String message;
 
-    private final String message;
+  private final Class<? extends FlexLBException> exceptionClz;
 
-    private final Class<? extends FlexLBException> exceptionClz;
+  public static final Map<Integer, Function<String, FlexLBException>> statusExceptionMapper =
+      new HashMap<>();
 
-    public static final Map<Integer, Function<String, FlexLBException>> statusExceptionMapper = new HashMap<>();
-
-    static {
-        for (StatusEnum statusEnum : StatusEnum.values()) {
-            statusExceptionMapper.put(statusEnum.code, statusEnum::toException);
-        }
+  static {
+    for (StatusEnum statusEnum : StatusEnum.values()) {
+      statusExceptionMapper.put(statusEnum.code, statusEnum::toException);
     }
+  }
 
-    StatusEnum(int code, String name, String message, Class<? extends FlexLBException> exceptionClz) {
-        this.code = code;
-        this.name = name;
-        this.message = message;
-        this.exceptionClz = exceptionClz;
-    }
+  StatusEnum(int code, String name, String message, Class<? extends FlexLBException> exceptionClz) {
+    this.code = code;
+    this.name = name;
+    this.message = message;
+    this.exceptionClz = exceptionClz;
+  }
 
-    public FlexLBException toException() {
-        return toException("");
-    }
+  public FlexLBException toException() {
+    return toException("");
+  }
 
-    public FlexLBException toException(String exceptionMsg) {
-        String msg = this.message;
-        if (StringUtils.isNotBlank(exceptionMsg)) {
-            msg = this.message + ": " + exceptionMsg;
-        }
-        try {
-            return getExceptionClz().getDeclaredConstructor(int.class, String.class, String.class)
-                    .newInstance(this.code, this.name, msg);
-        } catch (Throwable e) {
-            return new FlexLBException(this.code, this.name, msg);
-        }
+  public FlexLBException toException(String exceptionMsg) {
+    String msg = this.message;
+    if (StringUtils.isNotBlank(exceptionMsg)) {
+      msg = this.message + ": " + exceptionMsg;
     }
+    try {
+      return getExceptionClz()
+          .getDeclaredConstructor(int.class, String.class, String.class)
+          .newInstance(this.code, this.name, msg);
+    } catch (Throwable e) {
+      return new FlexLBException(this.code, this.name, msg);
+    }
+  }
 
-    public FlexLBException toException(Throwable cause) {
-        return toException(null, cause);
-    }
+  public FlexLBException toException(Throwable cause) {
+    return toException(null, cause);
+  }
 
-    public FlexLBException toException(String exceptionMsg, Throwable cause) {
-        String msg = this.message;
-        if (StringUtils.isNotBlank(exceptionMsg)) {
-            msg = this.message + ": " + exceptionMsg;
-        }
-        try {
-            return getExceptionClz().getDeclaredConstructor(int.class, String.class, String.class, Throwable.class)
-                    .newInstance(this.code, this.name, msg, cause);
-        } catch (Throwable e) {
-            return new FlexLBException(this.code, this.name, msg, cause);
-        }
+  public FlexLBException toException(String exceptionMsg, Throwable cause) {
+    String msg = this.message;
+    if (StringUtils.isNotBlank(exceptionMsg)) {
+      msg = this.message + ": " + exceptionMsg;
     }
+    try {
+      return getExceptionClz()
+          .getDeclaredConstructor(int.class, String.class, String.class, Throwable.class)
+          .newInstance(this.code, this.name, msg, cause);
+    } catch (Throwable e) {
+      return new FlexLBException(this.code, this.name, msg, cause);
+    }
+  }
 }

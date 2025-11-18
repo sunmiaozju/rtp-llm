@@ -7,43 +7,41 @@ import org.flexlb.dao.route.ServiceRoute;
 import org.flexlb.trace.NoopSpanImpl;
 import org.flexlb.trace.WhaleSpan;
 
-/**
- * 请求推理上下文
- */
+/** 请求推理上下文 */
 @Data
 @Slf4j
 @ToString
 public class RequestContext {
 
-    private static final WhaleSpan NOOP_SPAN = new NoopSpanImpl();
+  private static final WhaleSpan NOOP_SPAN = new NoopSpanImpl();
 
-    //======================== Basic ========================//
+  // ======================== Basic ========================//
 
-    private String engineFramework;
+  private String engineFramework;
 
-    private String requestId = "";
+  private String requestId = "";
 
-    private String dashScopeRequestId;
+  private String dashScopeRequestId;
 
-    protected String model = "";
+  protected String model = "";
 
-    protected String physicalServiceId = "";
+  protected String physicalServiceId = "";
 
-    private boolean privateRequest;
+  private boolean privateRequest;
 
-    private Integer resBufferLength;
+  private Integer resBufferLength;
 
-    private Long reqContentLength;
+  private Long reqContentLength;
 
-    //======================== Route ========================//
+  // ======================== Route ========================//
 
-    private ServiceRoute serviceRoute;
+  private ServiceRoute serviceRoute;
 
-    //===================== trace and log ===================//
+  // ===================== trace and log ===================//
 
-    private WhaleSpan span = NOOP_SPAN;
+  private WhaleSpan span = NOOP_SPAN;
 
-    private String otlpTraceParent;
+  private String otlpTraceParent;
 
-    private String otlpTraceState;
+  private String otlpTraceState;
 }

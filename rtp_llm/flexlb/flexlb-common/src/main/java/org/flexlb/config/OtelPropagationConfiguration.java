@@ -12,8 +12,8 @@ import java.util.List;
 @Configuration
 public class OtelPropagationConfiguration {
 
-    @Bean
-    ContextPropagators otelContextPropagators(ObjectProvider<List<TextMapPropagator>> propagators) {
-        return ContextPropagators.create(W3CTraceContextPropagator.getInstance());
-    }
+  @Bean
+  ContextPropagators otelContextPropagators(ObjectProvider<List<TextMapPropagator>> propagators) {
+    return ContextPropagators.create(W3CTraceContextPropagator.getInstance());
+  }
 }

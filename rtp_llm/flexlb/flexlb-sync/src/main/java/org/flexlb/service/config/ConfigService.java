@@ -4,5 +4,5 @@ import org.flexlb.domain.balance.WhaleMasterConfig;
 
 public interface ConfigService {
 
-    WhaleMasterConfig loadBalanceConfig();
+  WhaleMasterConfig loadBalanceConfig();
 }

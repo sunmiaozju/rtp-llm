@@ -1,20 +1,17 @@
 package org.flexlb.consistency;
 
 /**
- * @author zjw
- * description:
- * date: 2025/3/20
+ * @author zjw description: date: 2025/3/20
  */
 public interface MasterElectService {
 
-    void start();
+  void start();
 
-    void offline();
+  void offline();
 
-    void destroy();
+  void destroy();
 
-    boolean isMaster();
+  boolean isMaster();
 
-    String getMasterHostIp(boolean forceSync);
-
+  String getMasterHostIp(boolean forceSync);
 }

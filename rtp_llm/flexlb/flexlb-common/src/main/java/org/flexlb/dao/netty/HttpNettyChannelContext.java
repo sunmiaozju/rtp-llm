@@ -26,59 +26,46 @@ import java.util.function.Consumer;
 @AllArgsConstructor
 public class HttpNettyChannelContext<T> {
 
-    /**
-     * 客户请求上下文
-     */
-    private RequestContext requestCtx;
-    /**
-     * 客户自定义请求
-     */
-    private Object request;
-    /**
-     * 与模型服务连接的 channel，可用于通信
-     */
-    private Channel channel;
-    /**
-     * 流式调用中与用户交互的发射器
-     */
-    private FluxSink<T> sink;
-    /**
-     * 请求模型服务的 http 响应
-     */
-    private HttpResponse httpResp;
-    /**
-     * 流式调用中，缓存模型服务的 sse 响应，直到一次事件的结束
-     */
-    private List<Byte> buffer;
+  /** 客户请求上下文 */
+  private RequestContext requestCtx;
 
-    private List<ByteData> byteDataList;
+  /** 客户自定义请求 */
+  private Object request;
 
-    private LongAdder byteDataSize;
+  /** 与模型服务连接的 channel，可用于通信 */
+  private Channel channel;
 
-    /**
-     * netty 触发 read 事件时调用的回调函数
-     */
-    private BiConsumer<HttpNettyChannelContext<T>, HttpObject> readCallback;
-    /**
-     * netty channel 连接断开的回调函数
-     */
-    private Consumer<HttpNettyChannelContext<T>> channelInactiveCallback;
-    /**
-     * netty 交互过程中抛出异常时调用的回调函数
-     */
-    private BiConsumer<HttpNettyChannelContext<T>, Throwable> errorCallback;
-    /**
-     * netty channel 增强处理回调
-     */
-    private Consumer<HttpNettyChannelContext<T>> channelEnhanceCallback;
-    /**
-     * 处理是否结束
-     */
-    private boolean finish;
+  /** 流式调用中与用户交互的发射器 */
+  private FluxSink<T> sink;
 
-    @Data
-    @AllArgsConstructor
-    public static class ByteData {
-        private byte[] data;
-    }
+  /** 请求模型服务的 http 响应 */
+  private HttpResponse httpResp;
+
+  /** 流式调用中，缓存模型服务的 sse 响应，直到一次事件的结束 */
+  private List<Byte> buffer;
+
+  private List<ByteData> byteDataList;
+
+  private LongAdder byteDataSize;
+
+  /** netty 触发 read 事件时调用的回调函数 */
+  private BiConsumer<HttpNettyChannelContext<T>, HttpObject> readCallback;
+
+  /** netty channel 连接断开的回调函数 */
+  private Consumer<HttpNettyChannelContext<T>> channelInactiveCallback;
+
+  /** netty 交互过程中抛出异常时调用的回调函数 */
+  private BiConsumer<HttpNettyChannelContext<T>, Throwable> errorCallback;
+
+  /** netty channel 增强处理回调 */
+  private Consumer<HttpNettyChannelContext<T>> channelEnhanceCallback;
+
+  /** 处理是否结束 */
+  private boolean finish;
+
+  @Data
+  @AllArgsConstructor
+  public static class ByteData {
+    private byte[] data;
+  }
 }

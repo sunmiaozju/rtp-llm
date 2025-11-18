@@ -11,22 +11,22 @@ import org.springframework.stereotype.Component;
 @Component("configService")
 public class SystemEnvConfigService implements ConfigService {
 
-    private final WhaleMasterConfig whaleMasterConfig;
+  private final WhaleMasterConfig whaleMasterConfig;
 
-    public SystemEnvConfigService() {
-        String lbConfigStr = System.getenv("WHALE_MASTER_CONFIG");
-        log.warn("WHALE_MASTER_CONFIG = {}", lbConfigStr);
-        WhaleMasterConfig config;
-        if (lbConfigStr != null) {
-            config = JsonUtils.toObject(lbConfigStr, WhaleMasterConfig.class);
-        } else {
-            config = new WhaleMasterConfig();
-        }
-        this.whaleMasterConfig = config;
+  public SystemEnvConfigService() {
+    String lbConfigStr = System.getenv("WHALE_MASTER_CONFIG");
+    log.warn("WHALE_MASTER_CONFIG = {}", lbConfigStr);
+    WhaleMasterConfig config;
+    if (lbConfigStr != null) {
+      config = JsonUtils.toObject(lbConfigStr, WhaleMasterConfig.class);
+    } else {
+      config = new WhaleMasterConfig();
     }
+    this.whaleMasterConfig = config;
+  }
 
-    @Override
-    public WhaleMasterConfig loadBalanceConfig() {
-        return whaleMasterConfig;
-    }
+  @Override
+  public WhaleMasterConfig loadBalanceConfig() {
+    return whaleMasterConfig;
+  }
 }

@@ -9,14 +9,14 @@ import org.springframework.stereotype.Component;
 @Component
 public class HealthCheckUpdater implements ShutdownListener {
 
-    public static boolean isShutDownSignalReceived = false;
+  public static boolean isShutDownSignalReceived;
 
-    public HealthCheckUpdater() {
-        GracefulShutdownService.addShutdownListener(this);
-    }
+  public HealthCheckUpdater() {
+    GracefulShutdownService.addShutdownListener(this);
+  }
 
-    @Override
-    public void beforeShutdown() {
-        isShutDownSignalReceived = true;
-    }
+  @Override
+  public void beforeShutdown() {
+    isShutDownSignalReceived = true;
+  }
 }

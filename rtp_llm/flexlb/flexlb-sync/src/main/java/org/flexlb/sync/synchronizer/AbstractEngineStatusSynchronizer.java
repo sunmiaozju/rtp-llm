@@ -18,71 +18,78 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/**
- * 引擎状态同步器
- */
+/** 引擎状态同步器 */
 public abstract class AbstractEngineStatusSynchronizer {
 
-    protected static final Logger logger = LoggerFactory.getLogger("syncLogger");
+  protected static final Logger logger = LoggerFactory.getLogger("syncLogger");
 
-    protected final WorkerAddressService workerAddressService;
+  protected final WorkerAddressService workerAddressService;
 
-    protected final EngineWorkerStatus engineWorkerStatus;
+  protected final EngineWorkerStatus engineWorkerStatus;
 
-    protected final EngineHealthReporter engineHealthReporter;
+  protected final EngineHealthReporter engineHealthReporter;
 
-    protected ScheduledThreadPoolExecutor scheduler;
+  protected ScheduledThreadPoolExecutor scheduler;
 
-    /**
-     * 引擎worker状态请求执行线程池
-     */
-    public static ExecutorService statusCheckExecutor;
+  /** 引擎worker状态请求执行线程池 */
+  public static ExecutorService statusCheckExecutor;
 
-    /**
-     * 引擎worker状态同步线程池
-     */
-    public static ExecutorService engineSyncExecutor;
+  /** 引擎worker状态同步线程池 */
+  public static ExecutorService engineSyncExecutor;
 
-    protected final ModelMetaConfig modelMetaConfig;
+  protected final ModelMetaConfig modelMetaConfig;
 
-    protected final WhaleMasterConfig whaleMasterConfig;
+  protected final WhaleMasterConfig whaleMasterConfig;
 
-    protected AbstractEngineStatusSynchronizer(WorkerAddressService workerAddressService,
-                                               EngineHealthReporter engineHealthReporter,
-                                               EngineWorkerStatus engineWorkerStatus,
-                                               ModelMetaConfig modelMetaConfig) {
-        this.workerAddressService = workerAddressService;
-        this.engineHealthReporter = engineHealthReporter;
-        this.engineWorkerStatus = engineWorkerStatus;
-        this.modelMetaConfig = modelMetaConfig;
-        int corePoolSize = 500;
-        int maximumPoolSize = 1000;
+  public AbstractEngineStatusSynchronizer(
+      WorkerAddressService workerAddressService,
+      EngineHealthReporter engineHealthReporter,
+      EngineWorkerStatus engineWorkerStatus,
+      ModelMetaConfig modelMetaConfig) {
+    this.workerAddressService = workerAddressService;
+    this.engineHealthReporter = engineHealthReporter;
+    this.engineWorkerStatus = engineWorkerStatus;
+    this.modelMetaConfig = modelMetaConfig;
+    int corePoolSize = 500;
+    int maximumPoolSize = 1000;
 
-        engineSyncExecutor = new ThreadPoolExecutor(corePoolSize, maximumPoolSize, 60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(15000), new NamedThreadFactory("engine-sync-executor"),
-                new ThreadPoolExecutor.AbortPolicy());
+    engineSyncExecutor =
+        new ThreadPoolExecutor(
+            corePoolSize,
+            maximumPoolSize,
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(15000),
+            new NamedThreadFactory("engine-sync-executor"),
+            new ThreadPoolExecutor.AbortPolicy());
 
-        statusCheckExecutor = new ThreadPoolExecutor(corePoolSize, maximumPoolSize, 60L, TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(15000), new NamedThreadFactory("status-checker-executor"),
-                new ThreadPoolExecutor.AbortPolicy());
+    statusCheckExecutor =
+        new ThreadPoolExecutor(
+            corePoolSize,
+            maximumPoolSize,
+            60L,
+            TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(15000),
+            new NamedThreadFactory("status-checker-executor"),
+            new ThreadPoolExecutor.AbortPolicy());
 
-        String masterConfigStr = System.getenv("WHALE_MASTER_CONFIG");
-        logger.warn("WHALE_MASTER_CONFIG = {}", masterConfigStr);
-        WhaleMasterConfig masterConfig;
-        if (masterConfigStr != null) {
-            masterConfig = JsonUtils.toObject(masterConfigStr, WhaleMasterConfig.class);
-        } else {
-            masterConfig = new WhaleMasterConfig();
-        }
-        this.whaleMasterConfig = masterConfig;
+    String masterConfigStr = System.getenv("WHALE_MASTER_CONFIG");
+    logger.warn("WHALE_MASTER_CONFIG = {}", masterConfigStr);
+    WhaleMasterConfig masterConfig;
+    if (masterConfigStr != null) {
+      masterConfig = JsonUtils.toObject(masterConfigStr, WhaleMasterConfig.class);
+    } else {
+      masterConfig = new WhaleMasterConfig();
     }
+    this.whaleMasterConfig = masterConfig;
+  }
 
-    protected abstract void syncEngineStatus();
+  protected abstract void syncEngineStatus();
 
-    @PreDestroy
-    public void destroy() {
-        Optional.ofNullable(scheduler).ifPresent(s -> scheduler.shutdown());
-        Optional.ofNullable(engineSyncExecutor).ifPresent(s -> engineSyncExecutor.shutdown());
-        Optional.ofNullable(statusCheckExecutor).ifPresent(s -> statusCheckExecutor.shutdown());
-    }
+  @PreDestroy
+  public void destroy() {
+    Optional.ofNullable(scheduler).ifPresent(s -> scheduler.shutdown());
+    Optional.ofNullable(engineSyncExecutor).ifPresent(s -> engineSyncExecutor.shutdown());
+    Optional.ofNullable(statusCheckExecutor).ifPresent(s -> statusCheckExecutor.shutdown());
+  }
 }

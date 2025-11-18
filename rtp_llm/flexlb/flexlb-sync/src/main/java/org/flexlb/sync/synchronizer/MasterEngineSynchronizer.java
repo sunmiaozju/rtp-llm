@@ -26,98 +26,104 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
 
-/**
- * Master 引擎状态同步器
- */
+/** Master 引擎状态同步器 */
 @Component
 public class MasterEngineSynchronizer extends AbstractEngineStatusSynchronizer {
 
-    private final List<String> modelNames = new ArrayList<>();
-    private final EngineGrpcService engineGrpcService;
-    private final CacheAwareService localKvCacheAwareManager;
-    private final long syncRequestTimeoutMs;
-    private final LongAdder syncCount = new LongAdder();
-    private final Long syncEngineStatusInterval;
+  private final List<String> modelNames = new ArrayList<>();
+  private final EngineGrpcService engineGrpcService;
+  private final CacheAwareService localKvCacheAwareManager;
+  private final long syncRequestTimeoutMs;
+  private final LongAdder syncCount = new LongAdder();
+  private final Long syncEngineStatusInterval;
 
-    public MasterEngineSynchronizer(WorkerAddressService workerAddressService,
-                                    EngineHealthReporter engineHealthReporter,
-                                    EngineWorkerStatus engineWorkerStatus,
-                                    EngineGrpcService engineGrpcService,
-                                    ModelMetaConfig modelMetaConfig,
-                                    CacheAwareService localKvCacheAwareManager) {
+  public MasterEngineSynchronizer(
+      WorkerAddressService workerAddressService,
+      EngineHealthReporter engineHealthReporter,
+      EngineWorkerStatus engineWorkerStatus,
+      EngineGrpcService engineGrpcService,
+      ModelMetaConfig modelMetaConfig,
+      CacheAwareService localKvCacheAwareManager) {
 
-        super(
-                workerAddressService,
-                engineHealthReporter,
-                engineWorkerStatus,
-                modelMetaConfig
-        );
+    super(workerAddressService, engineHealthReporter, engineWorkerStatus, modelMetaConfig);
 
-        this.engineGrpcService = engineGrpcService;
-        this.localKvCacheAwareManager = localKvCacheAwareManager;
+    this.engineGrpcService = engineGrpcService;
+    this.localKvCacheAwareManager = localKvCacheAwareManager;
 
-        this.syncEngineStatusInterval = System.getenv("SYNC_STATUS_INTERVAL") != null
-                ? Long.parseLong(System.getenv("SYNC_STATUS_INTERVAL"))
-                : 20;
-        this.syncRequestTimeoutMs = System.getenv("SYNC_REQUEST_TIMEOUT_MS") != null
-                ? Long.parseLong(System.getenv("SYNC_REQUEST_TIMEOUT_MS"))
-                : syncEngineStatusInterval;
-        this.scheduler = new ScheduledThreadPoolExecutor(5, new NamedThreadFactory("sync-status-scheduler"),
-                new ThreadPoolExecutor.AbortPolicy());
-        this.scheduler.scheduleAtFixedRate(this::syncEngineStatus, 0, syncEngineStatusInterval, TimeUnit.MILLISECONDS);
+    this.syncEngineStatusInterval =
+        System.getenv("SYNC_STATUS_INTERVAL") != null
+            ? Long.parseLong(System.getenv("SYNC_STATUS_INTERVAL"))
+            : 20;
+    this.syncRequestTimeoutMs =
+        System.getenv("SYNC_REQUEST_TIMEOUT_MS") != null
+            ? Long.parseLong(System.getenv("SYNC_REQUEST_TIMEOUT_MS"))
+            : syncEngineStatusInterval;
+    this.scheduler =
+        new ScheduledThreadPoolExecutor(
+            5,
+            new NamedThreadFactory("sync-status-scheduler"),
+            new ThreadPoolExecutor.AbortPolicy());
+    this.scheduler.scheduleAtFixedRate(
+        this::syncEngineStatus, 0, syncEngineStatusInterval, TimeUnit.MILLISECONDS);
 
-        // 环境变量获取
-        String modelConfig = System.getenv("MODEL_SERVICE_CONFIG");
-        if (StringUtils.isEmpty(modelConfig)) {
-            LoggingUtils.warn("prefill load balancer env:MODEL_CONFIG is empty");
-            throw new RuntimeException("master load balancer env:MODEL_CONFIG is empty");
-        }
-        ServiceRoute serviceRoute = JsonUtils.toObject(modelConfig, new TypeReference<ServiceRoute>() {
-        });
-        ModelMetaConfig.putServiceRoute(serviceRoute.getServiceId(), serviceRoute);
-        modelNames.add(IdUtils.getModelNameByServiceId(serviceRoute.getServiceId()));
+    // 环境变量获取
+    String modelConfig = System.getenv("MODEL_SERVICE_CONFIG");
+    if (StringUtils.isEmpty(modelConfig)) {
+      LoggingUtils.warn("prefill load balancer env:MODEL_CONFIG is empty");
+      throw new RuntimeException("master load balancer env:MODEL_CONFIG is empty");
     }
+    ServiceRoute serviceRoute = JsonUtils.toObject(modelConfig, new TypeReference<>() {});
+    ModelMetaConfig.putServiceRoute(serviceRoute.getServiceId(), serviceRoute);
+    modelNames.add(IdUtils.getModelNameByServiceId(serviceRoute.getServiceId()));
+  }
 
-    public void syncEngineStatus() {
-        syncCount.increment();
-        logger.info("====================sync engine prefill status start, times:{} =========================", syncCount.longValue());
-        logger.info("modelNames:{}", modelNames);
-        try {
-            for (String modelName : modelNames) {
-                ModelWorkerStatus modelWorkerStatus = engineWorkerStatus.getModelRoleWorkerStatusMap().get(modelName);
-                if (modelWorkerStatus == null) {
-                    modelWorkerStatus = new ModelWorkerStatus();
-                    engineWorkerStatus.getModelRoleWorkerStatusMap().put(modelName, modelWorkerStatus);
-                }
-                String serviceId = IdUtils.getServiceIdByModelName(modelName);
-                if (serviceId.isEmpty()) {
-                    logger.error("serviceId not found, serviceId:{}", serviceId);
-                }
-                ServiceRoute serviceRoute = modelMetaConfig.getServiceRoute(serviceId);
-                if (serviceRoute == null) {
-                    logger.error("serviceRoute not found");
-                    continue;
-                } else {
-                    logger.info("get serviceRoute, roleEndpoints:{}", serviceRoute.getRoleEndpoints().size());
-                }
-                List<RoleType> roleTypes = serviceRoute.getAllRoleTypes();
-                logger.info("roleTypes : {}", roleTypes);
-                for (RoleType roleType : roleTypes) {
-                    List<Endpoint> roleEndpoints = serviceRoute.getRoleEndpoints(roleType);
-                    if (roleEndpoints != null) {
-                        logger.info("get roleEndpoints by roleType : {}, get size : {}", roleType, roleEndpoints.size());
-                        engineSyncExecutor.submit(new EngineSyncRunner(
-                                modelName, modelWorkerStatus.getRoleStatusMap(roleType),
-                                workerAddressService, statusCheckExecutor, engineHealthReporter,
-                                engineGrpcService, roleType, localKvCacheAwareManager,
-                                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval));
-                    } else {
-                        logger.error("roleEndpoints is null, by roleType : {}", roleType);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.error("sync engine prefill status error", e);
+  public void syncEngineStatus() {
+    syncCount.increment();
+    logger.info(
+        "====================sync engine prefill status start, times:{} =========================",
+        syncCount.longValue());
+    logger.info("modelNames:{}", modelNames);
+    try {
+      for (String modelName : modelNames) {
+        ModelWorkerStatus modelWorkerStatus =
+            EngineWorkerStatus.MODEL_ROLE_WORKER_STATUS_MAP.get(modelName);
+        if (modelWorkerStatus == null) {
+          modelWorkerStatus = new ModelWorkerStatus();
+          EngineWorkerStatus.MODEL_ROLE_WORKER_STATUS_MAP.put(modelName, modelWorkerStatus);
         }
+        String serviceId = IdUtils.getServiceIdByModelName(modelName);
+        if (serviceId.isEmpty()) {
+          logger.error("serviceId not found, serviceId:{}", serviceId);
+        }
+        ServiceRoute serviceRoute = modelMetaConfig.getServiceRoute(serviceId);
+        if (serviceRoute == null) {
+          logger.error("serviceRoute not found");
+          continue;
+        }
+        List<RoleType> roleTypes = serviceRoute.getAllRoleTypes();
+        for (RoleType roleType : roleTypes) {
+          List<Endpoint> roleEndpoints = serviceRoute.getRoleEndpoints(roleType);
+          if (roleEndpoints != null) {
+            engineSyncExecutor.submit(
+                new EngineSyncRunner(
+                    modelName,
+                    modelWorkerStatus.getRoleStatusMap(roleType),
+                    workerAddressService,
+                    statusCheckExecutor,
+                    engineHealthReporter,
+                    engineGrpcService,
+                    roleType,
+                    localKvCacheAwareManager,
+                    syncRequestTimeoutMs,
+                    syncCount,
+                    syncEngineStatusInterval));
+          } else {
+            logger.error("roleEndpoints is null, by roleType : {}", roleType);
+          }
+        }
+      }
+    } catch (Exception e) {
+      logger.error("sync engine prefill status error", e);
     }
+  }
 }

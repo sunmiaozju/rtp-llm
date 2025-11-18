@@ -5,17 +5,14 @@ import lombok.Setter;
 import lombok.ToString;
 
 /**
- * @author zjw
- * description:
- * date: 2025/3/31
+ * @author zjw description: date: 2025/3/31
  */
 @ToString
 @Getter
 @Setter
 public class MasterChangeNotifyResp {
 
-    private boolean success;
+  private boolean success;
 
-    private String msg;
-
+  private String msg;
 }

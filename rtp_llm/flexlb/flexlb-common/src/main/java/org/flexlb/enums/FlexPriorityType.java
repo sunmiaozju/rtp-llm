@@ -7,12 +7,10 @@ package org.flexlb.enums;
  */
 public enum FlexPriorityType {
 
-    /**
-     * 不同的采样精度
-     */
-    PRECISE,
-    CRITICAL,
-    MAJOR,
-    NORMAL,
-    TRIVIAL
+  /** 不同的采样精度 */
+  PRECISE,
+  CRITICAL,
+  MAJOR,
+  NORMAL,
+  TRIVIAL
 }

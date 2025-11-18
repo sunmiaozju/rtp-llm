@@ -8,31 +8,28 @@ import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.pv.PvLogData;
 
 /**
- * @author zjw
- * description:
- * date: 2025/3/11
+ * @author zjw description: date: 2025/3/11
  */
 @Data
 public class BalanceContext {
 
-    private WhaleMasterConfig config;
+  private WhaleMasterConfig config;
 
-    private MasterRequest masterRequest;
+  private MasterRequest masterRequest;
 
-    private MasterResponse masterResponse;
+  private MasterResponse masterResponse;
 
-    private RequestContext requestContext;
+  private RequestContext requestContext;
 
-    private ServerStatus serverStatus;
+  private ServerStatus serverStatus;
 
-    private long interRequestId;
+  private long interRequestId;
 
-    private long startTime = System.currentTimeMillis();
+  private long startTime = System.currentTimeMillis();
 
-    private int workerCalcParallel = 1;
+  private int workerCalcParallel = 1;
 
-    private boolean success = true;
+  private boolean success = true;
 
-    private PvLogData pvLogData;
-
+  private PvLogData pvLogData;
 }

@@ -19,136 +19,135 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * @author zjw
- * description:
- * date: 2025/3/30
+ * @author zjw description: date: 2025/3/30
  */
 @Component
 public class LBStatusConsistencyService implements MasterElectService {
 
-    private static final Logger LOGGER = LoggerFactory.getLogger("syncConsistencyLogger");
-    public static final String MASTER_CHANGE_NOTIFY_PATH = "/rtp_llm/notify_master";
-    public static final ScheduledExecutorService scheduledExecutorService = new ScheduledThreadPoolExecutor(
-            4,
-            new NamedThreadFactory("LBStatusConsistencyService-Schedule-Thread"),
-            new ThreadPoolExecutor.AbortPolicy()
-    );
+  private static final Logger LOGGER = LoggerFactory.getLogger("syncConsistencyLogger");
+  public static final String MASTER_CHANGE_NOTIFY_PATH = "/rtp_llm/notify_master";
+  public static final ScheduledExecutorService SCHEDULED_EXECUTOR_SERVICE =
+      new ScheduledThreadPoolExecutor(
+          4,
+          new NamedThreadFactory("LBStatusConsistencyService-Schedule-Thread"),
+          new ThreadPoolExecutor.AbortPolicy());
 
-    private final MasterElectService masterElectService;
-    private LBConsistencyConfig lbConsistencyConfig;
-    private String hostIp;
-    private String serverPort;
-    private String roleId;
+  private final MasterElectService masterElectService;
+  private LBConsistencyConfig lbConsistencyConfig;
+  private String hostIp;
+  private String serverPort;
+  private String roleId;
 
-    public LBStatusConsistencyService(ZookeeperMasterElectService zookeeperMasterElectService) {
-        this.masterElectService = zookeeperMasterElectService;
-        this.init();
+  public LBStatusConsistencyService(ZookeeperMasterElectService zookeeperMasterElectService) {
+    this.masterElectService = zookeeperMasterElectService;
+    this.init();
+  }
+
+  public void init() {
+    LOGGER.warn("start init LBStatusConsistencyService.");
+    try {
+      hostIp = InetAddress.getLocalHost().getHostAddress();
+    } catch (UnknownHostException e) {
+      throw new RuntimeException(e);
     }
-
-    public void init() {
-        LOGGER.warn("start init LBStatusConsistencyService.");
-        try {
-            hostIp = InetAddress.getLocalHost().getHostAddress();
-        } catch (UnknownHostException e) {
-            throw new RuntimeException(e);
-        }
-        serverPort = System.getProperty("server.port", "7001");
-        LOGGER.info("hostIp:{}, serverPort:{}.", hostIp, serverPort);
-        roleId = System.getenv("HIPPO_ROLE");
-        if (StringUtils.isBlank(roleId)) {
-            throw new RuntimeException("HIPPO_ROLE env is blank");
-        }
-        String configStr = System.getenv("WHALE_SYNC_LB_CONSISTENCY_CONFIG");
-        LOGGER.warn("WHALE_SYNC_LB_CONSISTENCY_CONFIG = {}.", configStr);
-        if (configStr == null) {
-            lbConsistencyConfig = new LBConsistencyConfig();
-        } else {
-            lbConsistencyConfig = JsonUtils.toObject(configStr, LBConsistencyConfig.class);
-        }
-        if (!lbConsistencyConfig.isNeedConsistency()) {
-            LOGGER.warn("LBStatusConsistencyService is not need.");
-            return;
-        }
-        LOGGER.warn("start init ZookeeperMasterElectService.");
-
-        scheduledExecutorService.scheduleWithFixedDelay(this::syncLBStatusFromMaster, 1000, 500, TimeUnit.MILLISECONDS);
+    serverPort = System.getProperty("server.port", "7001");
+    LOGGER.info("hostIp:{}, serverPort:{}.", hostIp, serverPort);
+    roleId = System.getenv("HIPPO_ROLE");
+    if (StringUtils.isBlank(roleId)) {
+      throw new RuntimeException("HIPPO_ROLE env is blank");
     }
-
-    @Override
-    public void start() {
-        if (!lbConsistencyConfig.isNeedConsistency()) {
-            return;
-        }
-        this.masterElectService.start();
+    String configStr = System.getenv("WHALE_SYNC_LB_CONSISTENCY_CONFIG");
+    LOGGER.warn("WHALE_SYNC_LB_CONSISTENCY_CONFIG = {}.", configStr);
+    if (configStr == null) {
+      lbConsistencyConfig = new LBConsistencyConfig();
+    } else {
+      lbConsistencyConfig = JsonUtils.toObject(configStr, LBConsistencyConfig.class);
     }
-
-    @Override
-    public void offline() {
-        if (!lbConsistencyConfig.isNeedConsistency()) {
-            return;
-        }
-        this.masterElectService.offline();
+    if (!lbConsistencyConfig.isNeedConsistency()) {
+      LOGGER.warn("LBStatusConsistencyService is not need.");
+      return;
     }
+    LOGGER.warn("start init ZookeeperMasterElectService.");
 
-    @Override
-    public void destroy() {
-        if (!lbConsistencyConfig.isNeedConsistency()) {
-            return;
-        }
-        this.masterElectService.destroy();
-    }
+    SCHEDULED_EXECUTOR_SERVICE.scheduleWithFixedDelay(
+        this::syncLBStatusFromMaster, 1000, 500, TimeUnit.MILLISECONDS);
+  }
 
-    @Override
-    public boolean isMaster() {
-        // 如果不需要一致性控制，则直接返回true，否则判断是否是master节点
-        return !lbConsistencyConfig.isNeedConsistency() || masterElectService.isMaster();
+  @Override
+  public void start() {
+    if (!lbConsistencyConfig.isNeedConsistency()) {
+      return;
     }
+    this.masterElectService.start();
+  }
 
-    @Override
-    public String getMasterHostIp(boolean forceSync) {
-        // 如果不需要一致性控制，则直接返回本机ip
-        return !lbConsistencyConfig.isNeedConsistency() ? this.hostIp : masterElectService.getMasterHostIp(forceSync);
+  @Override
+  public void offline() {
+    if (!lbConsistencyConfig.isNeedConsistency()) {
+      return;
     }
+    this.masterElectService.offline();
+  }
 
-    public String getMasterHostIpPort() {
-        // 如果不需要一致性控制，则直接返回本机ip
-        if (!lbConsistencyConfig.isNeedConsistency()) {
-            return this.hostIp + ":" + serverPort;
-        }
-        return masterElectService.getMasterHostIp(false) + ":" + serverPort;
+  @Override
+  public void destroy() {
+    if (!lbConsistencyConfig.isNeedConsistency()) {
+      return;
     }
+    this.masterElectService.destroy();
+  }
 
-    /**
-     * 处理master变更
-     *
-     * @param req MasterChangeNotifyReq
-     * @return MasterChangeNotifyResp
-     */
-    public MasterChangeNotifyResp handleMasterChange(MasterChangeNotifyReq req) {
-        LOGGER.warn("recv MasterChangeNotifyReq:{}.", req);
-        if (!roleId.equals(req.getRoleId())) {
-            MasterChangeNotifyResp resp = new MasterChangeNotifyResp();
-            resp.setSuccess(false);
-            resp.setMsg("roleId not match this:" + roleId);
-            return resp;
-        }
-        this.getMasterHostIp(true);
-        MasterChangeNotifyResp resp = new MasterChangeNotifyResp();
-        resp.setSuccess(true);
-        return resp;
-    }
+  @Override
+  public boolean isMaster() {
+    // 如果不需要一致性控制，则直接返回true，否则判断是否是master节点
+    return !lbConsistencyConfig.isNeedConsistency() || masterElectService.isMaster();
+  }
 
-    public SyncLBStatusResp dumpLBStatus() {
-        SyncLBStatusResp resp = new SyncLBStatusResp();
-        resp.setSuccess(true);
-        // TODO 获取master status
-        return resp;
-    }
+  @Override
+  public String getMasterHostIp(boolean forceSync) {
+    // 如果不需要一致性控制，则直接返回本机ip
+    return lbConsistencyConfig.isNeedConsistency()
+        ? masterElectService.getMasterHostIp(forceSync)
+        : this.hostIp;
+  }
 
-    /**
-     * 从节点从主节点同步LB状态
-     */
-    private void syncLBStatusFromMaster() {
-        // TODO 获取master status
+  public String getMasterHostIpPort() {
+    // 如果不需要一致性控制，则直接返回本机ip
+    if (!lbConsistencyConfig.isNeedConsistency()) {
+      return this.hostIp + ":" + serverPort;
     }
+    return masterElectService.getMasterHostIp(false) + ":" + serverPort;
+  }
+
+  /**
+   * 处理master变更
+   *
+   * @param req MasterChangeNotifyReq
+   * @return MasterChangeNotifyResp
+   */
+  public MasterChangeNotifyResp handleMasterChange(MasterChangeNotifyReq req) {
+    LOGGER.warn("recv MasterChangeNotifyReq:{}.", req);
+    if (!roleId.equals(req.getRoleId())) {
+      MasterChangeNotifyResp resp = new MasterChangeNotifyResp();
+      resp.setSuccess(false);
+      resp.setMsg("roleId not match this:" + roleId);
+      return resp;
+    }
+    this.getMasterHostIp(true);
+    MasterChangeNotifyResp resp = new MasterChangeNotifyResp();
+    resp.setSuccess(true);
+    return resp;
+  }
+
+  public SyncLBStatusResp dumpLBStatus() {
+    SyncLBStatusResp resp = new SyncLBStatusResp();
+    resp.setSuccess(true);
+    // TODO 获取master status
+    return resp;
+  }
+
+  /** 从节点从主节点同步LB状态 */
+  private void syncLBStatusFromMaster() {
+    // TODO 获取master status
+  }
 }

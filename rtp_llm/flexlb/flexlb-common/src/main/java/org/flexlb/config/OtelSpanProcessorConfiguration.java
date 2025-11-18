@@ -11,9 +11,9 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(OtelProcessorProperties.class)
 public class OtelSpanProcessorConfiguration {
 
-    @Bean
-    @ConditionalOnProperty(value = "trace.otel.processor.logging.enabled")
-    public LoggingSpanProcessor otelOtlpLoggingSpanProcessor(OtelProcessorProperties properties) {
-        return LoggingSpanProcessor.create();
-    }
+  @Bean
+  @ConditionalOnProperty(value = "trace.otel.processor.logging.enabled")
+  public LoggingSpanProcessor otelOtlpLoggingSpanProcessor(OtelProcessorProperties properties) {
+    return LoggingSpanProcessor.create();
+  }
 }

@@ -19,79 +19,78 @@ import org.flexlb.dao.netty.HttpNettyChannelContext;
 @ChannelHandler.Sharable
 @Slf4j
 public class HttpNettyClientHandler extends SimpleChannelInboundHandler<HttpObject> {
-    public static final String CHANNEL_CONTEXT_ATTR_NAME = "nettyCtx";
-    private final Bootstrap bootstrap;
+  public static final String CHANNEL_CONTEXT_ATTR_NAME = "nettyCtx";
+  private final Bootstrap bootstrap;
 
-    public HttpNettyClientHandler(Bootstrap bootstrap) {
-        this.bootstrap = bootstrap;
-    }
+  public HttpNettyClientHandler(Bootstrap bootstrap) {
+    this.bootstrap = bootstrap;
+  }
 
-    /**
-     * 由 netty 发起一个连接
-     *
-     * @param host host
-     * @param port port
-     * @return 表示连接是否完成的未来
-     */
-    public ChannelFuture connect(String host, int port) {
-        return bootstrap.connect(host, port);
-    }
+  /**
+   * 由 netty 发起一个连接
+   *
+   * @param host host
+   * @param port port
+   * @return 表示连接是否完成的未来
+   */
+  public ChannelFuture connect(String host, int port) {
+    return bootstrap.connect(host, port);
+  }
 
-    public HttpNettyChannelContext getNettyChannelContext(Channel channel) {
-        return (HttpNettyChannelContext) channel.attr(AttributeKey.valueOf(CHANNEL_CONTEXT_ATTR_NAME)).get();
-    }
+  public HttpNettyChannelContext getNettyChannelContext(Channel channel) {
+    return (HttpNettyChannelContext)
+        channel.attr(AttributeKey.valueOf(CHANNEL_CONTEXT_ATTR_NAME)).get();
+  }
 
-    public void setNettyChannelContext(Channel channel, HttpNettyChannelContext nettyCtx) {
-        channel.attr(AttributeKey.valueOf(CHANNEL_CONTEXT_ATTR_NAME)).set(nettyCtx);
-    }
+  public void setNettyChannelContext(Channel channel, HttpNettyChannelContext nettyCtx) {
+    channel.attr(AttributeKey.valueOf(CHANNEL_CONTEXT_ATTR_NAME)).set(nettyCtx);
+  }
 
-    /**
-     * 在通道被关闭的时候触发
-     */
-    @Override
-    public void channelInactive(ChannelHandlerContext ctx) {
-        try {
-            HttpNettyChannelContext nettyCtx = getNettyChannelContext(ctx.channel());
-            if (nettyCtx != null && nettyCtx.getChannelInactiveCallback() != null) {
-                nettyCtx.getChannelInactiveCallback().accept(nettyCtx);
-            }
-        } catch (Throwable t) {
-            log.error("channelInactive exceptionCaught", t);
-        }
+  /** 在通道被关闭的时候触发 */
+  @Override
+  public void channelInactive(ChannelHandlerContext ctx) {
+    try {
+      HttpNettyChannelContext nettyCtx = getNettyChannelContext(ctx.channel());
+      if (nettyCtx != null && nettyCtx.getChannelInactiveCallback() != null) {
+        nettyCtx.getChannelInactiveCallback().accept(nettyCtx);
+      }
+    } catch (Throwable t) {
+      log.error("channelInactive exceptionCaught", t);
     }
+  }
 
-    @Override
-    protected void channelRead0(ChannelHandlerContext channelHandlerContext, HttpObject obj) {
-        try {
-            HttpNettyChannelContext nettyCtx = getNettyChannelContext(channelHandlerContext.channel());
-            if (nettyCtx != null && nettyCtx.getReadCallback() != null) {
-                nettyCtx.getReadCallback().accept(nettyCtx, obj);
-            }
-        } catch (Throwable t) {
-            log.error("channelRead0 exceptionCaught", t);
-        }
+  @Override
+  protected void channelRead0(ChannelHandlerContext channelHandlerContext, HttpObject obj) {
+    try {
+      HttpNettyChannelContext nettyCtx = getNettyChannelContext(channelHandlerContext.channel());
+      if (nettyCtx != null && nettyCtx.getReadCallback() != null) {
+        nettyCtx.getReadCallback().accept(nettyCtx, obj);
+      }
+    } catch (Throwable t) {
+      log.error("channelRead0 exceptionCaught", t);
     }
+  }
 
-    @Override
-    public void exceptionCaught(ChannelHandlerContext channelHandlerContext, Throwable cause) {
-        try {
-            HttpNettyChannelContext nettyCtx = getNettyChannelContext(channelHandlerContext.channel());
-            if (nettyCtx != null && nettyCtx.getErrorCallback() != null) {
-                nettyCtx.getErrorCallback().accept(nettyCtx, cause);
-            }
-        } catch (Throwable t) {
-            log.error("exceptionCaught: ", t);
-        }
+  @Override
+  public void exceptionCaught(ChannelHandlerContext channelHandlerContext, Throwable cause) {
+    try {
+      HttpNettyChannelContext nettyCtx = getNettyChannelContext(channelHandlerContext.channel());
+      if (nettyCtx != null && nettyCtx.getErrorCallback() != null) {
+        nettyCtx.getErrorCallback().accept(nettyCtx, cause);
+      }
+    } catch (Throwable t) {
+      log.error("exceptionCaught: ", t);
     }
+  }
 
-    public void channelEnhance(SocketChannel channel) {
-        try {
-            HttpNettyChannelContext nettyCtx = getNettyChannelContext(channel);
-            if (nettyCtx != null && nettyCtx.getChannelEnhanceCallback() != null) {
-                nettyCtx.getChannelEnhanceCallback().accept(nettyCtx);
-            }
-        } catch (Throwable t) {
-            log.error("enhanceChannelPipeline exceptionCaught", t);
-        }
+  public void channelEnhance(SocketChannel channel) {
+    try {
+      HttpNettyChannelContext nettyCtx = getNettyChannelContext(channel);
+      if (nettyCtx != null && nettyCtx.getChannelEnhanceCallback() != null) {
+        nettyCtx.getChannelEnhanceCallback().accept(nettyCtx);
+      }
+    } catch (Throwable t) {
+      log.error("enhanceChannelPipeline exceptionCaught", t);
     }
+  }
 }

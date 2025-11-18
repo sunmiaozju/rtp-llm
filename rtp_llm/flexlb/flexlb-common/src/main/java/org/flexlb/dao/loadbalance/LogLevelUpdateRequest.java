@@ -9,7 +9,6 @@ import org.flexlb.enums.LogLevel;
 @Setter
 public class LogLevelUpdateRequest {
 
-    @JsonProperty("log_level")
-    private LogLevel logLevel;
-
+  @JsonProperty("log_level")
+  private LogLevel logLevel;
 }

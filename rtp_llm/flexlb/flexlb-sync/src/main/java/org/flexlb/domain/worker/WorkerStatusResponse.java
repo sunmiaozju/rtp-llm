@@ -9,57 +9,54 @@ import org.flexlb.dao.master.TaskInfo;
 import java.util.List;
 
 /**
- * @author zjw
- * description:
- * date: 2025/3/10
+ * @author zjw description: date: 2025/3/10
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class WorkerStatusResponse {
 
-    @JsonProperty("role")
-    private String role;
+  @JsonProperty("role")
+  private String role;
 
-    @JsonProperty("available_concurrency")
-    private long availableConcurrency;
+  @JsonProperty("available_concurrency")
+  private long availableConcurrency;
 
-    @JsonProperty("running_query_len")
-    private long runningQueryLen;
+  @JsonProperty("running_query_len")
+  private long runningQueryLen;
 
-    @JsonProperty("waiting_query_len")
-    private long waitingQueryLen;
+  @JsonProperty("waiting_query_len")
+  private long waitingQueryLen;
 
-    @JsonProperty("running_task_info")
-    private List<TaskInfo> runningTaskInfo;
+  @JsonProperty("running_task_info")
+  private List<TaskInfo> runningTaskInfo;
 
-    @JsonProperty("finished_task_list")
-    private List<TaskInfo> finishedTaskList;
+  @JsonProperty("finished_task_list")
+  private List<TaskInfo> finishedTaskList;
 
-    @JsonProperty("status_version")
-    private Long statusVersion = 0L;
+  @JsonProperty("status_version")
+  private Long statusVersion = 0L;
 
-    @JsonProperty("cache_status")
-    private CacheStatus cacheStatus;
+  @JsonProperty("cache_status")
+  private CacheStatus cacheStatus;
 
-    @JsonProperty("step_latency_ms")
-    private double stepLatencyMs;
+  @JsonProperty("step_latency_ms")
+  private double stepLatencyMs;
 
-    @JsonProperty("iterate_count")
-    private long iterateCount;
+  @JsonProperty("iterate_count")
+  private long iterateCount;
 
-    @JsonProperty("dpSize")
-    private long dpSize;
+  @JsonProperty("dpSize")
+  private long dpSize;
 
-    @JsonProperty("tpSize")
-    private long tpSize;
+  @JsonProperty("tpSize")
+  private long tpSize;
 
-    @JsonProperty("alive")
-    private boolean alive;
+  @JsonProperty("alive")
+  private boolean alive;
 
-    @JsonProperty("version")
-    private long version;
+  @JsonProperty("version")
+  private long version;
 
-    @JsonProperty("message")
-    private String message;
-
+  @JsonProperty("message")
+  private String message;
 }

@@ -5,13 +5,11 @@ import org.flexlb.dao.route.RoleType;
 import org.flexlb.domain.balance.BalanceContext;
 
 /**
- * @author zjw
- * description:
- * date: 2025/3/12
+ * @author zjw description: date: 2025/3/12
  */
 public interface LoadBalancer {
 
-    ServerStatus select(BalanceContext context, RoleType roleType, String group);
+  ServerStatus select(BalanceContext context, RoleType roleType, String group);
 
-    void releaseLocalCache(String modelName, String ip, Long interRequestId);
+  void releaseLocalCache(String modelName, String ip, Long interRequestId);
 }

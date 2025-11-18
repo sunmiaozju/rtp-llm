@@ -6,29 +6,29 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public interface WhaleSpan {
-    void startSpan(Map<String, String> carrier);
+  void startSpan(Map<String, String> carrier);
 
-    Scope makeCurrent();
+  Scope makeCurrent();
 
-    void endSpan();
+  void endSpan();
 
-    void endSpan(long timestamp, TimeUnit unit);
+  void endSpan(long timestamp, TimeUnit unit);
 
-    void setAttribute(String key, String value);
+  void setAttribute(String key, String value);
 
-    void addEvent(String name);
+  void addEvent(String name);
 
-    void addEvent(String name, Map<String, Object> attributes);
+  void addEvent(String name, Map<String, Object> attributes);
 
-    void recordException(Throwable exception);
+  void recordException(Throwable exception);
 
-    void setStatus(String statusCode);
+  void setStatus(String statusCode);
 
-    void addAttributeOfEvent(String key);
+  void addAttributeOfEvent(String key);
 
-    void addAttributeOfEvent(String key, Object value);
+  void addAttributeOfEvent(String key, Object value);
 
-    void pushOutUnSubmittedAttributes();
+  void pushOutUnSubmittedAttributes();
 
-    String getTraceId();
+  String getTraceId();
 }

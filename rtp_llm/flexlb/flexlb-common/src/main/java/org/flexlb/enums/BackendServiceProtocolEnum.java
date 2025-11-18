@@ -4,20 +4,19 @@ import lombok.Getter;
 
 @Getter
 public enum BackendServiceProtocolEnum {
+  HTTP("http"),
 
-    HTTP("http"),
+  HTTPS("https"),
 
-    HTTPS("https"),
+  WS("ws"),
 
-    WS("ws"),
+  WSS("wss"),
 
-    WSS("wss"),
+  GRPC("grpc");
 
-    GRPC("grpc");
+  private final String name;
 
-    private final String name;
-
-    BackendServiceProtocolEnum(String name) {
-        this.name = name;
-    }
+  BackendServiceProtocolEnum(String name) {
+    this.name = name;
+  }
 }

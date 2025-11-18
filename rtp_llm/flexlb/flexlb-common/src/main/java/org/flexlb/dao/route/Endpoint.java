@@ -8,15 +8,15 @@ import lombok.Data;
 @Data
 public class Endpoint {
 
-    @JsonProperty("type")
-    private String type;
+  @JsonProperty("type")
+  private String type;
 
-    @JsonProperty("address")
-    private String address;
+  @JsonProperty("address")
+  private String address;
 
-    @JsonProperty("protocol")
-    private String protocol;
+  @JsonProperty("protocol")
+  private String protocol;
 
-    @JsonProperty("path")
-    private String path;
+  @JsonProperty("path")
+  private String path;
 }

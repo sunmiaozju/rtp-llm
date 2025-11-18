@@ -5,9 +5,9 @@ import io.opentelemetry.sdk.trace.export.SpanExporter;
 
 public interface SpanProcessorProvider {
 
-    /**
-     * @param spanExporter span exporter
-     * @return converted span processor
-     */
-    SpanProcessor toSpanProcessor(SpanExporter spanExporter);
+  /**
+   * @param spanExporter span exporter
+   * @return converted span processor
+   */
+  SpanProcessor toSpanProcessor(SpanExporter spanExporter);
 }
