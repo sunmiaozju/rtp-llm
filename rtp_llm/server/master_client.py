@@ -22,10 +22,14 @@ class MasterClient:
         if self._session is None or self._session.closed:
             timeout = ClientTimeout(total=0.5)
             connector = aiohttp.TCPConnector(
-                limit=self.max_connect_pool_size,  # con pool size
-                limit_per_host=30,  # limit
-                keepalive_timeout=30,
+                limit=self.max_connect_pool_size,
+                limit_per_host=100,
+                keepalive_timeout=300,
                 enable_cleanup_closed=True,
+                ttl_dns_cache=600,  # DNS缓存10分钟
+                use_dns_cache=True,  # 启用DNS缓存
+                force_close=False,  # 不强制关闭连接
+                resolver=aiohttp.AsyncResolver(ttl_dns_cache=600),
             )
             self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
@@ -73,8 +77,14 @@ class MasterClient:
         # connect to master using long connection
         try:
             session = await self._get_session()
+            request_headers = {
+                **headers, 
+                "Connection": "keep-alive",
+                "Keep-Alive": "timeout=300, max=1000"
+            }
+            
             async with session.post(
-                url, data=json.dumps(payload), headers=headers
+                url, data=json.dumps(payload), headers=request_headers
             ) as response:
                 if response.status != 200:
                     route_logger.error(
