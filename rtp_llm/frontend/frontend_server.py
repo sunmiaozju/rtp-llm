@@ -10,7 +10,6 @@ from fastapi.responses import ORJSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from rtp_llm.access_logger.access_logger import AccessLogger
-from rtp_llm.config.generate_config import RoleType
 from rtp_llm.config.py_config_modules import StaticConfig
 from rtp_llm.config.task_type import TaskType
 from rtp_llm.frontend.frontend_worker import FrontendWorker, TokenizerEncodeResponse
@@ -36,7 +35,7 @@ class FrontendServer(object):
     def __init__(
         self, separated_frontend: bool = False, rank_id: int = 0, server_id: int = 0
     ):
-        self._access_logger = AccessLogger()
+        self._access_logger = AccessLogger(rank_id, server_id)
         self._frontend_worker = None
         self._openai_endpoint = None
         self.thread_lock_ = threading.Lock()
