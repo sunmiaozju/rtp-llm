@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import List, Optional, Tuple
@@ -13,27 +14,36 @@ route_logger = logging.getLogger("route_logger")
 
 
 class MasterClient:
-    def __init__(self, max_connect_pool_size=1000):
-        self.max_connect_pool_size = max_connect_pool_size
+    def __init__(self):
+        self.timeout = ClientTimeout(total=0.5)
+        self.connector_config = {
+            'limit': 100,
+            'limit_per_host': 100,
+            'keepalive_timeout': 600,
+            'force_close': False,
+            'enable_cleanup_closed': True,
+            'use_dns_cache': True,
+            'ttl_dns_cache': 600,
+        }
         self._session = None
+        self._session_lock = asyncio.Lock()
 
-    async def _get_session(self):
-        """获取或创建HTTP session"""
-        if self._session is None or self._session.closed:
-            timeout = ClientTimeout(total=0.5)
-            connector = aiohttp.TCPConnector(
-                limit=self.max_connect_pool_size,  # con pool size
-                limit_per_host=30,  # limit
-                keepalive_timeout=30,
-                enable_cleanup_closed=True,
-            )
-            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+    async def get_session(self):
+        """获取session"""
+        if self._session is not None and not self._session.closed:
+            return self._session
+
+        async with self._session_lock:
+            if self._session is None or self._session.closed:
+                # 如果存在，清理旧的session
+                if self._session:
+                    await self._session.close()
+
+                # 创建新的session
+                connector = aiohttp.TCPConnector(**self.connector_config)
+                self._session = aiohttp.ClientSession(timeout=self.timeout, connector=connector)
+
         return self._session
-
-    async def close(self):
-        """关闭HTTP session"""
-        if self._session and not self._session.closed:
-            await self._session.close()
 
     async def get_backend_role_addrs(
         self,
@@ -72,10 +82,9 @@ class MasterClient:
 
         # connect to master using long connection
         try:
-            session = await self._get_session()
-            async with session.post(
-                url, data=json.dumps(payload), headers=headers
-            ) as response:
+            session = await self.get_session()
+            data = json.dumps(payload)
+            async with session.post(url, data=data, headers=headers) as response:
                 if response.status != 200:
                     route_logger.error(
                         f"Failed to get master response from {master_addr}, http status: {response.status}"
