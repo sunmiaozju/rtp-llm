@@ -237,6 +237,7 @@ class EnhancedMasterClient:
                     # 解析响应
                     try:
                         result = await response.json()
+                        route_logger.info(f"[{request_id}] Response: {result}")
                     except Exception as e:
                         timer.stage_end("process_response")
                         route_logger.error(f"[{request_id}] JSON decode error: {e}")
