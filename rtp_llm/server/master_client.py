@@ -27,8 +27,6 @@ class MasterClient:
             'resolver': aiohttp.resolver.AsyncResolver(),  # 异步DNS解析器
             'ttl_dns_cache': 600,             # DNS缓存超时
             'use_dns_cache': True,            # 启用DNS缓存
-            'sock_read': 65536,             # socket读取缓冲区大小
-            'sock_connect': 30,             # socket连接超时
         }
         self._session = None
         self._loop = self._create_optimized_event_loop()
