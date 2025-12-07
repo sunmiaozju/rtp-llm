@@ -15,7 +15,7 @@ route_logger = logging.getLogger("route_logger")
 
 class MasterClient:
     def __init__(self):
-        self.timeout = ClientTimeout(total=0.5)
+        self.timeout_total = 0.5  # Store timeout value, create ClientTimeout when needed
         # 专门为RTP-LLM服务通信优化的连接器配置
         self.connector_config = {
             'limit': 300,                    # 总连接池大小（支持更高并发）
@@ -142,7 +142,7 @@ class MasterClient:
 
                 # 创建专门优化的HTTP会话
                 self._session = aiohttp.ClientSession(
-                    timeout=self.timeout,
+                    timeout=ClientTimeout(total=self.timeout_total),
                     connector=connector,
                     loop=target_loop,
                     # RTP-LLM服务通信专用优化
