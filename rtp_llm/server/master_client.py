@@ -17,6 +17,10 @@ from rtp_llm.server.worker_status import ScheduleMeta
 route_logger = logging.getLogger("route_logger")
 
 
+def slow_callback_detector(loop, context):
+    """检测慢回调"""
+    print(f"Slow callback detected: {context}")
+
 class MasterClient:
     def __init__(self):
         # 线程池配置
@@ -191,6 +195,8 @@ class MasterClient:
             # 配置日志
             logging.basicConfig(level=logging.DEBUG)
             logging.getLogger('asyncio').setLevel(logging.DEBUG)
+            loop.slow_callback_duration = 0.1  # 100ms
+            loop.set_exception_handler(slow_callback_detector)
 
             # 在线程池中执行同步请求
             result, error_msg = await loop.run_in_executor(
