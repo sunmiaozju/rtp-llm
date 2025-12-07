@@ -19,9 +19,8 @@ class MasterClient:
     async def _get_session(self):
         """获取或创建HTTP session"""
         if self._session is None or self._session.closed:
-            timeout = ClientTimeout(total=0.5)
             # 不使用连接器，让aiohttp使用默认的单次连接模式
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession()
         return self._session
 
     async def close(self):
