@@ -33,6 +33,14 @@ class BackendRPCServerVisitor:
         self.master_client = MasterClient()
         self.separated_frontend = separated_frontend
 
+    async def __aenter__(self):
+        """异步上下文管理器入口"""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """异步上下文管理器退出，确保资源清理"""
+        await self.master_client.close()
+
     @staticmethod
     def get_backend_role_list(
         config: GptInitModelParameters, host_args: HostServiceArgs
@@ -83,15 +91,13 @@ class BackendRPCServerVisitor:
 
         try:
             # TODO(yinzhi): support debug
-            role_addrs, inter_request_id = (
-                self.master_client.get_backend_role_addrs(
-                    master_addr=master_addr,
-                    block_cache_keys=block_cache_keys,
-                    seq_len=input.prompt_length,
-                    debug=False,
-                    generate_timeout=input.generate_config.ttft_timeout_ms,
-                    request_priority=input.generate_config.traffic_reject_priority,
-                )
+            role_addrs, inter_request_id = await self.master_client.get_backend_role_addrs(
+                master_addr=master_addr,
+                block_cache_keys=block_cache_keys,
+                seq_len=input.prompt_length,
+                debug=False,
+                generate_timeout=input.generate_config.ttft_timeout_ms,
+                request_priority=input.generate_config.traffic_reject_priority,
             )
         except BaseException as e:
             exception_json = format_exception(e)

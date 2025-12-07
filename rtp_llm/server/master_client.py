@@ -1,8 +1,8 @@
-import json
 import logging
+import socket
 from typing import List, Optional, Tuple
 
-import requests
+import aiohttp
 
 from rtp_llm.config.exceptions import ExceptionType, FtRuntimeException
 from rtp_llm.config.generate_config import RoleAddr, RoleType
@@ -13,9 +13,40 @@ route_logger = logging.getLogger("route_logger")
 
 class MasterClient:
     def __init__(self):
-        pass
+        # 创建高度优化的连接器
+        self.connector = aiohttp.TCPConnector(
+            # 强制 IPv4，避免 IPv6 回退延迟
+            family=socket.AF_INET,
 
-    def get_backend_role_addrs(
+            # DNS 优化 - 使用系统 DNS 而不是 aiodns
+            use_dns_cache=True,
+            ttl_dns_cache=60,
+
+            # 连接池优化
+            limit=50,
+            limit_per_host=10,
+            keepalive_timeout=10,
+            enable_cleanup_closed=True,
+
+            # 禁用 SSL 相关检查
+            ssl=False,
+
+            # 连接时间优化
+            sock_connect=0.2,  # 缩短连接超时
+            sock_read=0.5,
+        )
+
+        # 创建长连接 session
+        self.session = aiohttp.ClientSession(
+            connector=self.connector,
+            timeout=aiohttp.ClientTimeout(total=1.0)  # 默认总超时 1 秒
+        )
+
+    async def close(self):
+        """关闭连接"""
+        await self.session.close()
+
+    async def get_backend_role_addrs(
         self,
         master_addr: Optional[str],
         block_cache_keys: list[int],
@@ -28,46 +59,42 @@ class MasterClient:
         # get master address
         if not master_addr:
             return None, inter_request_id
-        payload = {}
-        # prepare request to master
-        url = "http://" + master_addr + "/rtp_llm/schedule"
+        url = f"http://{master_addr}/rtp_llm/schedule"
+        payload = {
+            "model": "engine_service",
+            "block_cache_keys": block_cache_keys,
+            "seq_len": seq_len,
+            "debug": debug,
+            "request_priority": request_priority,
+        }
         if generate_timeout != -1:
-            payload = {
-                "model": "engine_service",
-                "block_cache_keys": block_cache_keys,
-                "seq_len": seq_len,
-                "debug": debug,
-                "generate_timeout": generate_timeout,
-                "request_priority": request_priority,
-            }
-        else:
-            payload = {
-                "model": "engine_service",
-                "block_cache_keys": block_cache_keys,
-                "seq_len": seq_len,
-                "debug": debug,
-                "request_priority": request_priority,
-            }
-        headers = {"Content-Type": "application/json"}
+            payload["generate_timeout"] = generate_timeout
 
-        # connect to master using new session for each request (no connection pooling)
         try:
-            # 每次请求都创建新的session，完全禁用连接复用
-            with requests.Session() as session:
-                response = session.post(
-                    url,
-                    data=json.dumps(payload),
-                    headers=headers,
-                    timeout=0.5  # 设置超时时间
-                )
-                if response.status_code != 200:
+            # 使用非常短的超时配置
+            timeout = aiohttp.ClientTimeout(
+                total=0.8,        # 总超时 800ms
+                connect=0.2,      # 连接超时 200ms
+                sock_connect=0.15, # Socket 连接 150ms
+                sock_read=0.3,    # 读取超时 300ms
+            )
+
+            async with self.session.post(
+                url,
+                json=payload,
+                timeout=timeout,
+                headers={"Connection": "keep-alive"}  # 明确启用 keep-alive
+            ) as response:
+                if response.status != 200:
                     route_logger.error(
-                        f"Failed to get master response from {master_addr}, http status: {response.status_code}"
+                        f"Failed to get master response from {master_addr}, http status: {response.status}"
                     )
                     return None, inter_request_id
-                result = response.json()
+
+                result = await response.json()
+
         except Exception as e:
-            route_logger.error(f"Failed to query to master at {master_addr}: {type(e).__name__}: {e}")
+            route_logger.error(f"Failed to query master at {master_addr}: {type(e).__name__}: {e}")
             return None, inter_request_id
 
         # check response
