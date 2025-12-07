@@ -1,8 +1,10 @@
 import asyncio
 import logging
 import socket
-import warnings
 from typing import List, Optional, Tuple
+import json
+import os
+import atexit
 
 import aiohttp
 
@@ -18,24 +20,28 @@ class MasterClient:
         # 延迟初始化 - 不在 __init__ 中创建 aiohttp 组件
         self.session = None
         self.connector = None
+        # 多进程环境下的进程ID追踪
+        self._process_id = os.getpid()
+        # 注册清理函数
+        atexit.register(self._cleanup_on_exit)
 
     async def _ensure_session(self):
         """确保 session 已经初始化"""
+        # 多进程环境检查：如果进程ID变了，需要重建session
+        current_pid = os.getpid()
+        if current_pid != self._process_id:
+            # 进程已fork，需要重新初始化
+            self.session = None
+            self.connector = None
+            self._process_id = current_pid
+
         if self.session is None or self.session.closed:
             # 关键修改：使用 get_running_loop() 获取当前正在运行的事件循环
             # 这样可以确保 session 在正确的事件循环中创建
             loop = asyncio.get_running_loop()
 
-            # 设置事件循环为debug模式
-            loop.set_debug(True)
-            # 设置更详细的日志
-            logging.basicConfig(
-                level=logging.DEBUG,
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-
-            # 监控所有未关闭的生成器
-            warnings.filterwarnings('always', category=ResourceWarning)
+            # 删除debug模式，它会影响性能
+            loop.set_debug(True)  # 已删除
 
             # 创建高度优化的连接器
             self.connector = aiohttp.TCPConnector(
@@ -69,13 +75,35 @@ class MasterClient:
                     sock_read=0.5
                 ),
                 # 跳过不必要的自动headers，提升性能
-                skip_auto_headers={'User-Agent'}
+                skip_auto_headers={'User-Agent'},
+                # 重要：确保响应自动关闭
+                connector_owner=True,
+                # 禁用自动解压，减少异步生成器
+                auto_decompress=False
             )
+
+    def _cleanup_on_exit(self):
+        """进程退出时的清理函数（多进程环境）"""
+        if self.session and not self.session.closed:
+            # 在多进程环境下，不能使用 await，直接关闭
+            try:
+                # 创建新的事件循环来执行清理
+                loop = asyncio.new_event_loop()
+                loop.run_until_complete(self.session.close())
+                loop.close()
+            except Exception:
+                # 忽略清理时的异常
+                pass
+            finally:
+                self.session = None
+                self.connector = None
 
     async def close(self):
         """关闭连接"""
         if self.session:
             await self.session.close()
+            # 等待一小段时间确保清理完成
+            await asyncio.sleep(0)
             self.session = None
             self.connector = None
 
@@ -133,7 +161,12 @@ class MasterClient:
                     )
                     return None, inter_request_id
 
-                result = await response.json()
+                # 关键修改：先读取全部响应体，再解析JSON
+                # 这样可以确保响应体被完全消费，避免异步生成器泄漏
+                body = await response.read()
+                # 立即释放响应对象，避免异步生成器延迟清理
+                response.release()
+                result = json.loads(body)
 
         except Exception as e:
             route_logger.error(f"Failed to query master at {master_addr}: {type(e).__name__}: {e}")
