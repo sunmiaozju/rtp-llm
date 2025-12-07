@@ -24,10 +24,10 @@ class MasterClient:
             connector = aiohttp.TCPConnector(
                 limit=self.max_connect_pool_size,  # con pool size
                 limit_per_host=30,  # limit
-                # keepalive_timeout=30,
+                force_close=True,
                 enable_cleanup_closed=True,
             )
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._session
 
     async def close(self):
