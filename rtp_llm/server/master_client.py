@@ -3,7 +3,6 @@ import logging
 from typing import List, Optional, Tuple
 
 import aiohttp
-from aiohttp import ClientTimeout
 
 from rtp_llm.config.exceptions import ExceptionType, FtRuntimeException
 from rtp_llm.config.generate_config import RoleAddr, RoleType
@@ -14,19 +13,7 @@ route_logger = logging.getLogger("route_logger")
 
 class MasterClient:
     def __init__(self):
-        self._session = None
-
-    async def _get_session(self):
-        """获取或创建HTTP session"""
-        if self._session is None or self._session.closed:
-            # 不使用连接器，让aiohttp使用默认的单次连接模式
-            self._session = aiohttp.ClientSession()
-        return self._session
-
-    async def close(self):
-        """关闭HTTP session"""
-        if self._session and not self._session.closed:
-            await self._session.close()
+        pass
 
     async def get_backend_role_addrs(
         self,
@@ -63,18 +50,18 @@ class MasterClient:
             }
         headers = {"Content-Type": "application/json"}
 
-        # connect to master using long connection
+        # connect to master using new session for each request
         try:
-            session = await self._get_session()
-            async with session.post(
-                url, data=json.dumps(payload), headers=headers
-            ) as response:
-                if response.status != 200:
-                    route_logger.error(
-                        f"Failed to get master response from {master_addr}, http status: {response.status}"
-                    )
-                    return None, inter_request_id
-                result = await response.json()
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    url, data=json.dumps(payload), headers=headers
+                ) as response:
+                    if response.status != 200:
+                        route_logger.error(
+                            f"Failed to get master response from {master_addr}, http status: {response.status}"
+                        )
+                        return None, inter_request_id
+                    result = await response.json()
         except Exception as e:
             route_logger.error(f"Failed to query to master at {master_addr}: {type(e).__name__}: {e}")
             return None, inter_request_id
