@@ -2,7 +2,7 @@ import json
 import logging
 from typing import List, Optional, Tuple
 
-import aiohttp
+import requests
 
 from rtp_llm.config.exceptions import ExceptionType, FtRuntimeException
 from rtp_llm.config.generate_config import RoleAddr, RoleType
@@ -15,7 +15,7 @@ class MasterClient:
     def __init__(self):
         pass
 
-    async def get_backend_role_addrs(
+    def get_backend_role_addrs(
         self,
         master_addr: Optional[str],
         block_cache_keys: list[int],
@@ -50,18 +50,22 @@ class MasterClient:
             }
         headers = {"Content-Type": "application/json"}
 
-        # connect to master using new session for each request
+        # connect to master using new session for each request (no connection pooling)
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, data=json.dumps(payload), headers=headers
-                ) as response:
-                    if response.status != 200:
-                        route_logger.error(
-                            f"Failed to get master response from {master_addr}, http status: {response.status}"
-                        )
-                        return None, inter_request_id
-                    result = await response.json()
+            # 每次请求都创建新的session，完全禁用连接复用
+            with requests.Session() as session:
+                response = session.post(
+                    url,
+                    data=json.dumps(payload),
+                    headers=headers,
+                    timeout=0.5  # 设置超时时间
+                )
+                if response.status_code != 200:
+                    route_logger.error(
+                        f"Failed to get master response from {master_addr}, http status: {response.status_code}"
+                    )
+                    return None, inter_request_id
+                result = response.json()
         except Exception as e:
             route_logger.error(f"Failed to query to master at {master_addr}: {type(e).__name__}: {e}")
             return None, inter_request_id
