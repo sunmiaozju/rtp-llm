@@ -13,34 +13,44 @@ route_logger = logging.getLogger("route_logger")
 
 class MasterClient:
     def __init__(self):
-        # 创建高度优化的连接器
-        self.connector = aiohttp.TCPConnector(
-            # 强制 IPv4，避免 IPv6 回退延迟
-            family=socket.AF_INET,
+        # 延迟初始化 - 不在 __init__ 中创建 aiohttp 组件
+        self.session = None
+        self.connector = None
 
-            # DNS 优化 - 使用系统 DNS 而不是 aiodns
-            use_dns_cache=True,
-            ttl_dns_cache=60,
+    async def _ensure_session(self):
+        """确保 session 已经初始化"""
+        if self.session is None:
+            # 创建高度优化的连接器
+            self.connector = aiohttp.TCPConnector(
+                # 强制 IPv4，避免 IPv6 回退延迟
+                family=socket.AF_INET,
 
-            # 连接池优化
-            limit=50,
-            limit_per_host=10,
-            keepalive_timeout=10,
-            enable_cleanup_closed=True,
+                # DNS 优化 - 使用系统 DNS 而不是 aiodns
+                use_dns_cache=True,
+                ttl_dns_cache=60,
 
-            # 禁用 SSL 相关检查
-            ssl=False,
-        )
+                # 连接池优化
+                limit=50,
+                limit_per_host=10,
+                keepalive_timeout=10,
+                enable_cleanup_closed=True,
 
-        # 创建长连接 session
-        self.session = aiohttp.ClientSession(
-            connector=self.connector,
-            timeout=aiohttp.ClientTimeout(total=1.0)  # 默认总超时 1 秒
-        )
+                # 禁用 SSL 相关检查
+                ssl=False,
+            )
+
+            # 创建长连接 session
+            self.session = aiohttp.ClientSession(
+                connector=self.connector,
+                timeout=aiohttp.ClientTimeout(total=1.0)  # 默认总超时 1 秒
+            )
 
     async def close(self):
         """关闭连接"""
-        await self.session.close()
+        if self.session:
+            await self.session.close()
+            self.session = None
+            self.connector = None
 
     async def get_backend_role_addrs(
         self,
@@ -51,6 +61,9 @@ class MasterClient:
         generate_timeout: int,
         request_priority: int = 100,
     ) -> Tuple[Optional[List[RoleAddr]], int]:
+        # 确保 session 已经初始化
+        await self._ensure_session()
+
         inter_request_id = -1
         # get master address
         if not master_addr:
