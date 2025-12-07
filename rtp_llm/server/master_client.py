@@ -6,8 +6,9 @@ import json
 import os
 import atexit
 import time
-
-import aiohttp
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import requests
 
 from rtp_llm.config.exceptions import ExceptionType, FtRuntimeException
 from rtp_llm.config.generate_config import RoleAddr, RoleType
@@ -18,99 +19,135 @@ route_logger = logging.getLogger("route_logger")
 
 class MasterClient:
     def __init__(self):
-        # 延迟初始化 - 不在 __init__ 中创建 aiohttp 组件
-        self.session = None
-        self.connector = None
-        # 多进程环境下的进程ID追踪
+        # 线程池配置
+        self.executor = ThreadPoolExecutor(
+            max_workers=20,  # 可以根据需要调整线程数
+            thread_name_prefix="MasterClient-HTTP-"
+        )
+
+        # 创建一个线程安全的session池
+        self._session_pool = []
+        self._pool_lock = threading.Lock()
+        self._pool_size = 5  # 每个线程池维护5个session
+
+        # 初始化session池
+        self._init_session_pool()
+
+        # 进程ID追踪
         self._process_id = os.getpid()
         # 注册清理函数
         atexit.register(self._cleanup_on_exit)
 
-    async def _ensure_session(self):
-        """确保 session 已经初始化"""
-        # 多进程环境检查：如果进程ID变了，需要重建session
-        current_pid = os.getpid()
-        if current_pid != self._process_id:
-            # 进程已fork，需要重新初始化
-            self.session = None
-            self.connector = None
-            self._process_id = current_pid
+    def _init_session_pool(self):
+        """初始化session池"""
+        for _ in range(self._pool_size):
+            session = self._create_session()
+            self._session_pool.append(session)
 
-        if self.session is None or self.session.closed:
-            # 关键修改：使用 get_running_loop() 获取当前正在运行的事件循环
-            # 这样可以确保 session 在正确的事件循环中创建
-            loop = asyncio.get_running_loop()
+    def _create_session(self):
+        """创建一个配置好的requests session"""
+        session = requests.Session()
 
-            # 删除debug模式，它会影响性能
-            loop.set_debug(True)  # 已删除
+        # 配置连接池
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=10,  # 连接池中的连接数
+            pool_maxsize=30,      # 连接池的最大连接数
+            max_retries=0,        # 不自动重试
+            pool_block=False      # 连接池满时不阻塞
+        )
 
-            # 创建高度优化的连接器
-            self.connector = aiohttp.TCPConnector(
-                # 强制 IPv4，避免 IPv6 回退延迟
-                family=socket.AF_INET,
+        session.mount('http://', adapter)
+        session.mount('https://', adapter)
 
-                # DNS 优化 - 增加缓存时间
-                use_dns_cache=True,
-                ttl_dns_cache=300,  # 增加到5分钟
+        # 设置默认headers
+        session.headers.update({
+            'Connection': 'keep-alive',
+            'Accept': 'application/json'
+        })
 
-                # 连接池优化 - 增加连接数
-                limit=100,  # 增加总连接数
-                limit_per_host=30,  # 增加每主机连接数
-                keepalive_timeout=30,  # 增加 keep-alive 时间
+        return session
 
-                # 关键配置：不强制关闭连接，允许连接复用
-                force_close=False,
-                enable_cleanup_closed=True,
+    def _get_session(self):
+        """从池中获取一个session"""
+        with self._pool_lock:
+            if self._session_pool:
+                return self._session_pool.pop()
+            else:
+                # 池为空时创建新的session
+                return self._create_session()
 
-                # 禁用 SSL 相关检查
-                ssl=False
-            )
-
-            # 创建长连接 session
-            self.session = aiohttp.ClientSession(
-                connector=self.connector,
-                timeout=aiohttp.ClientTimeout(
-                    total=1.0,
-                    connect=0.3,
-                    sock_connect=0.2,
-                    sock_read=0.5
-                ),
-                # 跳过不必要的自动headers，提升性能
-                skip_auto_headers={'User-Agent'},
-                # 重要：确保响应自动关闭
-                connector_owner=True,
-                # 禁用自动解压，减少异步生成器
-                auto_decompress=False
-            )
+    def _return_session(self, session):
+        """将session返回池中"""
+        with self._pool_lock:
+            if len(self._session_pool) < self._pool_size:
+                self._session_pool.append(session)
+            else:
+                # 池满了就关闭session
+                session.close()
 
     def _cleanup_on_exit(self):
         """进程退出时的清理函数（多进程环境）"""
-        if self.session and not self.session.closed:
-            # 在多进程环境下，不能使用 await，直接关闭
-            try:
-                # 关键修改：不创建新的事件循环，直接强制关闭
-                # 这避免了在进程退出时创建事件循环的问题
-                if hasattr(self.session, '_connector'):
-                    self.session._connector._force_close = True
-                    if hasattr(self.session._connector, '_conns'):
-                        self.session._connector._conns.clear()
-                # 标记为已关闭，避免异步清理
-                self.session._closed = True
-            except Exception:
-                # 忽略清理时的异常
-                pass
-            finally:
-                self.session = None
-                self.connector = None
+        try:
+            # 清理session池
+            with self._pool_lock:
+                for session in self._session_pool:
+                    try:
+                        session.close()
+                    except:
+                        pass
+                self._session_pool.clear()
 
-    async def close(self):
-        """关闭连接"""
-        if self.session:
-            await self.session.close()
-            # 等待一小段时间确保清理完成
-            await asyncio.sleep(0)
-            self.session = None
-            self.connector = None
+            # 关闭线程池
+            self.executor.shutdown(wait=False)
+        except:
+            pass
+
+    def _make_http_request(self, url: str, payload: dict, timeout: float) -> Tuple[Optional[dict], str]:
+        """在线程中执行同步HTTP请求"""
+        session = self._get_session()
+        try:
+            # 发起同步请求
+            response = session.post(
+                url,
+                json=payload,
+                timeout=timeout,
+                headers={'Content-Type': 'application/json'},
+                allow_redirects=False
+            )
+
+            if response.status_code != 200:
+                error_msg = f"HTTP status: {response.status_code}"
+                return None, error_msg
+
+            # 解析响应
+            result = response.json()
+            return result, ""
+
+        except requests.exceptions.Timeout:
+            return None, "Request timeout"
+        except requests.exceptions.ConnectionError as e:
+            return None, f"Connection error: {str(e)}"
+        except Exception as e:
+            return None, f"{type(e).__name__}: {str(e)}"
+        finally:
+            # 确保session返回池中
+            self._return_session(session)
+
+    def close(self):
+        """同步关闭方法"""
+        # 关闭所有session
+        with self._pool_lock:
+            for session in self._session_pool:
+                session.close()
+            self._session_pool.clear()
+
+        # 关闭线程池
+        self.executor.shutdown(wait=True)
+
+    async def aclose(self):
+        """异步关闭方法，兼容原有接口"""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self.close)
 
     async def get_backend_role_addrs(
         self,
@@ -121,21 +158,21 @@ class MasterClient:
         generate_timeout: int,
         request_priority: int = 100,
     ) -> Tuple[Optional[List[RoleAddr]], int]:
-        # 设置当前任务名称，方便调试
+        """异步接口，内部使用线程池执行同步请求"""
+
+        # 设置当前任务名称
         current_task = asyncio.current_task()
         if current_task:
-            # 使用时间戳和进程ID创建唯一的任务名
-            task_name = f"MasterClient-HTTP-{self._process_id}-{int(time.time()*1000)}"
+            task_name = f"MasterClient-Sync-{self._process_id}-{int(time.time()*1000)}"
             current_task.set_name(task_name)
             route_logger.debug(f"Starting HTTP request with task name: {task_name}")
 
-        # 确保 session 已经初始化
-        await self._ensure_session()
-
         inter_request_id = -1
-        # get master address
+
+        # 检查master地址
         if not master_addr:
             return None, inter_request_id
+
         url = f"http://{master_addr}/rtp_llm/schedule"
         payload = {
             "model": "engine_service",
@@ -148,45 +185,38 @@ class MasterClient:
             payload["generate_timeout"] = generate_timeout
 
         try:
-            # 使用非常短的超时配置
-            timeout = aiohttp.ClientTimeout(
-                total=0.8,        # 总超时 800ms
-                connect=0.2,      # 连接超时 200ms
-                sock_connect=0.15, # Socket 连接 150ms
-                sock_read=0.3,    # 读取超时 300ms
+            # 获取当前事件循环
+            loop = asyncio.get_running_loop()
+
+            # 在线程池中执行同步请求
+            result, error_msg = await loop.run_in_executor(
+                self.executor,
+                self._make_http_request,
+                url,
+                payload,
+                0.8  # 800ms超时
             )
 
-            async with self.session.post(
-                url,
-                json=payload,
-                timeout=timeout,
-                headers={
-                    "Connection": "keep-alive",  # 明确启用 keep-alive
-                    "Content-Type": "application/json"
-                },
-                # 添加额外的优化选项
-                allow_redirects=False,  # 禁用重定向
-                raise_for_status=False  # 禁用自动状态码检查
-            ) as response:
-                if response.status != 200:
-                    route_logger.error(
-                        f"Failed to get master response from {master_addr}, http status: {response.status}"
-                    )
-                    return None, inter_request_id
+            if error_msg:
+                route_logger.error(
+                    f"Failed to get master response from {master_addr}: {error_msg}"
+                )
+                return None, inter_request_id
 
-                # 关键修改：先读取全部响应体，再解析JSON
-                # 这样可以确保响应体被完全消费，避免异步生成器泄漏
-                body = await response.read()
-                # 立即释放响应对象，避免异步生成器延迟清理
-                response.release()
-                result = json.loads(body)
+            if result is None:
+                return None, inter_request_id
 
         except Exception as e:
             route_logger.error(f"Failed to query master at {master_addr}: {type(e).__name__}: {e}")
             return None, inter_request_id
 
-        # check response
-        schedule_meta = ScheduleMeta.model_validate(result)
+        # 解析响应
+        try:
+            schedule_meta = ScheduleMeta.model_validate(result)
+        except Exception as e:
+            route_logger.error(f"Failed to parse schedule meta: {e}")
+            return None, inter_request_id
+
         if schedule_meta.code != 200:
             route_logger.error(
                 f"Master schedule error, error code: {schedule_meta.code}"
@@ -196,7 +226,7 @@ class MasterClient:
                 message="master schedule error",
             )
 
-        # parse role ips from schedule meta
+        # 解析角色地址
         role_addrs: List[RoleAddr] = []
         for server_status in schedule_meta.server_status:
             role_addrs.append(
@@ -209,3 +239,20 @@ class MasterClient:
             )
 
         return role_addrs, schedule_meta.inter_request_id
+
+    def __del__(self):
+        """析构函数，确保资源被释放"""
+        try:
+            # 清理session池
+            with self._pool_lock:
+                for session in self._session_pool:
+                    try:
+                        session.close()
+                    except:
+                        pass
+                self._session_pool.clear()
+
+            # 关闭线程池
+            self.executor.shutdown(wait=False)
+        except:
+            pass
