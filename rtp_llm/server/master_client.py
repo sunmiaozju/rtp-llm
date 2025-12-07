@@ -19,7 +19,7 @@ route_logger = logging.getLogger("route_logger")
 
 def slow_callback_detector(loop, context):
     """检测慢回调"""
-    print(f"Slow callback detected: {context}")
+    logging.info(f"Slow callback detected: {context}")
 
 class MasterClient:
     def __init__(self):
