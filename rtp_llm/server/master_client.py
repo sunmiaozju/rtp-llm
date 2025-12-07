@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import socket
+import warnings
 from typing import List, Optional, Tuple
 
 import aiohttp
@@ -30,6 +31,14 @@ class MasterClient:
 
             # 设置事件循环为debug模式
             loop.set_debug(True)
+            # 设置更详细的日志
+            logging.basicConfig(
+                level=logging.DEBUG,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+
+            # 监控所有未关闭的生成器
+            warnings.filterwarnings('always', category=ResourceWarning)
 
             # 创建高度优化的连接器
             self.connector = aiohttp.TCPConnector(
