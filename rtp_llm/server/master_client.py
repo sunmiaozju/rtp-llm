@@ -21,6 +21,8 @@ class MasterClient:
     async def _ensure_session(self):
         """确保 session 已经初始化"""
         if self.session is None:
+            loop = asyncio.new_event_loop()
+            loop.set_debug(True)
             # 创建高度优化的连接器
             self.connector = aiohttp.TCPConnector(
                 # 强制 IPv4，避免 IPv6 回退延迟
@@ -38,11 +40,11 @@ class MasterClient:
 
                 # 禁用 SSL 相关检查
                 ssl=False,
+
+                loop=loop
             )
 
             # 创建长连接 session
-            loop = asyncio.new_event_loop()
-            loop.set_debug(True)
             self.session = aiohttp.ClientSession(
                 connector=self.connector,
                 loop=loop,
