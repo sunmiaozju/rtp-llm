@@ -87,10 +87,14 @@ class MasterClient:
         if self.session and not self.session.closed:
             # 在多进程环境下，不能使用 await，直接关闭
             try:
-                # 创建新的事件循环来执行清理
-                loop = asyncio.new_event_loop()
-                loop.run_until_complete(self.session.close())
-                loop.close()
+                # 关键修改：不创建新的事件循环，直接强制关闭
+                # 这避免了在进程退出时创建事件循环的问题
+                if hasattr(self.session, '_connector'):
+                    self.session._connector._force_close = True
+                    if hasattr(self.session._connector, '_conns'):
+                        self.session._connector._conns.clear()
+                # 标记为已关闭，避免异步清理
+                self.session._closed = True
             except Exception:
                 # 忽略清理时的异常
                 pass
