@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import socket
 from typing import List, Optional, Tuple
@@ -40,8 +41,11 @@ class MasterClient:
             )
 
             # 创建长连接 session
+            loop = asyncio.new_event_loop()
+            loop.set_debug(True)
             self.session = aiohttp.ClientSession(
                 connector=self.connector,
+                loop=loop,
                 timeout=aiohttp.ClientTimeout(total=1.0)  # 默认总超时 1 秒
             )
 
