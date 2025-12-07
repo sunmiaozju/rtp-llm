@@ -106,9 +106,20 @@ class Pipeline(object):
             except Exception as e:
                 q.put(e)
             finally:
-                # if pipline break, should call aclose() to remove async_generator task from loop
                 if res is not None:
-                    res.aclose()
+                    try:
+                        # 获取运行中的事件循环
+                        loop = asyncio.get_running_loop()
+                        # 调度清理任务，但不等待完成
+                        loop.create_task(res.aclose())
+                    except RuntimeError:
+                        # 如果没有运行的事件循环，创建新的来清理
+                        try:
+                            loop = asyncio.new_event_loop()
+                            loop.run_until_complete(res.aclose())
+                            loop.close()
+                        except Exception:
+                            pass  # 忽略清理失败
 
         def start_loop():
             loop = asyncio.new_event_loop()
