@@ -188,6 +188,9 @@ class MasterClient:
             # 获取当前事件循环
             loop = asyncio.get_running_loop()
             loop.set_debug(True)
+            # 配置日志
+            logging.basicConfig(level=logging.DEBUG)
+            logging.getLogger('asyncio').setLevel(logging.DEBUG)
 
             # 在线程池中执行同步请求
             result, error_msg = await loop.run_in_executor(
