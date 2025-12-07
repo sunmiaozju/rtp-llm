@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 import json
 import os
 import atexit
+import time
 
 import aiohttp
 
@@ -120,6 +121,14 @@ class MasterClient:
         generate_timeout: int,
         request_priority: int = 100,
     ) -> Tuple[Optional[List[RoleAddr]], int]:
+        # 设置当前任务名称，方便调试
+        current_task = asyncio.current_task()
+        if current_task:
+            # 使用时间戳和进程ID创建唯一的任务名
+            task_name = f"MasterClient-HTTP-{self._process_id}-{int(time.time()*1000)}"
+            current_task.set_name(task_name)
+            route_logger.debug(f"Starting HTTP request with task name: {task_name}")
+
         # 确保 session 已经初始化
         await self._ensure_session()
 
