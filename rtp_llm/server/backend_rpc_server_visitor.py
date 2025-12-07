@@ -12,7 +12,7 @@ from rtp_llm.metrics import kmonitor
 from rtp_llm.metrics.kmonitor_metric_reporter import AccMetrics, GaugeMetrics
 from rtp_llm.ops import get_block_cache_keys
 from rtp_llm.server.host_service import HostService, HostServiceArgs
-from rtp_llm.server.master_client_enhanced import EnhancedMasterClient as MasterClient
+from rtp_llm.server.master_client import MasterClient
 from rtp_llm.server.misc import format_exception
 from rtp_llm.utils.base_model_datatypes import GenerateInput, GenerateOutputs
 from rtp_llm.utils.time_util import Timer
@@ -30,7 +30,7 @@ class BackendRPCServerVisitor:
         host_args = HostServiceArgs.create_from_env()
         self.backend_role_list = self.get_backend_role_list(self.config, host_args)
         self.host_service = HostService(host_args)
-        self.master_client = MasterClient(enable_monitoring=True)
+        self.master_client = MasterClient()
         self.separated_frontend = separated_frontend
 
     @staticmethod
