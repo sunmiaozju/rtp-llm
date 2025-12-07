@@ -24,8 +24,9 @@ class MasterClient:
             'force_close': False,            # 启用连接复用
             'enable_cleanup_closed': True,   # 自动清理已关闭连接
             'happy_eyeballs_delay': 0.25,   # IPv4/IPv6并行连接延迟
-            'tcp_nodelay': True,            # 禁用Nagle算法，降低延迟
             'resolver': aiohttp.resolver.AsyncResolver(),  # 异步DNS解析器
+            'ttl_dns_cache': 600,             # DNS缓存超时
+            'use_dns_cache': True,            # 启用DNS缓存
             'sock_read': 65536,             # socket读取缓冲区大小
             'sock_connect': 30,             # socket连接超时
         }
