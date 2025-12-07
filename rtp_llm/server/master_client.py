@@ -30,10 +30,6 @@ class MasterClient:
 
             # 禁用 SSL 相关检查
             ssl=False,
-
-            # 连接时间优化
-            sock_connect=0.2,  # 缩短连接超时
-            sock_read=0.5,
         )
 
         # 创建长连接 session
