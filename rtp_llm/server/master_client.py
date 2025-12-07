@@ -13,21 +13,15 @@ route_logger = logging.getLogger("route_logger")
 
 
 class MasterClient:
-    def __init__(self, max_connect_pool_size=1000):
-        self.max_connect_pool_size = max_connect_pool_size
+    def __init__(self):
         self._session = None
 
     async def _get_session(self):
         """获取或创建HTTP session"""
         if self._session is None or self._session.closed:
             timeout = ClientTimeout(total=0.5)
-            connector = aiohttp.TCPConnector(
-                limit=self.max_connect_pool_size,  # con pool size
-                limit_per_host=30,  # limit
-                force_close=True,
-                enable_cleanup_closed=True,
-            )
-            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            # 不使用连接器，让aiohttp使用默认的单次连接模式
+            self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
     async def close(self):
