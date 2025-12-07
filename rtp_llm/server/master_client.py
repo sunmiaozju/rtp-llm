@@ -24,10 +24,10 @@ class MasterClient:
             connector = aiohttp.TCPConnector(
                 limit=self.max_connect_pool_size,  # con pool size
                 limit_per_host=30,  # limit
-                keepalive_timeout=30,
+                # keepalive_timeout=30,
                 enable_cleanup_closed=True,
             )
-            self._session = aiohttp.ClientSession(timeout=timeout, connector=connector)
+            self._session = aiohttp.ClientSession(timeout=timeout)
         return self._session
 
     async def close(self):
@@ -83,7 +83,7 @@ class MasterClient:
                     return None, inter_request_id
                 result = await response.json()
         except Exception as e:
-            route_logger.error(f"Failed to connect to master at {master_addr}: {e}")
+            route_logger.error(f"Failed to query to master at {master_addr}: {type(e).__name__}: {e}")
             return None, inter_request_id
 
         # check response
