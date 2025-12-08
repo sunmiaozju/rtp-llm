@@ -84,6 +84,7 @@ class FrontendApp(object):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         sock.bind(("0.0.0.0", g_worker_info.server_port))
+        sock.setblocking(False)
         sock.listen()
         fd = sock.fileno()
         timeout_keep_alive = self.py_env_configs.server_config.timeout_keep_alive
