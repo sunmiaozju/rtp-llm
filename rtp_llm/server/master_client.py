@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import List, Optional, Tuple
 
 import aiohttp
@@ -45,7 +46,8 @@ class MasterClient:
         generate_timeout: int,
         request_priority: int = 100,
     ) -> Tuple[Optional[List[RoleAddr]], int]:
-
+        # 记录开始时间
+        start_time = time.time()
 
         try:
             loop = asyncio.get_running_loop()
@@ -61,6 +63,10 @@ class MasterClient:
         inter_request_id = -1
         # get master address
         if not master_addr:
+            # 计算并记录RT
+            elapsed_time = (time.time() - start_time) * 1000  # 转换为毫秒
+            if elapsed_time > 10:
+                route_logger.warning(f"get_backend_role_addrs RT exceeded 10ms: {elapsed_time:.2f}ms (no master_addr)")
             return None, inter_request_id
         payload = {}
         # prepare request to master
@@ -94,11 +100,25 @@ class MasterClient:
                     route_logger.error(
                         f"Failed to get master response from {master_addr}, http status: {response.status}"
                     )
+                    # 计算并记录RT
+                    elapsed_time = (time.time() - start_time) * 1000  # 转换为毫秒
+                    if elapsed_time > 10:
+                        route_logger.warning(f"get_backend_role_addrs RT exceeded 10ms: {elapsed_time:.2f}ms (http status: {response.status})")
                     return None, inter_request_id
                 result = await response.json()
         except Exception as e:
             route_logger.error(f"Failed to query master at {master_addr}: {type(e).__name__}: {e}")
+            # 计算并记录RT
+            elapsed_time = (time.time() - start_time) * 1000  # 转换为毫秒
+            if elapsed_time > 10:
+                route_logger.warning(f"get_backend_role_addrs RT exceeded 10ms: {elapsed_time:.2f}ms (exception occurred)")
             return None, inter_request_id
+
+        # 计算并记录RT
+        elapsed_time = (time.time() - start_time) * 1000  # 转换为毫秒
+        if elapsed_time > 10:
+            route_logger.warning(f"get_backend_role_addrs RT exceeded 10ms: {elapsed_time:.2f}ms (success)")
+
 
         # check response
         schedule_meta = ScheduleMeta.model_validate(result)
