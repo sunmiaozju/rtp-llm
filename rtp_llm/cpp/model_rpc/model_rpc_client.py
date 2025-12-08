@@ -358,24 +358,24 @@ class ModelRpcClient(object):
                 count = 0
 
 
-                async for response in response_iterator.__aiter__():
-                    count += 1
-                    yield trans_output(input_py, response, stream_state)
+                # async for response in response_iterator.__aiter__():
+                #     count += 1
+                #     yield trans_output(input_py, response, stream_state)
 
 
-                # # 获取异步迭代器对象
-                # async_iter = response_iterator.__aiter__()
-                # try:
-                #     async for response in async_iter:
-                #         count += 1
-                #         yield trans_output(input_py, response, stream_state)
-                # finally:
-                #     # 显式关闭异步迭代器，防止垃圾回收时阻塞
-                #     try:
-                #         await async_iter.aclose()
-                #     except Exception:
-                #         # 忽略关闭时的错误
-                #         pass
+                # 获取异步迭代器对象
+                async_iter = response_iterator.__aiter__()
+                try:
+                    async for response in async_iter:
+                        count += 1
+                        yield trans_output(input_py, response, stream_state)
+                finally:
+                    # 显式关闭异步迭代器，防止垃圾回收时阻塞
+                    try:
+                        await async_iter.aclose()
+                    except Exception:
+                        # 忽略关闭时的错误
+                        pass
 
 
         except grpc.RpcError as e:
