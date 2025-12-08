@@ -2015,46 +2015,49 @@ class BaseEventLoop(events.AbstractEventLoop):
                                                 task_trace += f"\n  生成器名称: {code.co_name}"
 
                                         # 普通协程的处理
-                                        if hasattr(coro, 'cr_code'):
+                                        elif hasattr(coro, 'cr_code'):
                                             code = coro.cr_code
                                             task_trace += f"\n  协程定义于: {code.co_filename}:{code.co_firstlineno}"
 
-                                        # 当前执行位置（显示卡在哪里）
-                                        if hasattr(coro, 'cr_frame') and coro.cr_frame:
-                                            frame = coro.cr_frame
-                                            task_trace += f"\n  当前执行到: {frame.f_code.co_filename}:{frame.f_lineno}"
-                                            task_trace += f"\n  当前函数: {frame.f_code.co_name}"
+                                            # 当前执行位置（显示卡在哪里）
+                                            if hasattr(coro, 'cr_frame') and coro.cr_frame:
+                                                frame = coro.cr_frame
+                                                task_trace += f"\n  当前执行到: {frame.f_code.co_filename}:{frame.f_lineno}"
+                                                task_trace += f"\n  当前函数: {frame.f_code.co_name}"
 
-                                            # 获取当前执行的代码
-                                            try:
-                                                import linecache
-                                                line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
-                                                if line:
-                                                    task_trace += f"\n    >>> 正在执行: {line.strip()}"
-                                            except:
-                                                pass
+                                                # 获取当前执行的代码
+                                                try:
+                                                    import linecache
+                                                    line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
+                                                    if line:
+                                                        task_trace += f"\n    >>> 正在执行: {line.strip()}"
+                                                except:
+                                                    pass
 
-                                            # 获取完整的堆栈追踪
-                                            try:
-                                                stack_lines = []
-                                                current_frame = frame
-                                                depth = 0
-                                                while current_frame and depth < 10:
-                                                    filename = current_frame.f_code.co_filename
-                                                    lineno = current_frame.f_lineno
-                                                    func_name = current_frame.f_code.co_name
-                                                    # 只显示非内部库的帧
-                                                    if '/site-packages/' not in filename or 'rtp_llm' in filename:
-                                                        stack_lines.append(f"    {filename}:{lineno} in {func_name}")
-                                                    current_frame = current_frame.f_back
-                                                    depth += 1
+                                                # 获取完整的堆栈追踪
+                                                try:
+                                                    stack_lines = []
+                                                    current_frame = frame
+                                                    depth = 0
+                                                    while current_frame and depth < 10:
+                                                        filename = current_frame.f_code.co_filename
+                                                        lineno = current_frame.f_lineno
+                                                        func_name = current_frame.f_code.co_name
+                                                        # 只显示非内部库的帧
+                                                        if '/site-packages/' not in filename or 'rtp_llm' in filename:
+                                                            stack_lines.append(f"    {filename}:{lineno} in {func_name}")
+                                                        current_frame = current_frame.f_back
+                                                        depth += 1
 
-                                                if stack_lines:
-                                                    task_trace += f"\n  堆栈追踪:"
-                                                    for line in stack_lines[:5]:  # 只显示前5层
-                                                        task_trace += f"\n{line}"
-                                            except:
-                                                pass
+                                                    if stack_lines:
+                                                        task_trace += f"\n  堆栈追踪:"
+                                                        for line in stack_lines[:5]:  # 只显示前5层
+                                                            task_trace += f"\n{line}"
+                                                except:
+                                                    pass
+                                    else:
+                                        # 协程对象为 None，说明任务已经完成
+                                        task_trace += f"\n  协程: <已完成，无协程对象>"
                                 except Exception as e:
                                     task_trace += f"\n  [获取协程信息时出错: {e}]"
                         
