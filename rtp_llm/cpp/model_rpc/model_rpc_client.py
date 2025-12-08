@@ -338,6 +338,14 @@ class ModelRpcClient(object):
         try:
             options = [
                 ("grpc.max_metadata_size", 1024 * 1024 * 1024),
+                # 添加 gRPC 超时配置来验证理论
+                ("grpc.keepalive_time_ms", 1000),  # 1秒发送一次keepalive ping
+                ("grpc.keepalive_timeout_ms", 1000),  # 1秒等待ping响应
+                ("grpc.keepalive_permit_without_calls", 1),  # 即使没有调用也发送ping
+                ("grpc.http2.max_pings_without_data", 0),  # 不限制ping次数
+                # 关键配置：设置连接关闭时的超时
+                ("grpc.http2.min_time_between_pings_ms", 1000),  # ping之间最小间隔1秒
+                ("grpc.http2.min_ping_interval_without_data_ms", 1000),  # 无数据时ping间隔1秒
             ]
             async with grpc.aio.insecure_channel(
                 address_list[input_py.request_id % len(address_list)], options=options
@@ -350,24 +358,24 @@ class ModelRpcClient(object):
                 count = 0
 
 
-                # async for response in response_iterator.__aiter__():
-                #     count += 1
-                #     yield trans_output(input_py, response, stream_state)
+                async for response in response_iterator.__aiter__():
+                    count += 1
+                    yield trans_output(input_py, response, stream_state)
 
 
-                # 获取异步迭代器对象
-                async_iter = response_iterator.__aiter__()
-                try:
-                    async for response in async_iter:
-                        count += 1
-                        yield trans_output(input_py, response, stream_state)
-                finally:
-                    # 显式关闭异步迭代器，防止垃圾回收时阻塞
-                    try:
-                        await async_iter.aclose()
-                    except Exception:
-                        # 忽略关闭时的错误
-                        pass
+                # # 获取异步迭代器对象
+                # async_iter = response_iterator.__aiter__()
+                # try:
+                #     async for response in async_iter:
+                #         count += 1
+                #         yield trans_output(input_py, response, stream_state)
+                # finally:
+                #     # 显式关闭异步迭代器，防止垃圾回收时阻塞
+                #     try:
+                #         await async_iter.aclose()
+                #     except Exception:
+                #         # 忽略关闭时的错误
+                #         pass
 
 
         except grpc.RpcError as e:
