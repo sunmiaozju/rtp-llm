@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import logging
 from typing import AsyncGenerator, Optional
@@ -384,5 +385,15 @@ class ModelRpcClient(object):
             logging.error(f"rpc unknown error:{str(e)}")
             raise e
         finally:
+
             if response_iterator:
-                response_iterator.cancel()
+                logging.info(f"request: [{input_pb.request_id}] RPC finished")
+                try:
+                    # 设置一个较短的超时时间
+                    await asyncio.wait_for(
+                        response_iterator.cancel(),
+                        timeout=0.5  # 500ms 超时
+                    )
+                except asyncio.TimeoutError:
+                    # 如果超时，记录日志但不阻塞
+                    logging.warning(f"gRPC stream cancel timeout for request {input_py.request_id}")
