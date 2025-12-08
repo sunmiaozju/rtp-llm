@@ -109,6 +109,14 @@ class MasterClient:
     def _make_http_request(self, url: str, payload: dict, timeout: float) -> Tuple[Optional[dict], str]:
         """在线程中执行同步HTTP请求"""
         session = self._get_session()
+
+        # 设置当前任务名称
+        current_task = asyncio.current_task()
+        if current_task:
+            task_name = f"MasterClient-_make_http_request-{self._process_id}-{int(time.time()*1000)}"
+            current_task.set_name(task_name)
+            logging.info(f"Starting HTTP request with task name: {task_name}")
+
         try:
             # 发起同步请求
             response = session.post(
