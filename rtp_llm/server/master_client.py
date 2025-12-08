@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from typing import List, Optional, Tuple
@@ -44,6 +45,19 @@ class MasterClient:
         generate_timeout: int,
         request_priority: int = 100,
     ) -> Tuple[Optional[List[RoleAddr]], int]:
+
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # 如果没有运行的事件循环，获取当前线程的事件循环
+            loop = asyncio.get_event_loop()
+
+        # 设置事件循环为debug模式
+        loop.set_debug(True)
+
+
+
         inter_request_id = -1
         # get master address
         if not master_addr:
