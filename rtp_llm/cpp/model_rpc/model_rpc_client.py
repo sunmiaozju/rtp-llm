@@ -386,10 +386,18 @@ class ModelRpcClient(object):
             raise e
         finally:
             if response_iterator:
-                # 使用线程池来执行同步的 cancel() 操作，避免阻塞事件循环
+                # 创建一个后台任务来执行 cancel()，完全不阻塞
                 try:
                     loop = asyncio.get_event_loop()
-                    # 在后台线程中执行 cancel()，避免阻塞主事件循环
-                    loop.run_in_executor(None, response_iterator.cancel)
+
+                    async def cancel_in_background():
+                        try:
+                            # 在线程池中执行阻塞的 cancel() 操作
+                            await loop.run_in_executor(None, response_iterator.cancel)
+                        except Exception as e:
+                            logging.warning(f"Failed to cancel gRPC stream for request {input_py.request_id}: {e}")
+
+                    # 创建后台任务，不等待完成
+                    loop.create_task(cancel_in_background())
                 except Exception as e:
-                    logging.warning(f"Failed to cancel gRPC stream for request {input_py.request_id}: {e}")
+                    logging.warning(f"Failed to schedule gRPC stream cancellation for request {input_py.request_id}: {e}")
