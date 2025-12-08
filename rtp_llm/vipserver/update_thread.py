@@ -12,6 +12,7 @@ class UpdateThread(threading.Thread):
         self.setDaemon(True)
 
     def run(self):
-        while not self.stop_flag:
-            time.sleep(self.interval)
-            self.func()
+        self.func()
+        #while not self.stop_flag:
+        #    time.sleep(self.interval)
+        #    self.func()

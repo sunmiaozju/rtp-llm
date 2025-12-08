@@ -161,7 +161,8 @@ class MasterService:
                     )
             route_logger.debug(f"master address refreshed: {master_addr}")
             self.cached_master_addr = master_addr
-            time.sleep(1)
+            return
+            # time.sleep(100000)
 
     def get_master_addr(self) -> Optional[str]:
         return self.cached_master_addr
