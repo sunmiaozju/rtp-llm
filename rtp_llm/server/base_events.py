@@ -1947,7 +1947,7 @@ class BaseEventLoop(events.AbstractEventLoop):
                                 # 获取协程信息
                                 try:
                                     coro = obj.get_coro()
-                                    if coro:
+                                    if coro is not None:
                                         # 协程名称和定义位置
                                         coro_name = coro.__qualname__ if hasattr(coro, '__qualname__') else str(coro)
                                         task_trace += f"\n  协程: {coro_name}"
@@ -1961,28 +1961,31 @@ class BaseEventLoop(events.AbstractEventLoop):
                                             # 尝试获取异步生成器的帧信息
                                             if hasattr(coro, 'ag_frame') and coro.ag_frame:
                                                 frame = coro.ag_frame
-                                                task_trace += f"\n  生成器当前位置: {frame.f_code.co_filename}:{frame.f_lineno}"
-                                                task_trace += f"\n  生成器函数: {frame.f_code.co_name}"
+                                                if frame and hasattr(frame, 'f_code') and frame.f_code:
+                                                    task_trace += f"\n  生成器当前位置: {frame.f_code.co_filename}:{frame.f_lineno}"
+                                                    task_trace += f"\n  生成器函数: {frame.f_code.co_name}"
 
                                                 # 获取当前执行的代码
                                                 try:
-                                                    import linecache
-                                                    line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
-                                                    if line:
-                                                        task_trace += f"\n    >>> 正在执行: {line.strip()}"
+                                                    if frame and hasattr(frame, 'f_code') and frame.f_code and hasattr(frame.f_code, 'co_filename'):
+                                                        import linecache
+                                                        line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
+                                                        if line:
+                                                            task_trace += f"\n    >>> 正在执行: {line.strip()}"
                                                 except:
                                                     pass
 
                                                 # 获取局部变量以了解上下文
                                                 try:
-                                                    local_vars = frame.f_locals
-                                                    important_vars = []
-                                                    for key, value in list(local_vars.items())[:5]:
-                                                        if not key.startswith('_'):
-                                                            var_str = f"{key}={str(value)[:50]}"
-                                                            important_vars.append(var_str)
-                                                    if important_vars:
-                                                        task_trace += f"\n  局部变量: {', '.join(important_vars)}"
+                                                    if frame and hasattr(frame, 'f_locals'):
+                                                        local_vars = frame.f_locals
+                                                        important_vars = []
+                                                        for key, value in list(local_vars.items())[:5]:
+                                                            if not key.startswith('_'):
+                                                                var_str = f"{key}={str(value)[:50]}"
+                                                                important_vars.append(var_str)
+                                                        if important_vars:
+                                                            task_trace += f"\n  局部变量: {', '.join(important_vars)}"
                                                 except:
                                                     pass
 
@@ -1992,12 +1995,13 @@ class BaseEventLoop(events.AbstractEventLoop):
                                                     current_frame = frame
                                                     depth = 0
                                                     while current_frame and depth < 10:
-                                                        filename = current_frame.f_code.co_filename
-                                                        lineno = current_frame.f_lineno
-                                                        func_name = current_frame.f_code.co_name
-                                                        # 只显示非内部库的帧
-                                                        if '/site-packages/' not in filename or 'rtp_llm' in filename:
-                                                            stack_lines.append(f"    {filename}:{lineno} in {func_name}")
+                                                        if hasattr(current_frame, 'f_code') and current_frame.f_code:
+                                                            filename = current_frame.f_code.co_filename
+                                                            lineno = current_frame.f_lineno
+                                                            func_name = current_frame.f_code.co_name
+                                                            # 只显示非内部库的帧
+                                                            if '/site-packages/' not in filename or 'rtp_llm' in filename:
+                                                                stack_lines.append(f"    {filename}:{lineno} in {func_name}")
                                                         current_frame = current_frame.f_back
                                                         depth += 1
 
@@ -2009,28 +2013,32 @@ class BaseEventLoop(events.AbstractEventLoop):
                                                     pass
 
                                             # 尝试获取异步生成器的代码对象
-                                            if hasattr(coro, 'ag_code'):
+                                            if hasattr(coro, 'ag_code') and coro.ag_code:
                                                 code = coro.ag_code
-                                                task_trace += f"\n  生成器定义于: {code.co_filename}:{code.co_firstlineno}"
-                                                task_trace += f"\n  生成器名称: {code.co_name}"
+                                                if code:
+                                                    task_trace += f"\n  生成器定义于: {code.co_filename}:{code.co_firstlineno}"
+                                                    task_trace += f"\n  生成器名称: {code.co_name}"
 
                                         # 普通协程的处理
-                                        elif hasattr(coro, 'cr_code'):
+                                        elif hasattr(coro, 'cr_code') and coro.cr_code:
                                             code = coro.cr_code
-                                            task_trace += f"\n  协程定义于: {code.co_filename}:{code.co_firstlineno}"
+                                            if code:
+                                                task_trace += f"\n  协程定义于: {code.co_filename}:{code.co_firstlineno}"
 
                                             # 当前执行位置（显示卡在哪里）
                                             if hasattr(coro, 'cr_frame') and coro.cr_frame:
                                                 frame = coro.cr_frame
-                                                task_trace += f"\n  当前执行到: {frame.f_code.co_filename}:{frame.f_lineno}"
-                                                task_trace += f"\n  当前函数: {frame.f_code.co_name}"
+                                                if frame and hasattr(frame, 'f_code') and frame.f_code:
+                                                    task_trace += f"\n  当前执行到: {frame.f_code.co_filename}:{frame.f_lineno}"
+                                                    task_trace += f"\n  当前函数: {frame.f_code.co_name}"
 
                                                 # 获取当前执行的代码
                                                 try:
-                                                    import linecache
-                                                    line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
-                                                    if line:
-                                                        task_trace += f"\n    >>> 正在执行: {line.strip()}"
+                                                    if frame and hasattr(frame, 'f_code') and frame.f_code and hasattr(frame.f_code, 'co_filename'):
+                                                        import linecache
+                                                        line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
+                                                        if line:
+                                                            task_trace += f"\n    >>> 正在执行: {line.strip()}"
                                                 except:
                                                     pass
 
@@ -2040,12 +2048,13 @@ class BaseEventLoop(events.AbstractEventLoop):
                                                     current_frame = frame
                                                     depth = 0
                                                     while current_frame and depth < 10:
-                                                        filename = current_frame.f_code.co_filename
-                                                        lineno = current_frame.f_lineno
-                                                        func_name = current_frame.f_code.co_name
-                                                        # 只显示非内部库的帧
-                                                        if '/site-packages/' not in filename or 'rtp_llm' in filename:
-                                                            stack_lines.append(f"    {filename}:{lineno} in {func_name}")
+                                                        if hasattr(current_frame, 'f_code') and current_frame.f_code:
+                                                            filename = current_frame.f_code.co_filename
+                                                            lineno = current_frame.f_lineno
+                                                            func_name = current_frame.f_code.co_name
+                                                            # 只显示非内部库的帧
+                                                            if '/site-packages/' not in filename or 'rtp_llm' in filename:
+                                                                stack_lines.append(f"    {filename}:{lineno} in {func_name}")
                                                         current_frame = current_frame.f_back
                                                         depth += 1
 
