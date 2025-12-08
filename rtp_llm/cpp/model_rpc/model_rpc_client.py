@@ -385,15 +385,11 @@ class ModelRpcClient(object):
             logging.error(f"rpc unknown error:{str(e)}")
             raise e
         finally:
-
             if response_iterator:
-                logging.info(f"request: [{input_pb.request_id}] RPC finished")
+                # 使用线程池来执行同步的 cancel() 操作，避免阻塞事件循环
                 try:
-                    # 设置一个较短的超时时间
-                    await asyncio.wait_for(
-                        response_iterator.cancel(),
-                        timeout=0.5  # 500ms 超时
-                    )
-                except asyncio.TimeoutError:
-                    # 如果超时，记录日志但不阻塞
-                    logging.warning(f"gRPC stream cancel timeout for request {input_py.request_id}")
+                    loop = asyncio.get_event_loop()
+                    # 在后台线程中执行 cancel()，避免阻塞主事件循环
+                    loop.run_in_executor(None, response_iterator.cancel)
+                except Exception as e:
+                    logging.warning(f"Failed to cancel gRPC stream for request {input_py.request_id}: {e}")
