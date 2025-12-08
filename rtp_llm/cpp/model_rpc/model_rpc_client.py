@@ -348,13 +348,27 @@ class ModelRpcClient(object):
                 )
                 # 调用服务器方法并接收流式响应
                 count = 0
-                async for response in response_iterator.__aiter__():
-                    count += 1
-                    yield trans_output(input_py, response, stream_state)
+                # 获取异步迭代器对象
+                async_iter = response_iterator.__aiter__()
+                try:
+                    async for response in async_iter:
+                        count += 1
+                        yield trans_output(input_py, response, stream_state)
+                finally:
+                    # 显式关闭异步迭代器，防止垃圾回收时阻塞
+                    try:
+                        await async_iter.aclose()
+                    except Exception:
+                        # 忽略关闭时的错误
+                        pass
         except grpc.RpcError as e:
             # TODO(xinfei.sxf) 非流式的请求无法取消了
+            # 在错误情况下也需要取消 response_iterator
             if response_iterator:
-                response_iterator.cancel()
+                try:
+                    response_iterator.cancel()
+                except Exception:
+                    pass
             error_details = ErrorDetailsPB()
             metadata = e.trailing_metadata()
             if "grpc-status-details-bin" in metadata and error_details.ParseFromString(
@@ -385,19 +399,12 @@ class ModelRpcClient(object):
             logging.error(f"rpc unknown error:{str(e)}")
             raise e
         finally:
+            # 确保 response_iterator 被取消（如果还存在的话）
             if response_iterator:
-                # 创建一个后台任务来执行 cancel()，完全不阻塞
                 try:
+                    # 使用非阻塞的方式取消
                     loop = asyncio.get_event_loop()
-
-                    async def cancel_in_background():
-                        try:
-                            # 在线程池中执行阻塞的 cancel() 操作
-                            await loop.run_in_executor(None, response_iterator.cancel)
-                        except Exception as e:
-                            logging.warning(f"Failed to cancel gRPC stream for request {input_py.request_id}: {e}")
-
-                    # 创建后台任务，不等待完成
-                    loop.create_task(cancel_in_background())
-                except Exception as e:
-                    logging.warning(f"Failed to schedule gRPC stream cancellation for request {input_py.request_id}: {e}")
+                    loop.create_task(loop.run_in_executor(None, response_iterator.cancel))
+                except Exception:
+                    # 忽略取消时的任何错误
+                    pass
