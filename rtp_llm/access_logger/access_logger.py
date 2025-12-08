@@ -70,19 +70,21 @@ class AccessLogger:
         return
 
     def log_success_access(self, request: Dict[str, Any], response: Any) -> None:
-        if not self.is_private_request(request):
-            response_log = ResponseLog()
-            response_log.add_response(response)
-            self.log_access(request, response_log)
+        # if not self.is_private_request(request):
+        #     response_log = ResponseLog()
+        #     response_log.add_response(response)
+        #     self.log_access(request, response_log)
+        return
 
     def log_exception_access(
         self, request: Dict[str, Any], exception: BaseException
     ) -> None:
-        response_log = ResponseLog()
-        response_log.add_exception(exception)
-        if not self.is_private_request(request):
-            self.log_access(request, response_log)
-        else:
-            self.log_access(
-                {request_id_field_name: request[request_id_field_name]}, response_log
-            )
+        # response_log = ResponseLog()
+        # response_log.add_exception(exception)
+        # if not self.is_private_request(request):
+        #     self.log_access(request, response_log)
+        # else:
+        #     self.log_access(
+        #         {request_id_field_name: request[request_id_field_name]}, response_log
+        #     )
+        return
