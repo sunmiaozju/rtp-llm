@@ -340,7 +340,7 @@ class ModelRpcClient(object):
                 ("grpc.max_metadata_size", 1024 * 1024 * 1024),
                 # 添加 gRPC 超时配置来验证理论
                 ("grpc.keepalive_time_ms", 1000),  # 1秒发送一次keepalive ping
-                ("grpc.keepalive_timeout_ms", 1000),  # 1秒等待ping响应
+                ("grpc.keepalive_timeout_ms", 5000),  # 1秒等待ping响应
                 ("grpc.keepalive_permit_without_calls", 1),  # 即使没有调用也发送ping
                 ("grpc.http2.max_pings_without_data", 0),  # 不限制ping次数
                 # 关键配置：设置连接关闭时的超时
