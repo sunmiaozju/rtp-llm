@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import gc
 import logging
 from typing import AsyncGenerator, Optional
 
@@ -365,6 +366,13 @@ class ModelRpcClient(object):
 
                 # 获取异步迭代器对象
                 async_iter = response_iterator.__aiter__()
+
+                # 在关键路径上禁用自动 GC
+                gc_was_enabled = gc.isenabled()
+                if gc_was_enabled:
+                    gc.disable()
+                    logging.debug(f"[GC优化] 请求 {input_py.request_id}: 已禁用自动GC")
+
                 try:
                     async for response in async_iter:
                         count += 1
@@ -376,6 +384,13 @@ class ModelRpcClient(object):
                     except Exception:
                         # 忽略关闭时的错误
                         pass
+
+                    # 恢复 GC 状态并手动触发一次垃圾回收
+                    if gc_was_enabled:
+                        # 手动触发垃圾回收，在流处理完成后统一清理
+                        gc.collect()
+                        gc.enable()
+                        logging.debug(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
 
 
         except grpc.RpcError as e:
