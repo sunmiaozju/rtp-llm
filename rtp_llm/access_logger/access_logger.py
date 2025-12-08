@@ -11,25 +11,27 @@ QUERY_ACCESS_LOGGER_NAME = "query_access_logger"
 
 
 def init_access_logger(rank_id: Optional[int] = None, server_id: Optional[int] = None, async_mode: bool = True) -> None:
-    access_logger = logging.getLogger(ACCESS_LOGGER_NAME)
-    handler = get_handler("access.log", rank_id, server_id, async_mode)
-    formatter = logging.Formatter("%(message)s")
-    access_logger.handlers.clear()
-    access_logger.parent = None
-    if handler is not None:
-        handler.setFormatter(formatter)
-        access_logger.addHandler(handler)
+    # access_logger = logging.getLogger(ACCESS_LOGGER_NAME)
+    # handler = get_handler("access.log", rank_id, server_id, async_mode)
+    # formatter = logging.Formatter("%(message)s")
+    # access_logger.handlers.clear()
+    # access_logger.parent = None
+    # if handler is not None:
+    #     handler.setFormatter(formatter)
+    #     access_logger.addHandler(handler)
+    pass
 
 
 def init_query_access_logger(rank_id: Optional[int] = None, server_id: Optional[int] = None, async_mode: bool = True) -> None:
-    access_logger = logging.getLogger(QUERY_ACCESS_LOGGER_NAME)
-    handler = get_handler("query_access.log", rank_id, server_id, async_mode)
-    formatter = logging.Formatter("%(message)s")
-    access_logger.handlers.clear()
-    access_logger.parent = None
-    if handler is not None:
-        handler.setFormatter(formatter)
-        access_logger.addHandler(handler)
+    # access_logger = logging.getLogger(QUERY_ACCESS_LOGGER_NAME)
+    # handler = get_handler("query_access.log", rank_id, server_id, async_mode)
+    # formatter = logging.Formatter("%(message)s")
+    # access_logger.handlers.clear()
+    # access_logger.parent = None
+    # if handler is not None:
+    #     handler.setFormatter(formatter)
+    #     access_logger.addHandler(handler)
+    pass
 
 
 class AccessLogger:
@@ -48,22 +50,24 @@ class AccessLogger:
         return request.get("private_request", False)
 
     def log_access(self, request: Dict[str, Any], response: ResponseLog) -> None:
-        request_log = RequestLog.from_request(request)
-        access_log = PyAccessLog(
-            request=request_log, response=response, id=request[request_id_field_name]
-        )
-        self.logger.info(dump_json(access_log))
+        # request_log = RequestLog.from_request(request)
+        # access_log = PyAccessLog(
+        #     request=request_log, response=response, id=request[request_id_field_name]
+        # )
+        # self.logger.info(dump_json(access_log))
+        return
 
     def log_query_access(self, request: Dict[str, Any]) -> None:
-        if not self.is_private_request(request):
-            request_log = RequestLog.from_request(request)
-            response_log = ResponseLog()
-            access_log = PyAccessLog(
-                request=request_log,
-                response=response_log,
-                id=request[request_id_field_name],
-            )
-            self.query_logger.info(dump_json(access_log))
+        # if not self.is_private_request(request):
+        #     request_log = RequestLog.from_request(request)
+        #     response_log = ResponseLog()
+        #     access_log = PyAccessLog(
+        #         request=request_log,
+        #         response=response_log,
+        #         id=request[request_id_field_name],
+        #     )
+        #     self.query_logger.info(dump_json(access_log))
+        return
 
     def log_success_access(self, request: Dict[str, Any], response: Any) -> None:
         if not self.is_private_request(request):
