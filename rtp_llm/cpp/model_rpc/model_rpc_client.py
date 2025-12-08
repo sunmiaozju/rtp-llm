@@ -371,7 +371,7 @@ class ModelRpcClient(object):
                 gc_was_enabled = gc.isenabled()
                 if gc_was_enabled:
                     gc.disable()
-                    logging.debug(f"[GC优化] 请求 {input_py.request_id}: 已禁用自动GC")
+                    logging.info(f"[GC优化] 请求 {input_py.request_id}: 已禁用自动GC")
 
                 try:
                     async for response in async_iter:
@@ -390,7 +390,7 @@ class ModelRpcClient(object):
                         # 手动触发垃圾回收，在流处理完成后统一清理
                         gc.collect()
                         gc.enable()
-                        logging.debug(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
+                        logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
 
 
         except grpc.RpcError as e:
