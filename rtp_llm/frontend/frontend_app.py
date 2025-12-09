@@ -2,7 +2,10 @@ import asyncio
 import logging
 import socket
 import threading
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Set
+import traceback
+import time
+import weakref
 
 from anyio import CapacityLimiter
 from anyio.lowlevel import RunVar
@@ -71,6 +74,104 @@ class FrontendApp(object):
             f"server_port = {g_worker_info.server_port}, backend_server_port = {g_worker_info.backend_server_port}, frontend_server_id = {py_env_configs.server_config.frontend_server_id}"
         )
 
+        # 存储活跃的异步生成器信息
+        self.active_generators: Dict[int, Dict[str, Any]] = {}
+        self.generator_refs: Set[weakref.ref] = set()
+
+    def _setup_async_generator_tracking(self):
+        """设置异步生成器生命周期追踪"""
+
+        # 获取事件循环
+        loop = asyncio.get_event_loop()
+
+        def tracked_firstiter_hook(agen):
+            """当异步生成器第一次迭代时调用"""
+            gen_id = id(agen)
+
+            # 获取创建时的调用栈
+            stack = traceback.extract_stack()
+
+            # 获取生成器名称
+            gen_name = 'Unknown'
+            if hasattr(agen, '__name__'):
+                gen_name = agen.__name__
+            elif hasattr(agen, 'ag_code'):
+                gen_name = agen.ag_code.co_name
+            elif hasattr(agen, '__qualname__'):
+                gen_name = agen.__qualname__
+
+            # 尝试从调用栈中获取更多信息
+            for frame in reversed(stack):
+                if 'model_rpc_client' in frame.filename:
+                    gen_name = f"{gen_name} (from model_rpc_client)"
+                    break
+                elif 'frontend_worker' in frame.filename:
+                    gen_name = f"{gen_name} (from frontend_worker)"
+                    break
+
+            # 记录生成器信息
+            self.active_generators[gen_id] = {
+                'name': gen_name,
+                'created_at': time.time(),
+                'stack_trace': stack,
+                'type': type(agen).__name__,
+                'repr': repr(agen),
+            }
+
+            # 创建弱引用来追踪生成器
+            ref = weakref.ref(agen, lambda r: self._on_generator_deleted(gen_id))
+            self.generator_refs.add(ref)
+
+            logging.info(f"🟢 [AsyncGen 创建] {gen_name} (ID: {gen_id})")
+            # 打印关键的调用栈帧
+            for frame in stack[-10:-1]:
+                if 'site-packages' not in frame.filename and 'asyncio' not in frame.filename:
+                    logging.info(f"  -> {frame.filename}:{frame.lineno} in {frame.name}")
+
+        def tracked_finalizer_hook(agen):
+            """当异步生成器被垃圾回收时调用"""
+            gen_id = id(agen)
+
+            if gen_id in self.active_generators:
+                info = self.active_generators[gen_id]
+                lifetime = time.time() - info['created_at']
+
+                if lifetime > 0.1:
+                    logging.warning(f"🔵 [AsyncGen GC] {info['name']} (ID: {gen_id}), 存活时间: {lifetime:.3f}秒 ⚠️")
+                else:
+                    logging.info(f"🔵 [AsyncGen GC] {info['name']} (ID: {gen_id}), 存活时间: {lifetime:.3f}秒")
+
+        # 设置钩子
+        loop.set_asyncgen_hooks(
+            firstiter=tracked_firstiter_hook,
+            finalizer=tracked_finalizer_hook
+        )
+
+        # 创建定期报告任务
+        loop.create_task(self._periodic_report())
+
+        logging.info("✅ 前端服务器异步生成器生命周期追踪已启用")
+
+    def _on_generator_deleted(self, gen_id: int):
+        """当生成器被删除时调用"""
+        if gen_id in self.active_generators:
+            info = self.active_generators[gen_id]
+            lifetime = time.time() - info['created_at']
+            logging.info(f"[AsyncGen 删除] {info['name']} (ID: {gen_id}), 存活时间: {lifetime:.3f}秒")
+            del self.active_generators[gen_id]
+
+    async def _periodic_report(self):
+        """定期报告活跃的异步生成器"""
+        while True:
+            await asyncio.sleep(30)
+            if self.active_generators:
+                logging.info(f"📊 当前活跃的异步生成器: {len(self.active_generators)}个")
+                for gen_id, info in self.active_generators.items():
+                    lifetime = time.time() - info['created_at']
+                    logging.info(f"  - {info['name']} (ID: {gen_id}, 存活时间: {lifetime:.3f}秒)")
+            else:
+                logging.info("✅ 没有活跃的异步生成器")
+
     def start(self):
         self.frontend_server.start()
         app = self.create_app()
@@ -84,6 +185,9 @@ class FrontendApp(object):
 
         # 配置 asyncio 性能参数，增加慢回调阈值
         configure_asyncio_performance(slow_callback_duration=0.05)
+
+        # 设置异步生成器追踪钩子
+        self._setup_async_generator_tracking()
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
