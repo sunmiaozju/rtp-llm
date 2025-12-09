@@ -378,40 +378,38 @@ class ModelRpcClient(object):
                         count += 1
                         yield trans_output(input_py, response, stream_state)
                 finally:
-                    # 创建线程化关闭函数
-                    async def _close_in_thread():
-                        def _close_in_new_loop():
-                            """在新的事件循环中关闭异步迭代器"""
-                            try:
-                                # 创建新的事件循环
-                                new_loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(new_loop)
-
-                                try:
-                                    # 在新循环中执行关闭操作
-                                    new_loop.run_until_complete(
-                                        asyncio.wait_for(async_iter.aclose(), timeout=0.05)
-                                    )
-                                    logging.info(f"请求 {input_py.request_id}: 异步迭代器在线程中正常关闭")
-                                except asyncio.TimeoutError:
-                                    logging.warning(f"请求 {input_py.request_id}: 异步迭代器在线程中关闭超时")
-                                except Exception as e:
-                                    logging.info(f"请求 {input_py.request_id}: 异步迭代器在线程中关闭异常: {e}")
-                                finally:
-                                    # 清理新的事件循环
-                                    new_loop.close()
-                            except Exception as e:
-                                logging.error(f"请求 {input_py.request_id}: 线程中关闭迭代器失败: {e}")
-
-                        # 使用 to_thread 在单独线程中执行
+                    # Fire-and-forget 守护线程方案：在新线程中阻塞关闭异步迭代器
+                    def _blocking_close():
+                        """在新线程中阻塞关闭异步迭代器"""
                         try:
-                            await asyncio.to_thread(_close_in_new_loop)
-                        except Exception as e:
-                            logging.error(f"请求 {input_py.request_id}: 线程化关闭失败: {e}")
+                            # 创建新的事件循环（线程本地）
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
 
-                    # 创建后台任务执行线程化关闭，不等待完成
-                    close_task = asyncio.create_task(_close_in_thread())
-                    close_task.set_name(f"close-thread-{input_py.request_id}")
+                            try:
+                                # 阻塞运行异步关闭操作
+                                loop.run_until_complete(
+                                    asyncio.wait_for(async_iter.aclose(), timeout=0.05)
+                                )
+                                logging.info(f"请求 {input_py.request_id}: 异步迭代器关闭成功")
+                            except asyncio.TimeoutError:
+                                logging.warning(f"请求 {input_py.request_id}: 异步迭代器关闭超时")
+                            except Exception as e:
+                                logging.error(f"请求 {input_py.request_id}: 异步迭代器关闭异常: {e}")
+                            finally:
+                                loop.close()
+                        except Exception as e:
+                            logging.error(f"请求 {input_py.request_id}: 线程关闭失败: {e}")
+
+                    # 启动守护线程，立即返回
+                    import threading
+                    thread = threading.Thread(
+                        target=_blocking_close,
+                        daemon=True,  # 守护线程，程序退出时自动结束
+                        name=f"grpc-close-{input_py.request_id}"
+                    )
+                    thread.start()
+                    logging.info(f"请求 {input_py.request_id}: 已启动守护线程执行异步迭代器关闭")
 
                     # 立即恢复 GC，不等待关闭完成
                     if gc_was_enabled:
