@@ -1,5 +1,7 @@
+import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import AsyncGenerator, List, Optional
 
@@ -50,6 +52,13 @@ class OpenaiEndpoint(object):
             raise AttributeError(f"tokenizer is none!")
         self.tokenizer: BaseTokenizer = tokenizer
         self.backend_rpc_server_visitor = backend_rpc_server_visitor
+
+        # 创建线程池用于处理 render_chat 操作
+        # render_chat 是 CPU 密集型操作，使用线程池可以避免阻塞主事件循环
+        self.render_executor = ThreadPoolExecutor(
+            max_workers=min(64, (asyncio.os.cpu_count() * 8)),
+            thread_name_prefix="render_worker"
+        )
 
         self.eos_token_id = tokenizer.eos_token_id
         if self.eos_token_id == None:
@@ -385,13 +394,23 @@ class OpenaiEndpoint(object):
             rendered_input.input_ids += self.tokenizer.encode(prepopulate_str)
         return rendered_input
 
-    def chat_completion(
+    async def chat_completion(
         self, request_id: int, chat_request: ChatCompletionRequest, raw_request: Request
     ) -> CompleteResponseAsyncGenerator:
         renderer = (
             self.template_renderer if chat_request.user_template else self.chat_renderer
         )
-        rendered_input = self.render_chat(chat_request)
+
+        # 获取当前的事件循环
+        loop = asyncio.get_running_loop()
+
+        # 使用线程池执行 render_chat
+        rendered_input = await loop.run_in_executor(
+            self.render_executor,  # 使用定义的 ThreadPoolExecutor
+            self.render_chat,      # 要执行的函数
+            chat_request           # 函数参数
+        )
+
         generate_config = self._extract_generation_config(chat_request)
 
         mm_inputs = rendered_input.multimodal_inputs
