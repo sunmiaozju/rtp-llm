@@ -301,7 +301,7 @@ class FrontendServer(object):
 
         assert self._frontend_worker is not None
         start_time = current_time_ms()
-        response_generator = generate_call()
+        response_generator = await generate_call()
         return CompleteResponseAsyncGenerator(
             __gen_response_with_report(start_time, response_generator),
             response_generator._collect_complete_response_func,
