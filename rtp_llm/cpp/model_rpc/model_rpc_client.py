@@ -378,25 +378,26 @@ class ModelRpcClient(object):
                         count += 1
                         yield trans_output(input_py, response, stream_state)
                 finally:
-                    # 显式关闭异步迭代器，使用超时机制防止长时间阻塞
-                    try:
-                        # 使用 wait_for 设置超时，避免 aclose 长时间阻塞
-                        # await asyncio.wait_for(async_iter.aclose(), timeout=0.05)
-                        await async_iter.aclose()
-                    except asyncio.TimeoutError:
-                        logging.warning(f"[GC优化] 请求 {input_py.request_id}: 异步迭代器关闭超时")
-                    except Exception as e:
-                        # 记录关闭时的错误，但不中断流程
-                        logging.debug(f"[GC优化] 请求 {input_py.request_id}: 异步迭代器关闭异常: {e}")
-                        pass
+                    # 创建关闭任务的辅助函数
+                    async def _close_async_iter():
+                        try:
+                            await asyncio.wait_for(async_iter.aclose(),
+                                                   timeout=0.05)
+                            logging.info(f"请求 {input_py.request_id}: 异步迭代器正常关闭")
+                        except asyncio.TimeoutError:
+                            logging.warning(f"请求 {input_py.request_id}: 异步迭代器关闭超时")
+                        except Exception as e:
+                            logging.info(f"请求 {input_py.request_id}:  异步迭代器关闭异常: {e}")
 
-                    # 恢复 GC 状态并手动触发一次垃圾回收
-                    if gc_was_enabled:
-                        # 手动触发垃圾回收，在流处理完成后统一清理
-                        gc.collect()
-                        gc.enable()
-                        logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
+                            # 创建后台任务执行关闭，不等待完成
+                            close_task = asyncio.create_task(_close_async_iter())
+                            close_task.set_name(f"close-{input_py.request_id}")
 
+                            # 立即恢复 GC，不等待关闭完成
+                            if gc_was_enabled:
+                                gc.collect()
+                            gc.enable()
+                            logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
 
         except grpc.RpcError as e:
             # TODO(xinfei.sxf) 非流式的请求无法取消了
