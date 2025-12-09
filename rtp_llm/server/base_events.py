@@ -1817,6 +1817,196 @@ class BaseEventLoop(events.AbstractEventLoop):
         """Notification that a TimerHandle has been cancelled."""
         if handle._scheduled:
             self._timer_cancelled_count += 1
+    
+    def _log_slow_callback_debug_info(self, handle, dt):
+        """记录慢回调的详细调试信息"""
+        # 基础信息
+        callback_info = f"callback={handle._callback}"
+        args_info = f"args={handle._args}"
+        
+        # 1. 获取任务创建时的调用栈
+        creation_trace = self._get_creation_trace(handle)
+        
+        # 2. 获取任务详细信息
+        task_trace = self._get_task_trace(handle)
+        
+        # 3. 获取上下文变量
+        context_trace = self._get_context_trace(handle)
+        
+        # 记录完整的调试信息
+        logger.warning('Executing %s took %.3f seconds\n  %s\n  %s%s%s%s',
+                       _format_handle(handle), dt, callback_info, args_info,
+                       creation_trace, task_trace, context_trace)
+    
+    def _get_creation_trace(self, handle):
+        """获取任务创建时的调用栈信息"""
+        if hasattr(handle, '_source_traceback') and handle._source_traceback:
+            creation_trace = "\n  === 完整调用栈（任务创建位置）==="
+            for idx, frame in enumerate(handle._source_traceback):
+                creation_trace += f"\n  [{idx}] {frame[0]}:{frame[1]} in {frame[2]}"
+                if frame[3]:  # 代码文本
+                    creation_trace += f"\n      {frame[3].strip()}"
+            return creation_trace
+        else:
+            return ("\n  注意：需要开启 asyncio 调试模式才能看到任务创建位置"
+                   "\n    方法1: asyncio.set_debug(True)"
+                   "\n    方法2: export PYTHONASYNCIODEBUG=1")
+    
+    def _get_task_trace(self, handle):
+        """获取任务对象的详细信息"""
+        if not hasattr(handle._callback, '__self__'):
+            return ""
+        
+        obj = handle._callback.__self__
+        if not hasattr(obj, 'get_coro'):
+            return ""
+        
+        task_trace = f"\n  任务对象: {obj}"
+        
+        # 获取任务名称
+        if hasattr(obj, 'get_name'):
+            task_name = obj.get_name()
+            if task_name:
+                task_trace += f"\n  任务名称: {task_name}"
+        
+        # 获取协程信息
+        try:
+            coro = obj.get_coro()
+            if coro is not None:
+                coro_name = coro.__qualname__ if hasattr(coro, '__qualname__') else str(coro)
+                task_trace += f"\n  协程: {coro_name}"
+                
+                # 处理异步生成器
+                coro_type = type(coro).__name__
+                if 'async_generator' in coro_type.lower():
+                    task_trace += self._get_async_generator_trace(coro, coro_type)
+                # 处理普通协程
+                elif hasattr(coro, 'cr_code') and coro.cr_code:
+                    task_trace += self._get_coroutine_trace(coro)
+            else:
+                task_trace += f"\n  协程: <已完成，无协程对象>"
+        except Exception as e:
+            task_trace += f"\n  [获取协程信息时出错: {e}]"
+        
+        return task_trace
+    
+    def _get_async_generator_trace(self, coro, coro_type):
+        """获取异步生成器的详细信息"""
+        trace = f"\n  [异步生成器类型]: {coro_type}"
+        
+        if hasattr(coro, 'ag_frame') and coro.ag_frame:
+            frame = coro.ag_frame
+            if frame and hasattr(frame, 'f_code') and frame.f_code:
+                trace += f"\n  生成器当前位置: {frame.f_code.co_filename}:{frame.f_lineno}"
+                trace += f"\n  生成器函数: {frame.f_code.co_name}"
+                
+                # 获取当前执行的代码
+                trace += self._get_current_line(frame)
+                
+                # 获取局部变量
+                trace += self._get_local_vars(frame)
+                
+                # 获取堆栈追踪
+                trace += self._get_stack_trace(frame)
+        
+        # 获取生成器代码对象信息
+        if hasattr(coro, 'ag_code') and coro.ag_code:
+            code = coro.ag_code
+            if code:
+                trace += f"\n  生成器定义于: {code.co_filename}:{code.co_firstlineno}"
+                trace += f"\n  生成器名称: {code.co_name}"
+        
+        return trace
+    
+    def _get_coroutine_trace(self, coro):
+        """获取普通协程的详细信息"""
+        trace = ""
+        code = coro.cr_code
+        if code:
+            trace += f"\n  协程定义于: {code.co_filename}:{code.co_firstlineno}"
+        
+        # 当前执行位置
+        if hasattr(coro, 'cr_frame') and coro.cr_frame:
+            frame = coro.cr_frame
+            if frame and hasattr(frame, 'f_code') and frame.f_code:
+                trace += f"\n  当前执行到: {frame.f_code.co_filename}:{frame.f_lineno}"
+                trace += f"\n  当前函数: {frame.f_code.co_name}"
+                
+                # 获取当前执行的代码
+                trace += self._get_current_line(frame)
+                
+                # 获取堆栈追踪
+                trace += self._get_stack_trace(frame)
+        
+        return trace
+    
+    def _get_current_line(self, frame):
+        """获取当前执行的代码行"""
+        try:
+            if frame and hasattr(frame, 'f_code') and frame.f_code and hasattr(frame.f_code, 'co_filename'):
+                import linecache
+                line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
+                if line:
+                    return f"\n    >>> 正在执行: {line.strip()}"
+        except:
+            pass
+        return ""
+    
+    def _get_local_vars(self, frame):
+        """获取局部变量信息"""
+        try:
+            if frame and hasattr(frame, 'f_locals'):
+                local_vars = frame.f_locals
+                important_vars = []
+                for key, value in list(local_vars.items())[:5]:
+                    if not key.startswith('_'):
+                        var_str = f"{key}={str(value)[:50]}"
+                        important_vars.append(var_str)
+                if important_vars:
+                    return f"\n  局部变量: {', '.join(important_vars)}"
+        except:
+            pass
+        return ""
+    
+    def _get_stack_trace(self, frame):
+        """获取堆栈追踪信息"""
+        try:
+            stack_lines = []
+            current_frame = frame
+            depth = 0
+            while current_frame and depth < 10:
+                if hasattr(current_frame, 'f_code') and current_frame.f_code:
+                    filename = current_frame.f_code.co_filename
+                    lineno = current_frame.f_lineno
+                    func_name = current_frame.f_code.co_name
+                    # 只显示非内部库的帧
+                    if '/site-packages/' not in filename or 'rtp_llm' in filename:
+                        stack_lines.append(f"    {filename}:{lineno} in {func_name}")
+                current_frame = current_frame.f_back
+                depth += 1
+            
+            if stack_lines:
+                trace = f"\n  堆栈追踪:"
+                for line in stack_lines[:5]:  # 只显示前5层
+                    trace += f"\n{line}"
+                return trace
+        except:
+            pass
+        return ""
+    
+    def _get_context_trace(self, handle):
+        """获取上下文变量信息"""
+        if hasattr(handle, '_context') and handle._context:
+            ctx_items = []
+            for var in list(handle._context)[:3]:  # 只显示前3个
+                try:
+                    value = str(handle._context[var])[:50]
+                    ctx_items.append(f"{var.name}={value}")
+                except:
+                    pass
+            if ctx_items:
+                return f"\n  上下文变量: {', '.join(ctx_items)}"
+        return ""
 
     def _run_once(self):
         """Run one full iteration of the event loop.
@@ -1888,205 +2078,7 @@ class BaseEventLoop(events.AbstractEventLoop):
                     handle._run()
                     dt = self.time() - t0
                     if dt >= self.slow_callback_duration:
-                        logger.warning('Executing %s took %.3f seconds',
-                                       _format_handle(handle), dt)
-                    if dt >= self.slow_callback_duration:
-                        # 获取更多调试信息
-                        callback_info = f"callback={handle._callback}"
-                        args_info = f"args={handle._args}"
-                        
-                    
-                        # 如果是协程任务，获取更多信息
-                        if hasattr(handle._callback, '__self__') and hasattr(handle._callback.__self__, 'get_coro'):
-                            coro = handle._callback.__self__.get_coro()
-                            coro_info = f", coroutine={coro.__name__ if hasattr(coro, '__name__') else coro}"
-                        else:
-                            coro_info = ""
-                        
-                        logger.warning('Executing %s took %.3f seconds\n  %s\n  %s%s',
-                                       _format_handle(handle), dt, callback_info, args_info,
-                                       coro_info)
-                        callback_info = f"callback={handle._callback}"
-                        args_info = f"args={handle._args}"
-                        
-                        # === 添加更多从 handle 对象获取的调试信息 ===
-                        
-                        # 1. 获取任务创建时的调用栈（显示是什么代码触发了这个任务）
-                        creation_trace = ""
-                        if hasattr(handle, '_source_traceback') and handle._source_traceback:
-                            # _source_traceback 包含创建 handle 时的完整调用栈
-                            # 每个元素是元组: (filename, lineno, function, text)
-                            creation_trace = "\n  === 完整调用栈（任务创建位置）==="
-
-                            # 显示完整的调用栈，不进行任何过滤
-                            for idx, frame in enumerate(handle._source_traceback):
-                                creation_trace += f"\n  [{idx}] {frame[0]}:{frame[1]} in {frame[2]}"
-                                if frame[3]:  # 代码文本
-                                    creation_trace += f"\n      {frame[3].strip()}"
-                        else:
-                            # 没有 _source_traceback 说明没有开启调试模式
-                            creation_trace = "\n  注意：需要开启 asyncio 调试模式才能看到任务创建位置"
-                            creation_trace += "\n    方法1: asyncio.set_debug(True)"
-                            creation_trace += "\n    方法2: export PYTHONASYNCIODEBUG=1"
-                        
-                        # 2. 如果是 Task 对象，获取更多信息
-                        task_trace = ""
-                        if hasattr(handle._callback, '__self__'):
-                            obj = handle._callback.__self__
-                        
-                            # 如果是 Task 对象
-                            if hasattr(obj, 'get_coro'):
-                                task_trace = f"\n  任务对象: {obj}"
-                        
-                                # 获取任务名称
-                                if hasattr(obj, 'get_name'):
-                                    task_name = obj.get_name()
-                                    if task_name:
-                                        task_trace += f"\n  任务名称: {task_name}"
-                        
-                                # 获取协程信息
-                                try:
-                                    coro = obj.get_coro()
-                                    if coro is not None:
-                                        # 协程名称和定义位置
-                                        coro_name = coro.__qualname__ if hasattr(coro, '__qualname__') else str(coro)
-                                        task_trace += f"\n  协程: {coro_name}"
-
-                                        # === 特殊处理异步生成器 ===
-                                        # 检查是否是 async_generator_athrow 或其他异步生成器
-                                        coro_type = type(coro).__name__
-                                        if 'async_generator' in coro_type.lower():
-                                            task_trace += f"\n  [异步生成器类型]: {coro_type}"
-
-                                            # 尝试获取异步生成器的帧信息
-                                            if hasattr(coro, 'ag_frame') and coro.ag_frame:
-                                                frame = coro.ag_frame
-                                                if frame and hasattr(frame, 'f_code') and frame.f_code:
-                                                    task_trace += f"\n  生成器当前位置: {frame.f_code.co_filename}:{frame.f_lineno}"
-                                                    task_trace += f"\n  生成器函数: {frame.f_code.co_name}"
-
-                                                # 获取当前执行的代码
-                                                try:
-                                                    if frame and hasattr(frame, 'f_code') and frame.f_code and hasattr(frame.f_code, 'co_filename'):
-                                                        import linecache
-                                                        line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
-                                                        if line:
-                                                            task_trace += f"\n    >>> 正在执行: {line.strip()}"
-                                                except:
-                                                    pass
-
-                                                # 获取局部变量以了解上下文
-                                                try:
-                                                    if frame and hasattr(frame, 'f_locals'):
-                                                        local_vars = frame.f_locals
-                                                        important_vars = []
-                                                        for key, value in list(local_vars.items())[:5]:
-                                                            if not key.startswith('_'):
-                                                                var_str = f"{key}={str(value)[:50]}"
-                                                                important_vars.append(var_str)
-                                                        if important_vars:
-                                                            task_trace += f"\n  局部变量: {', '.join(important_vars)}"
-                                                except:
-                                                    pass
-
-                                                # 获取完整的堆栈追踪
-                                                try:
-                                                    stack_lines = []
-                                                    current_frame = frame
-                                                    depth = 0
-                                                    while current_frame and depth < 10:
-                                                        if hasattr(current_frame, 'f_code') and current_frame.f_code:
-                                                            filename = current_frame.f_code.co_filename
-                                                            lineno = current_frame.f_lineno
-                                                            func_name = current_frame.f_code.co_name
-                                                            # 只显示非内部库的帧
-                                                            if '/site-packages/' not in filename or 'rtp_llm' in filename:
-                                                                stack_lines.append(f"    {filename}:{lineno} in {func_name}")
-                                                        current_frame = current_frame.f_back
-                                                        depth += 1
-
-                                                    if stack_lines:
-                                                        task_trace += f"\n  堆栈追踪:"
-                                                        for line in stack_lines[:5]:  # 只显示前5层
-                                                            task_trace += f"\n{line}"
-                                                except:
-                                                    pass
-
-                                            # 尝试获取异步生成器的代码对象
-                                            if hasattr(coro, 'ag_code') and coro.ag_code:
-                                                code = coro.ag_code
-                                                if code:
-                                                    task_trace += f"\n  生成器定义于: {code.co_filename}:{code.co_firstlineno}"
-                                                    task_trace += f"\n  生成器名称: {code.co_name}"
-
-                                        # 普通协程的处理
-                                        elif hasattr(coro, 'cr_code') and coro.cr_code:
-                                            code = coro.cr_code
-                                            if code:
-                                                task_trace += f"\n  协程定义于: {code.co_filename}:{code.co_firstlineno}"
-
-                                            # 当前执行位置（显示卡在哪里）
-                                            if hasattr(coro, 'cr_frame') and coro.cr_frame:
-                                                frame = coro.cr_frame
-                                                if frame and hasattr(frame, 'f_code') and frame.f_code:
-                                                    task_trace += f"\n  当前执行到: {frame.f_code.co_filename}:{frame.f_lineno}"
-                                                    task_trace += f"\n  当前函数: {frame.f_code.co_name}"
-
-                                                # 获取当前执行的代码
-                                                try:
-                                                    if frame and hasattr(frame, 'f_code') and frame.f_code and hasattr(frame.f_code, 'co_filename'):
-                                                        import linecache
-                                                        line = linecache.getline(frame.f_code.co_filename, frame.f_lineno)
-                                                        if line:
-                                                            task_trace += f"\n    >>> 正在执行: {line.strip()}"
-                                                except:
-                                                    pass
-
-                                                # 获取完整的堆栈追踪
-                                                try:
-                                                    stack_lines = []
-                                                    current_frame = frame
-                                                    depth = 0
-                                                    while current_frame and depth < 10:
-                                                        if hasattr(current_frame, 'f_code') and current_frame.f_code:
-                                                            filename = current_frame.f_code.co_filename
-                                                            lineno = current_frame.f_lineno
-                                                            func_name = current_frame.f_code.co_name
-                                                            # 只显示非内部库的帧
-                                                            if '/site-packages/' not in filename or 'rtp_llm' in filename:
-                                                                stack_lines.append(f"    {filename}:{lineno} in {func_name}")
-                                                        current_frame = current_frame.f_back
-                                                        depth += 1
-
-                                                    if stack_lines:
-                                                        task_trace += f"\n  堆栈追踪:"
-                                                        for line in stack_lines[:5]:  # 只显示前5层
-                                                            task_trace += f"\n{line}"
-                                                except:
-                                                    pass
-                                    else:
-                                        # 协程对象为 None，说明任务已经完成
-                                        task_trace += f"\n  协程: <已完成，无协程对象>"
-                                except Exception as e:
-                                    task_trace += f"\n  [获取协程信息时出错: {e}]"
-                        
-                        # 3. 获取上下文变量
-                        context_trace = ""
-                        if hasattr(handle, '_context') and handle._context:
-                            ctx_items = []
-                            for var in list(handle._context)[:3]:  # 只显示前3个
-                                try:
-                                    value = str(handle._context[var])[:50]
-                                    ctx_items.append(f"{var.name}={value}")
-                                except:
-                                    pass
-                            if ctx_items:
-                                context_trace = f"\n  上下文变量: {', '.join(ctx_items)}"
-                        
-                        # === 修改原来的 logger.warning 调用，添加所有信息 ===
-                        logger.warning('Executing %s took %.3f seconds\n  %s\n  %s%s%s%s',
-                                       _format_handle(handle), dt, callback_info, args_info,
-                                       creation_trace, task_trace, context_trace)
+                        self._log_slow_callback_debug_info(handle, dt)
                 finally:
                     self._current_handle = None
             else:
