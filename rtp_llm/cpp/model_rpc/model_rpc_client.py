@@ -378,11 +378,15 @@ class ModelRpcClient(object):
                         count += 1
                         yield trans_output(input_py, response, stream_state)
                 finally:
-                    # 显式关闭异步迭代器，防止垃圾回收时阻塞
+                    # 显式关闭异步迭代器，使用超时机制防止长时间阻塞
                     try:
-                        await async_iter.aclose()
-                    except Exception:
-                        # 忽略关闭时的错误
+                        # 使用 wait_for 设置超时，避免 aclose 长时间阻塞
+                        await asyncio.wait_for(async_iter.aclose(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        logging.warning(f"[GC优化] 请求 {input_py.request_id}: 异步迭代器关闭超时")
+                    except Exception as e:
+                        # 记录关闭时的错误，但不中断流程
+                        logging.debug(f"[GC优化] 请求 {input_py.request_id}: 异步迭代器关闭异常: {e}")
                         pass
 
                     # 恢复 GC 状态并手动触发一次垃圾回收

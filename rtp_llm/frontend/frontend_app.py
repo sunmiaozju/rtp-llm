@@ -23,6 +23,7 @@ from rtp_llm.frontend.frontend_server import FrontendServer
 from rtp_llm.openai.api_datatype import ChatCompletionRequest
 from rtp_llm.utils.util import AtomicCounter, async_request_server
 from rtp_llm.utils.version_info import VersionInfo
+from rtp_llm.utils.asyncio_config import configure_asyncio_performance
 
 # make buffer larger to avoid throw exception "RemoteProtocolError Receive buffer too long"
 MAX_INCOMPLETE_EVENT_SIZE = 1024 * 1024
@@ -80,6 +81,9 @@ class FrontendApp(object):
             loop = "none"
             auto_loop_setup()
             asyncio.set_event_loop(asyncio.new_event_loop())
+
+        # 配置 asyncio 性能参数，增加慢回调阈值
+        configure_asyncio_performance(slow_callback_duration=0.05)
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
