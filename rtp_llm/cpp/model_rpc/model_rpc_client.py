@@ -389,15 +389,15 @@ class ModelRpcClient(object):
                         except Exception as e:
                             logging.info(f"请求 {input_py.request_id}:  异步迭代器关闭异常: {e}")
 
-                            # 创建后台任务执行关闭，不等待完成
-                            close_task = asyncio.create_task(_close_async_iter())
-                            close_task.set_name(f"close-{input_py.request_id}")
+                    # 创建后台任务执行关闭，不等待完成
+                    close_task = asyncio.create_task(_close_async_iter())
+                    close_task.set_name(f"close-{input_py.request_id}")
 
-                            # 立即恢复 GC，不等待关闭完成
-                            if gc_was_enabled:
-                                gc.collect()
-                            gc.enable()
-                            logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
+                    # 立即恢复 GC，不等待关闭完成
+                    if gc_was_enabled:
+                        gc.collect()
+                    gc.enable()
+                    logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
 
         except grpc.RpcError as e:
             # TODO(xinfei.sxf) 非流式的请求无法取消了
