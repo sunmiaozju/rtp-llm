@@ -186,8 +186,8 @@ class FrontendApp(object):
         # 配置 asyncio 性能参数，增加慢回调阈值
         configure_asyncio_performance(slow_callback_duration=0.05)
 
-        # 设置异步生成器追踪钩子
-        self._setup_async_generator_tracking()
+        # 设置异步生成器追踪钩子（已经在 FrontendApp 实例中设置）
+        # 追踪功能已经在实例化时通过 _setup_async_generator_tracking 启用
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)

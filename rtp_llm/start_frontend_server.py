@@ -27,90 +27,7 @@ from rtp_llm.utils.concurrency_controller import (
 # 存储所有异步生成器的信息
 active_generators: Dict[int, Dict[str, Any]] = {}
 generator_refs: Set[weakref.ref] = set()
-
-# 原始方法
-original_athrow = None
-original_aclose = None
-
-
-def patch_async_generator_methods():
-    """Patch 异步生成器的方法来追踪 athrow 和 aclose"""
-
-    global original_athrow, original_aclose
-
-    # 获取异步生成器类型
-    async def dummy():
-        yield
-
-    AsyncGeneratorType = type(dummy())
-
-    # 保存原始方法
-    original_athrow = AsyncGeneratorType.athrow
-    original_aclose = AsyncGeneratorType.aclose
-
-    def tracked_athrow(self, *args, **kwargs):
-        """追踪 athrow 操作"""
-        gen_id = id(self)
-        start_time = time.time()
-
-        # 获取生成器信息
-        gen_info = active_generators.get(gen_id, {})
-        gen_name = gen_info.get('name', 'Unknown')
-
-        logging.warning(f"🔴 [ATHROW 开始] 生成器: {gen_name} (ID: {gen_id})")
-        logging.warning(f"  类型: {type(self)}")
-        logging.warning(f"  参数: {args}")
-
-        # 获取代码信息
-        if hasattr(self, 'ag_code'):
-            code = self.ag_code
-            logging.warning(f"  代码位置: {code.co_filename}:{code.co_firstlineno} in {code.co_name}")
-
-        # 打印创建时的调用栈
-        if 'stack_trace' in gen_info:
-            logging.warning("  创建位置:")
-            for frame in gen_info['stack_trace'][-8:-1]:
-                if 'site-packages' not in frame.filename:
-                    logging.warning(f"    {frame.filename}:{frame.lineno} in {frame.name}")
-
-        # 打印当前调用栈
-        current_stack = traceback.extract_stack()
-        logging.warning("  当前调用栈:")
-        for frame in current_stack[-10:-1]:
-            if 'asyncio' not in frame.filename:
-                logging.warning(f"    {frame.filename}:{frame.lineno} in {frame.name}")
-
-        try:
-            # 调用原始方法
-            result = original_athrow(self, *args, **kwargs)
-            duration = time.time() - start_time
-
-            if duration >= 0.05:  # 匹配用户的慢回调阈值
-                logging.error(f"⚠️  [ATHROW 完成] 生成器: {gen_name} (ID: {gen_id}), 耗时: {duration:.3f}秒 (超过阈值!)")
-            else:
-                logging.info(f"✅ [ATHROW 完成] 生成器: {gen_name} (ID: {gen_id}), 耗时: {duration:.3f}秒")
-
-            return result
-        except Exception as e:
-            duration = time.time() - start_time
-            logging.error(f"❌ [ATHROW 异常] 生成器: {gen_name} (ID: {gen_id}), 耗时: {duration:.3f}秒, 异常: {e}")
-            raise
-
-    def tracked_aclose(self):
-        """追踪 aclose 操作"""
-        gen_id = id(self)
-        gen_info = active_generators.get(gen_id, {})
-        gen_name = gen_info.get('name', 'Unknown')
-
-        logging.info(f"🟡 [ACLOSE] {gen_name} (ID: {gen_id})")
-
-        return original_aclose(self)
-
-    # 替换方法
-    AsyncGeneratorType.athrow = tracked_athrow
-    AsyncGeneratorType.aclose = tracked_aclose
-
-    logging.info("✅ 异步生成器方法追踪已启用")
+athrow_timing: Dict[int, float] = {}  # 记录 athrow 开始时间
 
 
 def setup_async_generator_tracking():
@@ -173,6 +90,11 @@ def setup_async_generator_tracking():
 
             if lifetime > 0.1:
                 logging.warning(f"🔵 [AsyncGen GC] {info['name']} (ID: {gen_id}), 存活时间: {lifetime:.3f}秒 ⚠️")
+
+                # 如果在 athrow 中，计算 athrow 耗时
+                if gen_id in athrow_timing:
+                    athrow_duration = time.time() - athrow_timing[gen_id]
+                    logging.error(f"⚠️  [ATHROW in GC] 生成器 {info['name']} 在 GC finalizer 中执行 athrow，已耗时: {athrow_duration:.3f}秒")
             else:
                 logging.info(f"🔵 [AsyncGen GC] {info['name']} (ID: {gen_id}), 存活时间: {lifetime:.3f}秒")
 
@@ -227,11 +149,10 @@ def start_frontend_server(rank_id: int, server_id: int, global_controller: Concu
     logging.info("启动异步生成器调试工具")
     logging.info("=" * 80)
 
-    # 先打补丁，这个必须在任何异步生成器创建之前
-    patch_async_generator_methods()
+    # 只使用 asyncio 的内置钩子
+    # Python 的异步生成器类型是不可变的，不能直接 monkey patch
 
-    logging.info("异步生成器方法追踪已就绪")
-    logging.info("-" * 80)
+    logging.info("准备设置异步生成器追踪...")
     # ========== 异步生成器调试结束 ==========
 
     app = None
