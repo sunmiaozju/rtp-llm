@@ -381,7 +381,8 @@ class ModelRpcClient(object):
                     # 显式关闭异步迭代器，使用超时机制防止长时间阻塞
                     try:
                         # 使用 wait_for 设置超时，避免 aclose 长时间阻塞
-                        await asyncio.wait_for(async_iter.aclose(), timeout=0.05)
+                        # await asyncio.wait_for(async_iter.aclose(), timeout=0.05)
+                        await async_iter.aclose()
                     except asyncio.TimeoutError:
                         logging.warning(f"[GC优化] 请求 {input_py.request_id}: 异步迭代器关闭超时")
                     except Exception as e:
