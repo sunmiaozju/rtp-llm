@@ -1,14 +1,14 @@
+import asyncio
+import asyncio
 import functools
 import logging
-import time
-from typing import AsyncGenerator, Optional
+import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from typing import AsyncGenerator, Dict, Optional, Union
 
 import grpc
 from grpc import StatusCode
-
-from rtp_llm.config.exceptions import ExceptionType, FtRuntimeException
-from rtp_llm.config.generate_config import RoleType
-from rtp_llm.config.gpt_init_model_parameters import GptInitModelParameters
 from rtp_llm.cpp.model_rpc.proto.model_rpc_service_pb2 import (
     ErrorDetailsPB,
     GenerateInputPB,
@@ -17,6 +17,10 @@ from rtp_llm.cpp.model_rpc.proto.model_rpc_service_pb2 import (
     RoleAddrPB,
 )
 from rtp_llm.cpp.model_rpc.proto.model_rpc_service_pb2_grpc import RpcServiceStub
+
+from rtp_llm.config.exceptions import ExceptionType, FtRuntimeException
+from rtp_llm.config.generate_config import RoleType
+from rtp_llm.config.gpt_init_model_parameters import GptInitModelParameters
 from rtp_llm.distribute.gang_info import get_gang_info
 from rtp_llm.distribute.worker_info import g_parallel_info, g_worker_info
 from rtp_llm.utils.base_model_datatypes import (
@@ -30,6 +34,10 @@ from rtp_llm.utils.grpc_util import trans_option, trans_option_cast, trans_tenso
 
 MAX_GRPC_TIMEOUT_SECONDS = 3600
 
+GRPC_STREAM_EXECUTOR = ThreadPoolExecutor(
+    max_workers=int(os.environ.get("GRPC_CLIENT_POOL_SIZE", "64")),
+    thread_name_prefix="grpc-stream-"
+)
 
 class StreamState:
     def __init__(self):
@@ -264,6 +272,99 @@ def trans_output(
     return outputs_py
 
 
+async def _handle_grpc_stream_in_executor(loop: asyncio.AbstractEventLoop,
+                                          address: str,
+                                          input_pb: GenerateInputPB,
+                                          input_py: GenerateInput,
+                                          timeout: float,
+                                          stream_state
+                                          ) -> AsyncGenerator[GenerateOutputs, None]:
+    """
+    Handle gRPC streaming responses in the thread pool
+    """
+
+    response_queue = asyncio.Queue()
+    error_event = threading.Event()
+    error_info: Dict[str, Optional[Exception]] = {"exception": None}
+
+    def _grpc_stream_handler():
+        """Handle gRPC streams in threads"""
+        channel = None
+        try:
+            options = [
+                ("grpc.max_metadata_size", 1024 * 1024 * 1024),
+            ]
+            channel = grpc.insecure_channel(address, options=options)
+            stub = RpcServiceStub(channel)
+
+            response_iterator = stub.GenerateStreamCall(
+                input_pb, timeout=timeout
+            )
+
+            count = 0
+            for res in response_iterator:
+                count += 1
+                # Put the response into the queue
+                asyncio.run_coroutine_threadsafe(
+                    response_queue.put(res),
+                    loop
+                ).result()
+
+            # The stream has ended. Send the end tag
+            asyncio.run_coroutine_threadsafe(
+                response_queue.put(None),
+                loop
+            ).result()
+
+        except grpc.RpcError as e:
+            error_info["exception"] = e
+            error_event.set()
+            # Send error tag
+            asyncio.run_coroutine_threadsafe(
+                response_queue.put(None),
+                loop
+            ).result()
+        except Exception as e:
+            error_info["exception"] = e
+            error_event.set()
+            asyncio.run_coroutine_threadsafe(
+                response_queue.put(None),
+                loop
+            ).result()
+        finally:
+            try:
+                channel.close()
+            except Exception as e:
+                logging.error(f"close channel failed: {type(e).__name__}: {e}")
+
+    # Start the processor in the thread pool
+    future = loop.run_in_executor(
+        GRPC_STREAM_EXECUTOR,
+        _grpc_stream_handler
+    )
+
+    try:
+        # Read the response asynchronously from the queue
+        while True:
+            response = await response_queue.get()
+            # Check for errors
+            if error_event.is_set():
+                raise error_info["exception"]
+
+            # Check for end tag
+            if response is None:
+                break
+
+            # Yield the response
+            yield trans_output(input_py, response, stream_state)
+
+    finally:
+        try:
+            await asyncio.wait_for(future, timeout=5.0)
+        except asyncio.TimeoutError:
+            logging.warning(f"req {input_py.request_id}: timeout for waiting for future end")
+
+
 class ModelRpcClient(object):
 
     def __init__(self, config: GptInitModelParameters, address: Optional[str] = None):
@@ -336,30 +437,15 @@ class ModelRpcClient(object):
                     break
 
         try:
-            options = [
-                ("grpc.max_metadata_size", 1024 * 1024 * 1024),
-            ]
-            async with grpc.aio.insecure_channel(
-                address_list[input_py.request_id % len(address_list)], options=options
-            ) as channel:
-                stub = RpcServiceStub(channel)
-                response_iterator = stub.GenerateStreamCall(
-                    input_pb, timeout=grpc_timeout_seconds
-                )
-                # 调用服务器方法并接收流式响应
-                count = 0
-                async_iter = response_iterator.__aiter__()
-                try:
-                    async for response in async_iter:
-                        count += 1
-                        yield trans_output(input_py, response, stream_state)
-                finally:
-                    # Explicitly disable the asynchronous iterator to prevent blocking during garbage collection
-                    try:
-                        await async_iter.aclose()
-                    except Exception as e:
-                        logging.error(f"async_iter.aclose() failed: {type(e).__name__}: {e}")
-                        pass
+            loop = asyncio.get_event_loop()
+            async for response in _handle_grpc_stream_in_executor(
+                loop,
+                address_list[input_py.request_id % len(address_list)],
+                input_pb,
+                input_py,
+                grpc_timeout_seconds,
+                stream_state):
+                yield response
 
         except grpc.RpcError as e:
             # TODO(xinfei.sxf) 非流式的请求无法取消了
