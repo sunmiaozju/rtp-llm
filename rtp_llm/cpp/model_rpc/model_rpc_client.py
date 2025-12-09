@@ -5,6 +5,8 @@ import logging
 import time
 from typing import AsyncGenerator, Optional
 from concurrent.futures import ThreadPoolExecutor
+import threading
+from queue import Queue, Empty
 
 import grpc
 from grpc import StatusCode
@@ -37,6 +39,12 @@ MAX_GRPC_TIMEOUT_SECONDS = 3600
 GRPC_CLOSE_EXECUTOR = ThreadPoolExecutor(
     max_workers=20,
     thread_name_prefix="grpc-close-"
+)
+
+# 创建专用的线程池用于 gRPC 流式响应处理
+GRPC_STREAM_EXECUTOR = ThreadPoolExecutor(
+    max_workers=50,  # 根据并发请求数量调整
+    thread_name_prefix="grpc-stream-"
 )
 
 
@@ -425,6 +433,111 @@ class ModelRpcClient(object):
         logging.info(f"client connect to rpc addresses: {self._addresses}")
         self.model_config = config
 
+    async def _handle_grpc_stream_in_executor(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        address: str,
+        options: list,
+        input_pb: GenerateInputPB,
+        timeout: float,
+        input_py: GenerateInput,
+        stream_state
+    ) -> AsyncGenerator[GenerateOutputs, None]:
+        """
+        在线程池中处理 gRPC 流式响应
+        """
+        # 创建队列用于线程间通信
+        response_queue = asyncio.Queue()
+        error_event = threading.Event()
+        error_info = {"exception": None}
+
+        def _grpc_stream_handler():
+            """在线程中处理 gRPC 流"""
+            try:
+                # 创建同步的 gRPC channel
+                channel = grpc.insecure_channel(address, options=options)
+                stub = RpcServiceStub(channel)
+
+                # 同步调用流式 RPC
+                response_iterator = stub.GenerateStreamCall(
+                    input_pb, timeout=timeout
+                )
+
+                count = 0
+                # 同步迭代响应
+                for response in response_iterator:
+                    count += 1
+                    # 将响应放入队列
+                    asyncio.run_coroutine_threadsafe(
+                        response_queue.put(response),
+                        loop
+                    ).result()
+
+                # 流结束，发送结束标记
+                asyncio.run_coroutine_threadsafe(
+                    response_queue.put(None),
+                    loop
+                ).result()
+
+                logging.info(
+                    f"请求 {input_py.request_id}: "
+                    f"在线程中处理了 {count} 个响应"
+                )
+
+            except grpc.RpcError as e:
+                error_info["exception"] = e
+                error_event.set()
+                # 发送错误标记
+                asyncio.run_coroutine_threadsafe(
+                    response_queue.put(None),
+                    loop
+                ).result()
+            except Exception as e:
+                error_info["exception"] = e
+                error_event.set()
+                asyncio.run_coroutine_threadsafe(
+                    response_queue.put(None),
+                    loop
+                ).result()
+            finally:
+                # 确保 channel 关闭
+                try:
+                    channel.close()
+                except:
+                    pass
+
+        # 在线程池中启动处理器
+        future = loop.run_in_executor(
+            GRPC_STREAM_EXECUTOR,
+            _grpc_stream_handler
+        )
+
+        try:
+            # 从队列中异步读取响应
+            while True:
+                response = await response_queue.get()
+
+                # 检查是否有错误
+                if error_event.is_set():
+                    raise error_info["exception"]
+
+                # 检查流是否结束
+                if response is None:
+                    break
+
+                # 生成输出
+                yield trans_output(input_py, response, stream_state)
+
+        finally:
+            # 等待线程完成
+            try:
+                await asyncio.wait_for(future, timeout=5.0)
+            except asyncio.TimeoutError:
+                logging.warning(
+                    f"请求 {input_py.request_id}: "
+                    f"等待线程结束超时"
+                )
+
     async def enqueue(
         self, input_py: GenerateInput
     ) -> AsyncGenerator[GenerateOutputs, None]:
@@ -473,43 +586,20 @@ class ModelRpcClient(object):
                 ("grpc.http2.min_time_between_pings_ms", 1000),  # ping之间最小间隔1秒
                 ("grpc.http2.min_ping_interval_without_data_ms", 1000),  # 无数据时ping间隔1秒
             ]
-            async with grpc.aio.insecure_channel(
-                address_list[input_py.request_id % len(address_list)], options=options
-            ) as channel:
-                stub = RpcServiceStub(channel)
-                response_iterator = stub.GenerateStreamCall(
-                    input_pb, timeout=grpc_timeout_seconds
-                )
-                # 调用服务器方法并接收流式响应
-                count = 0
+            # 使用线程池处理 gRPC 流式响应
+            loop = asyncio.get_event_loop()
 
-
-                # async for response in response_iterator.__aiter__():
-                #     count += 1
-                #     yield trans_output(input_py, response, stream_state)
-
-
-                # 包装迭代器以提供非阻塞关闭
-                wrapped_iter = NonBlockingAsyncIterator(
-                    response_iterator.__aiter__(),
-                    str(input_py.request_id)
-                )
-
-                try:
-                    async for response in wrapped_iter:
-                        count += 1
-                        yield trans_output(input_py, response, stream_state)
-                finally:
-                    # 使用非阻塞的线程池关闭策略
-                    close_start = time.time()
-                    await wrapped_iter.aclose_in_thread()
-                    close_duration = time.time() - close_start
-
-                    logging.info(
-                        f"请求 {input_py.request_id}: "
-                        f"处理了 {count} 个响应，"
-                        f"关闭耗时 {close_duration*1000:.1f}ms"
-                    )
+            # 在线程池中创建和处理 gRPC 流
+            async for response in self._handle_grpc_stream_in_executor(
+                loop,
+                address_list[input_py.request_id % len(address_list)],
+                options,
+                input_pb,
+                grpc_timeout_seconds,
+                input_py,
+                stream_state
+            ):
+                yield response
 
 
 
