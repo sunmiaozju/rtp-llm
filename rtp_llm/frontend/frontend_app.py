@@ -5,7 +5,9 @@ import threading
 from typing import Any, Dict, List, Optional, Union, Set
 import traceback
 import time
+import os
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 
 from anyio import CapacityLimiter
 from anyio.lowlevel import RunVar
@@ -33,6 +35,12 @@ MAX_INCOMPLETE_EVENT_SIZE = 1024 * 1024
 
 active_requests = AtomicCounter()
 server_shutdown = False
+
+
+executor = ThreadPoolExecutor(
+    max_workers=min(64, (os.cpu_count() * 2)),
+    thread_name_prefix="frontend_worker"
+)
 
 
 class GracefulShutdownServer(Server):
@@ -359,7 +367,30 @@ class FrontendApp(object):
             global active_requests
             active_requests.increment()
             try:
-                return await self.frontend_server.chat_completion(request, raw_request)
+                # 获取当前的事件循环
+                loop = asyncio.get_running_loop()
+
+                # 定义一个包装函数来处理异步调用
+                def _sync_wrapper(request: ChatCompletionRequest, raw_request: RawRequest):
+                    # 创建新的事件循环用于线程池
+                    thread_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(thread_loop)
+                    try:
+                        # 在线程池中运行异步函数
+                        return thread_loop.run_until_complete(
+                            self.frontend_server.chat_completion(request, raw_request)
+                        )
+                    finally:
+                        thread_loop.close()
+
+                # 提交到线程池执行
+                result = await loop.run_in_executor(
+                    executor,  # 使用预定义的 ThreadPoolExecutor
+                    _sync_wrapper  # 要执行的函数
+                    , request, raw_request # 函数参数
+                )
+
+                return result
             finally:
                 active_requests.decrement()
 
