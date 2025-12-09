@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import AsyncGenerator, List, Optional
@@ -56,7 +57,7 @@ class OpenaiEndpoint(object):
         # 创建线程池用于处理 render_chat 操作
         # render_chat 是 CPU 密集型操作，使用线程池可以避免阻塞主事件循环
         self.render_executor = ThreadPoolExecutor(
-            max_workers=min(64, (asyncio.os.cpu_count() * 8)),
+            max_workers=min(64, (os.cpu_count() * 8)),
             thread_name_prefix="render_worker"
         )
 
