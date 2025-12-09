@@ -366,6 +366,9 @@ class FrontendApp(object):
         ):
             global active_requests
             active_requests.increment()
+            task = asyncio.current_task()
+            # start_time = time.time()
+            task.set_name(f"chat_completion-{task.get_name()}")
             try:
                 return await self.frontend_server.chat_completion(request, raw_request)
             finally:
