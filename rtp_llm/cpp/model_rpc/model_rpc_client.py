@@ -366,18 +366,13 @@ class ModelRpcClient(object):
 
                 # 获取异步迭代器对象
                 async_iter = response_iterator.__aiter__()
-
-                # 在关键路径上禁用自动 GC
-                gc_was_enabled = gc.isenabled()
-                if gc_was_enabled:
-                    gc.disable()
-                    logging.info(f"[GC优化] 请求 {input_py.request_id}: 已禁用自动GC")
-
                 try:
                     async for response in async_iter:
                         count += 1
                         yield trans_output(input_py, response, stream_state)
                 finally:
+
+                    logging.info(f"开始执行请求 {input_py.request_id}: 异步迭代器关闭")
                     # Fire-and-forget 守护线程方案：在新线程中阻塞关闭异步迭代器
                     def _blocking_close():
                         """在新线程中阻塞关闭异步迭代器"""
@@ -411,11 +406,7 @@ class ModelRpcClient(object):
                     thread.start()
                     logging.info(f"请求 {input_py.request_id}: 已启动守护线程执行异步迭代器关闭")
 
-                    # 立即恢复 GC，不等待关闭完成
-                    if gc_was_enabled:
-                        gc.collect()
-                    gc.enable()
-                    logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
+
 
         except grpc.RpcError as e:
             # TODO(xinfei.sxf) 非流式的请求无法取消了
