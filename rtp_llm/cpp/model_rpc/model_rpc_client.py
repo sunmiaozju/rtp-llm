@@ -396,7 +396,7 @@ class ModelRpcClient(object):
                     # # 立即恢复 GC，不等待关闭完成
                     # if gc_was_enabled:
                     #     gc.collect()
-                    gc.enable()
+                    # gc.enable()
                     logging.info(f"[GC优化] 请求 {input_py.request_id}: 已恢复自动GC并完成手动回收")
 
         except grpc.RpcError as e:
