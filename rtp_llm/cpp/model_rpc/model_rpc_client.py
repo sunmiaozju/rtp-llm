@@ -86,11 +86,11 @@ class NonBlockingAsyncIterator:
                     new_loop.run_until_complete(
                         asyncio.wait_for(close_coro, timeout=0.5)
                     )
-                    logging.debug(f"请求 {self._request_id}: 迭代器在线程中成功关闭")
+                    logging.info(f"请求 {self._request_id}: 迭代器在线程中成功关闭")
                 except asyncio.TimeoutError:
                     logging.warning(f"请求 {self._request_id}: 迭代器关闭超时(500ms)")
                 except Exception as e:
-                    logging.debug(f"请求 {self._request_id}: 迭代器关闭异常: {e}")
+                    logging.info(f"请求 {self._request_id}: 迭代器关闭异常: {e}")
                 finally:
                     new_loop.close()
                     asyncio.set_event_loop(None)
@@ -117,7 +117,7 @@ class NonBlockingAsyncIterator:
                     try:
                         # 尝试快速关闭
                         await asyncio.wait_for(self._async_iter.aclose(), timeout=0.005)
-                        logging.debug(f"请求 {self._request_id}: GC触发的快速关闭成功")
+                        logging.info(f"请求 {self._request_id}: GC触发的快速关闭成功")
                     except asyncio.TimeoutError:
                         # 超时则在线程中关闭
                         logging.warning(f"请求 {self._request_id}: GC关闭超时，转为线程关闭")
