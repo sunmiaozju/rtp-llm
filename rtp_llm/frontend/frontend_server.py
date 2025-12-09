@@ -181,9 +181,9 @@ class FrontendServer(object):
         except Exception as e:
             return self._handle_exception(request, e)
 
-        def generate_call():
+        async def generate_call():
             assert self._openai_endpoint != None
-            response = self._openai_endpoint.chat_completion(
+            response = await self._openai_endpoint.chat_completion(
                 request_id, request, raw_request
             )
             assert isinstance(
