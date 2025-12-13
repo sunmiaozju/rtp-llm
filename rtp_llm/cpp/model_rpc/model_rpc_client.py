@@ -512,7 +512,7 @@ class ModelRpcClient(object):
 
         try:
             # Create gRPC channel and stub
-            channel = grpc.insecure_channel(address, options=self.options)
+            channel = grpc.insecure_channel(address)
             stub = RpcServiceStub(channel)
 
             # Start streaming call
