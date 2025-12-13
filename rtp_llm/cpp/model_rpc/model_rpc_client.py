@@ -503,7 +503,7 @@ class ModelRpcClient(object):
                     address_list[input_py.request_id % len(address_list)],
                     input_py,
                     input_pb,
-                    self.options,
+                    [],
                     grpc_timeout_seconds,
                     stream_state):
                 yield response
