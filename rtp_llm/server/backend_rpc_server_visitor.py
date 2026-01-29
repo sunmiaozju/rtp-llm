@@ -1,4 +1,6 @@
 import logging
+import random
+import time
 from typing import AsyncGenerator, List
 
 import torch
@@ -30,7 +32,7 @@ class BackendRPCServerVisitor:
         host_args = HostServiceArgs.create_from_env()
         self.backend_role_list = self.get_backend_role_list(self.config, host_args)
         self.host_service = HostService(host_args)
-        self.master_client = MasterClient()
+        self.master_client = MasterClient(host_service=self.host_service)
         self.separated_frontend = separated_frontend
 
     @staticmethod
@@ -71,7 +73,7 @@ class BackendRPCServerVisitor:
         logging.info(f"configured backend role list: {role_list}")
         return role_list
 
-    async def get_master_route_addrs(self, master_addr: str, input: GenerateInput):
+    async def get_master_route_addrs(self, input: GenerateInput):
         token_ids = []
         if len(input.token_ids.shape) == 2:
             token_ids: List[int] = input.token_ids.tolist()[0]  # type: ignore
@@ -80,17 +82,15 @@ class BackendRPCServerVisitor:
         block_cache_keys = get_block_cache_keys(
             token_ids, self.config.seq_size_per_block
         )
+        start = time.time()
+        request_id = random.randint(1, 2**63 - 1)
 
         try:
-            # TODO(yinzhi): support debug
             role_addrs, inter_request_id = (
                 await self.master_client.get_backend_role_addrs(
-                    master_addr=master_addr,
                     block_cache_keys=block_cache_keys,
-                    seq_len=input.prompt_length,
-                    debug=False,
-                    generate_timeout=input.generate_config.ttft_timeout_ms,
-                    request_priority=input.generate_config.traffic_reject_priority,
+                    input=input,
+                    request_id=request_id
                 )
             )
         except BaseException as e:
@@ -101,6 +101,7 @@ class BackendRPCServerVisitor:
                 1,
                 {"error_code": error_code_str},
             )
+            logging.error(f"master route failed, request <{request_id}> {exception_json}, start={start}, rt={time.time() - start}")
             raise e
 
         if not role_addrs:
@@ -138,27 +139,37 @@ class BackendRPCServerVisitor:
             route_logger.error(f"host service failed, request <{input.request_id}>")
 
     async def route_ips(self, input: GenerateInput):
+        # proactive rejection: check cached queue length before making request to master
+        queue_length = self.host_service.get_queue_length()
+        if queue_length > StaticConfig.master_config.master_queue_reject_threshold:
+            route_logger.warning(
+                f"FlexLb cached queue length {queue_length} exceeds threshold "
+                f"{StaticConfig.master_config.master_queue_reject_threshold}, "
+                f"proactively rejecting request <{input.request_id}>"
+            )
+            raise FtRuntimeException(
+                exception_type=ExceptionType.TRAFFIC_LIMIT_ERROR,
+                message=f"Flexlb queue length {queue_length} exceeds threshold {StaticConfig.master_config.master_queue_reject_threshold}",
+            )
         with Timer() as route_timer:
             # Check if role_addrs is already specified in the request
             role_addrs_specified = bool(input.generate_config.role_addrs)
 
-            master_addr = self.host_service.get_master_addr()
-            route_logger.debug(f"routing to master: {master_addr}")
             # master don't support schedule batched input yet
             input_token_batched = False
             if len(input.token_ids.shape) == 2 and input.token_ids.size(0) != 1:
                 input_token_batched = True
 
             # Only get route from master if role_addrs is not specified
-            if not role_addrs_specified and master_addr and not input_token_batched:
+            if not role_addrs_specified and not input_token_batched:
                 with Timer() as master_route_timer:
-                    await self.get_master_route_addrs(master_addr, input)
+                    await self.get_master_route_addrs(input)
                 kmonitor.report(
                     GaugeMetrics.MASTER_ROUTE_RT_METRIC, master_route_timer.cost_ms()
                 )
             elif not role_addrs_specified:
                 route_logger.warning(
-                    f"master address: {master_addr} or input token batched: {input_token_batched} is not valid, fallback to domain routing"
+                    f"input token batched: {input_token_batched} is not valid, fallback to domain routing"
                 )
             specified_roles = {addr.role for addr in input.generate_config.role_addrs}
             # 预先计算是否需要调用

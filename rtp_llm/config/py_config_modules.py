@@ -758,6 +758,31 @@ class WorkerConfig:
         )
 
 
+class MasterConfig:
+    def __init__(self):
+        self.master_queue_reject_threshold: int = 100000
+        self.master_default_timeout_ms: int = 3600000
+        self.master_max_connect_pool_size: int = 100000
+
+    def update_from_env(self):
+        self.master_queue_reject_threshold = get_env_int(
+            "MASTER_QUEUE_REJECT_THRESHOLD", self.master_queue_reject_threshold
+        )
+        self.master_default_timeout_ms = get_env_int(
+            "MASTER_DEFAULT_TIMEOUT_MS", self.master_default_timeout_ms
+        )
+        self.master_max_connect_pool_size = get_env_int(
+            "MASTER_MAX_CONNECT_POOL_SIZE", self.master_max_connect_pool_size
+        )
+
+    def to_string(self):
+        return (
+            f"master_queue_reject_threshold: {self.master_queue_reject_threshold}\n"
+            f"master_default_timeout_ms: {self.master_default_timeout_ms}\n"
+            f"master_max_connect_pool_size: {self.master_max_connect_pool_size}"
+        )
+
+
 class JITConfig:
     def __init__(self):
         self.remote_jit_dir: str = ""
@@ -874,6 +899,7 @@ class PyEnvConfigs:
         self.misc_config = MiscellaneousConfig()
         self.concurrency_config = ConcurrencyConfig()
         self.moe_config = MoeConfig()
+        self.master_config: MasterConfig = MasterConfig()
         self.jit_config = JITConfig()
         self.py_hw_kernel_config = PyHwKernelConfig()
 
@@ -905,6 +931,7 @@ class PyEnvConfigs:
         self.misc_config.update_from_env()
         self.concurrency_config.update_from_env()
         self.moe_config.update_from_env()
+        self.master_config.update_from_env()
         self.ffn_disaggregate_config.update_from_env()
         self.jit_config.update_from_env()
         self.py_hw_kernel_config.update_from_env()
@@ -967,6 +994,7 @@ class PyEnvConfigs:
             "[misc_config]\n" + self.misc_config.to_string() + "\n\n"
             "[concurrency_config]\n" + self.concurrency_config.to_string() + "\n\n"
             "[moe_config]\n" + self.moe_config.to_string() + "\n\n"
+            "[master_config]\n" + self.master_config.to_string() + "\n\n"
             "[jit_config]\n" + self.jit_config.to_string() + "\n\n"
             "[py_hw_kernel_config]\n" + self.py_hw_kernel_config.to_string() + "\n\n"
         )
