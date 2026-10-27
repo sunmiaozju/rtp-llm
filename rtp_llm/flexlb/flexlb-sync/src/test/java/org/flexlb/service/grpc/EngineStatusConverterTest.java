@@ -152,6 +152,13 @@ class EngineStatusConverterTest {
     }
 
     @Test
+    void preservesSglangSwaGroupMode() {
+        var status = statusBuilder().setKvCacheGroupModeValue(3).build();
+        var observation = EngineStatusConverter.convertToStatusObservation(owner, status);
+        assertEquals(KvCacheGroupMode.WITH_SWA, observation.engine().kvCacheGroupMode());
+    }
+
+    @Test
     void preservesPrefixLengthValidityFromWorkerStatus() {
         var runningTask = EngineRpcService.TaskInfoPB.newBuilder()
                 .setRequestId(1)

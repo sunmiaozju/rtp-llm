@@ -282,3 +282,8 @@ hash 不同）和 `querySucceeded`。空匹配是成功结果，查询失败的�
   算法代码保留，包括所需的 `TokenIds`、vLLM CBOR 计算工具和测试；调度链路没有调用这些策略。
 - LOCAL_SYNC、Local Standby 与 KVCM 复用同一组客户端 keys 和块大小，按请求顺序连续匹配，
   在首个 miss 停止。Local Standby 索引在路由成功后异步写入这些 keys。
+
+
+### SGLang Full 和 SWA
+
+SGLang 混合滑窗引擎通过 WorkerStatus 上报 `KV_CACHE_GROUP_MODE_WITH_SWA=3`。FlexLB 保留为 `WITH_SWA`，按实例缓存布局选择 `QT_PREFIX_MATCH_WITH_SWA=5`；Full-only 和 Mamba 仍分别使用原查询类型。实例注册的 namespace、页大小和 subscriber 的滑窗 spec 必须与引擎一致。未知分组继续保留为 UNSPECIFIED，不当作 Full-only 命中。

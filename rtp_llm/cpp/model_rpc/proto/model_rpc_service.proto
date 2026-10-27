@@ -663,6 +663,7 @@ enum KvCacheGroupModePB {
     KV_CACHE_GROUP_MODE_UNSPECIFIED = 0;
     KV_CACHE_GROUP_MODE_FULL_ATTENTION_ONLY = 1;
     KV_CACHE_GROUP_MODE_WITH_MAMBA = 2;
+    KV_CACHE_GROUP_MODE_WITH_SWA = 3;
 }
 
 // Latest completed nonempty scheduler step.
