@@ -24,7 +24,9 @@ import static org.flexlb.constant.MetricConstant.CACHE_GLOBAL_BYTES;
 import static org.flexlb.constant.MetricConstant.CACHE_GLOBAL_TOTAL_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_RATIO;
+import static org.flexlb.constant.MetricConstant.CACHE_HIT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_INPUT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_INPUT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS;
@@ -45,6 +47,8 @@ import static org.flexlb.constant.MetricConstant.CACHE_THEORY_EVICT_AGE_MS_SUM;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_EVICT_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_HIT_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_HIT_RATIO;
+import static org.flexlb.constant.MetricConstant.CACHE_THEORY_HIT_TOKENS_QPS;
+import static org.flexlb.constant.MetricConstant.CACHE_THEORY_INPUT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_POOL_CAPACITY_KEYS;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_POOL_USED_KEYS;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_TOTAL_COUNT;
@@ -103,6 +107,8 @@ public class CacheMetricsReporter {
 
         // Cache hit rate metrics
         monitor.register(CACHE_HIT_COUNT, FlexMetricType.COUNTER);
+        monitor.register(CACHE_HIT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        monitor.register(CACHE_INPUT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(CACHE_HIT_RATIO, FlexMetricType.GAUGE);
         monitor.register(CACHE_KVCM_PREDICTED_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(CACHE_KVCM_PREDICTED_RATIO, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
@@ -115,6 +121,8 @@ public class CacheMetricsReporter {
         monitor.register(CACHE_KVCM_SELECTED_INPUT_TOKENS, FlexMetricType.COUNTER);
         monitor.register(CACHE_THEORY_HIT_COUNT, FlexMetricType.COUNTER);
         monitor.register(CACHE_THEORY_TOTAL_COUNT, FlexMetricType.COUNTER);
+        monitor.register(CACHE_THEORY_HIT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        monitor.register(CACHE_THEORY_INPUT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(CACHE_THEORY_HIT_RATIO, FlexMetricType.GAUGE);
         monitor.register(CACHE_THEORY_POOL_USED_KEYS, FlexMetricType.GAUGE);
         monitor.register(CACHE_THEORY_POOL_CAPACITY_KEYS, FlexMetricType.GAUGE);
@@ -203,6 +211,8 @@ public class CacheMetricsReporter {
         if (inputTokens > 0L) {
             monitor.report(CACHE_HIT_COUNT, baseTags, hitTokens);
             monitor.report(CACHE_INPUT_TOKENS, baseTags, inputTokens);
+            monitor.report(CACHE_HIT_TOKENS_QPS, baseTags, hitTokens);
+            monitor.report(CACHE_INPUT_TOKENS_QPS, baseTags, inputTokens);
         }
         monitor.report(CACHE_REQUEST_TOTAL, baseTags, 1.0);
     }
@@ -354,6 +364,8 @@ public class CacheMetricsReporter {
         FlexMetricTags tags = FlexMetricTags.of();
         monitor.report(CACHE_THEORY_HIT_COUNT, tags, hitTokens);
         monitor.report(CACHE_THEORY_TOTAL_COUNT, tags, inputTokens);
+        monitor.report(CACHE_THEORY_HIT_TOKENS_QPS, tags, hitTokens);
+        monitor.report(CACHE_THEORY_INPUT_TOKENS_QPS, tags, inputTokens);
         monitor.report(CACHE_THEORY_HIT_RATIO, tags, (double) hitTokens / inputTokens);
     }
 

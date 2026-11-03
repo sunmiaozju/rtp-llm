@@ -4,6 +4,11 @@ worker 健康与容量信息由后台线程高频异步同步；KV cache 元数�
 本分支（feature/flexlb-kvcm）支持三种 cache 匹配源：LOCAL_SYNC（本地全量索引）、
 KVCM（外部 KV Cache Manager）、LOCAL_STANDBY（KVCM 的本地兜底）。
 
+对于 LOCAL_SYNC，引擎的 `GetCacheStatus` 可以分别返回 Full 和 SWA 的页面键及
+SWA 窗口大小。混合缓存先匹配连续 Full 前缀，再校验截至候选前缀末尾的 SWA 窗口；
+只有 Full 页不足以判定该前缀可复用。SWA 快照随引擎版本刷新，即使 Full 键不变也会更新；
+未提供 SWA 窗口的旧引擎继续使用原有 Full 匹配方式。缓存版本按 int64 传输和比较。
+
 主要代码：`flexlb-sync/src/main/java/org/flexlb/sync/`、`service/grpc/`，
 `flexlb-cache/src/main/java/org/flexlb/cache/`，`flexlb-grpc/.../KvcmGrpcClient.java`。
 

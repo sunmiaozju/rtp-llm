@@ -98,6 +98,8 @@ public class EngineStatusConverter {
         Set<Long> cachedKeysSet = new HashSet<>(cacheKeysMap.keySet());
         cacheStatus.setCachedKeys(cachedKeysSet);
         cacheStatus.setCacheKeySize(cacheKeysMap.size());
+        cacheStatus.setSwaCachedKeys(new HashSet<>(cacheStatusPB.getSwaCacheKeysMap().keySet()));
+        cacheStatus.setSwaWindowTokens(cacheStatusPB.getSwaWindowTokens());
         return cacheStatus;
     }
 

@@ -23,7 +23,9 @@ import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
 import static org.flexlb.constant.MetricConstant.CACHE_ENGINE_LOCAL_BYTES;
 import static org.flexlb.constant.MetricConstant.CACHE_ENGINE_LOCAL_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COUNT;
+import static org.flexlb.constant.MetricConstant.CACHE_HIT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_INPUT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_INPUT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS;
@@ -35,6 +37,8 @@ import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_HIT_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_HIT_RATIO;
+import static org.flexlb.constant.MetricConstant.CACHE_THEORY_HIT_TOKENS_QPS;
+import static org.flexlb.constant.MetricConstant.CACHE_THEORY_INPUT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_THEORY_TOTAL_COUNT;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -69,6 +73,8 @@ class CacheMetricsReporterTest {
 
         verify(monitor).register(CACHE_THEORY_HIT_COUNT, FlexMetricType.COUNTER);
         verify(monitor).register(CACHE_THEORY_TOTAL_COUNT, FlexMetricType.COUNTER);
+        verify(monitor).register(CACHE_THEORY_HIT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        verify(monitor).register(CACHE_THEORY_INPUT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         verify(monitor).register(CACHE_THEORY_HIT_RATIO, FlexMetricType.GAUGE);
         verify(monitor).register(CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS, FlexMetricType.QPS);
         verify(monitor).register(CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS, FlexMetricType.QPS);
@@ -154,10 +160,16 @@ class CacheMetricsReporterTest {
         FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL");
         verify(monitor).register(CACHE_HIT_COUNT, FlexMetricType.COUNTER);
         verify(monitor).register(CACHE_INPUT_TOKENS, FlexMetricType.COUNTER);
+        verify(monitor).register(CACHE_HIT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        verify(monitor).register(CACHE_INPUT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         verify(monitor).report(CACHE_HIT_COUNT, tags, 20L);
         verify(monitor).report(CACHE_HIT_COUNT, tags, 0L);
         verify(monitor).report(CACHE_INPUT_TOKENS, tags, 100L);
         verify(monitor).report(CACHE_INPUT_TOKENS, tags, 200L);
+        verify(monitor).report(CACHE_HIT_TOKENS_QPS, tags, 20L);
+        verify(monitor).report(CACHE_HIT_TOKENS_QPS, tags, 0L);
+        verify(monitor).report(CACHE_INPUT_TOKENS_QPS, tags, 100L);
+        verify(monitor).report(CACHE_INPUT_TOKENS_QPS, tags, 200L);
     }
 
     @Test
@@ -205,6 +217,8 @@ class CacheMetricsReporterTest {
         FlexMetricTags tags = FlexMetricTags.of();
         verify(monitor, never()).report(CACHE_THEORY_HIT_COUNT, tags, 0L);
         verify(monitor, never()).report(CACHE_THEORY_TOTAL_COUNT, tags, 0L);
+        verify(monitor, never()).report(CACHE_THEORY_HIT_TOKENS_QPS, tags, 0L);
+        verify(monitor, never()).report(CACHE_THEORY_INPUT_TOKENS_QPS, tags, 0L);
     }
 
     @Test
@@ -218,6 +232,10 @@ class CacheMetricsReporterTest {
         verify(monitor).report(CACHE_THEORY_HIT_COUNT, allTags, 0L);
         verify(monitor).report(CACHE_THEORY_TOTAL_COUNT, allTags, 4L);
         verify(monitor).report(CACHE_THEORY_TOTAL_COUNT, allTags, 16L);
+        verify(monitor).report(CACHE_THEORY_HIT_TOKENS_QPS, allTags, 2L);
+        verify(monitor).report(CACHE_THEORY_HIT_TOKENS_QPS, allTags, 0L);
+        verify(monitor).report(CACHE_THEORY_INPUT_TOKENS_QPS, allTags, 4L);
+        verify(monitor).report(CACHE_THEORY_INPUT_TOKENS_QPS, allTags, 16L);
         verify(monitor).report(CACHE_THEORY_HIT_RATIO, allTags, 0.5D);
         verify(monitor).report(CACHE_THEORY_HIT_RATIO, allTags, 0.0D);
     }

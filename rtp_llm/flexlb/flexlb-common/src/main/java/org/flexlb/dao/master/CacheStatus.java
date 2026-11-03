@@ -30,4 +30,8 @@ public class CacheStatus {
     private Set<Long> cachedKeys;
     @JsonProperty("cache_key_size")
     private long cacheKeySize;
+    @JsonProperty("swa_cached_keys")
+    private Set<Long> swaCachedKeys;
+    @JsonProperty("swa_window_tokens")
+    private long swaWindowTokens;
 }

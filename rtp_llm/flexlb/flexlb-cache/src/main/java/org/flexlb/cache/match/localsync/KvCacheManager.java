@@ -3,6 +3,7 @@ package org.flexlb.cache.match.localsync;
 import lombok.extern.slf4j.Slf4j;
 import org.flexlb.cache.domain.DiffResult;
 import org.flexlb.cache.telemetry.CacheMetricsReporter;
+import org.flexlb.dao.master.CacheStatus;
 import org.flexlb.dao.master.WorkerIdentity;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatusProvider;
@@ -15,6 +16,7 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +52,7 @@ public class KvCacheManager implements EngineCacheInvalidator {
 
     private final Map<String, String> physicalIpPortByLogicalIpPort =
             new ConcurrentHashMap<>();
+    private final Map<String, SwaCacheSnapshot> swaCacheByEngine = new ConcurrentHashMap<>();
 
     @PostConstruct
     public void init() {
@@ -69,17 +72,16 @@ public class KvCacheManager implements EngineCacheInvalidator {
      * @param candidateEngineIpPorts exact live candidate addresses
      * @return Engine matching result map, key: engineIpPort, value: prefixMatchLength
      */
-    public Map<String/*engineIpPort*/, Integer/*prefixMatchLength*/> findMatchingEngines(
-            List<Long> blockCacheKeys,
-            List<String> candidateEngineIpPorts) {
+    public Map<String/*engineIpPort*/, Integer/*prefixMatchLength*/> findMatchingEngines(List<Long> blockCacheKeys,
+                                                                                         List<String> candidateEngineIpPorts) {
 
         if (blockCacheKeys == null || blockCacheKeys.isEmpty()) {
             return Collections.emptyMap();
         }
 
         // Batch calculate prefix match length
-        return globalCacheIndex.batchCalculatePrefixMatchLength(
-                candidateEngineIpPorts, blockCacheKeys);
+        return limitMatchesBySwaWindow(blockCacheKeys,
+                globalCacheIndex.batchCalculatePrefixMatchLength(candidateEngineIpPorts, blockCacheKeys));
     }
 
     /**
@@ -90,10 +92,9 @@ public class KvCacheManager implements EngineCacheInvalidator {
      * @param group          Engine group to query
      * @return Engine matching result map, key: engineIpPort, value: prefixMatchLength
      */
-    public Map<String/*engineIpPort*/, Integer/*prefixMatchLength*/> findMatchingEngines(
-            List<Long> blockCacheKeys,
-            RoleType roleType,
-            String group) {
+    public Map<String/*engineIpPort*/, Integer/*prefixMatchLength*/> findMatchingEngines(List<Long> blockCacheKeys,
+                                                                                         RoleType roleType,
+                                                                                         String group) {
 
         if (blockCacheKeys == null || blockCacheKeys.isEmpty()) {
             return Collections.emptyMap();
@@ -104,13 +105,35 @@ public class KvCacheManager implements EngineCacheInvalidator {
                 .map(WorkerStatus::getLogicalIpPort)
                 .toList();
 
-        return globalCacheIndex.batchCalculatePrefixMatchLength(
-                engineIpPorts, blockCacheKeys);
+        return limitMatchesBySwaWindow(blockCacheKeys,
+                globalCacheIndex.batchCalculatePrefixMatchLength(engineIpPorts, blockCacheKeys));
+    }
+
+    private Map<String, Integer> limitMatchesBySwaWindow(List<Long> blockCacheKeys, Map<String, Integer> fullMatches) {
+        if (fullMatches.isEmpty() || swaCacheByEngine.isEmpty()) {
+            return fullMatches;
+        }
+        Map<String, Integer> result = new HashMap<>(fullMatches);
+        fullMatches.forEach((engine, fullCount) -> {
+            SwaCacheSnapshot swa = swaCacheByEngine.get(engine);
+            if (swa != null) {
+                result.put(engine, swa.matchingBlocks(blockCacheKeys, fullCount));
+            }
+        });
+        return result;
     }
 
     public void updateEngineCache(WorkerStatus workerStatus, String role, Set<Long> newCacheBlocks) {
         if (workerStatus == null) {
             return;
+        }
+        String engineIpPort = workerStatus.getLogicalIpPort();
+        CacheStatus cacheStatus = workerStatus.getCacheStatus();
+        if (engineIpPort != null && cacheStatus != null && cacheStatus.getSwaWindowTokens() > 0) {
+            swaCacheByEngine.put(engineIpPort, new SwaCacheSnapshot(newCacheBlocks, cacheStatus.getSwaCachedKeys(),
+                    cacheStatus.getSwaWindowTokens(), cacheStatus.getBlockSize()));
+        } else if (engineIpPort != null) {
+            swaCacheByEngine.remove(engineIpPort);
         }
         updateEngineCache(
                 workerStatus.getWorkerIdentity(),
@@ -173,6 +196,7 @@ public class KvCacheManager implements EngineCacheInvalidator {
         engineLocalView.removeAllCacheBlockOfEngine(engineIpPort);
         globalCacheIndex.removeAllCacheBlockOfEngine(engineIpPort);
         physicalIpPortByLogicalIpPort.remove(engineIpPort);
+        swaCacheByEngine.remove(engineIpPort);
         cacheMetricsReporter.reportGlobalCacheMetrics(
                 globalCacheIndex.totalBlocks(),
                 globalCacheIndex.totalMappings());
@@ -195,6 +219,7 @@ public class KvCacheManager implements EngineCacheInvalidator {
             engineLocalView.removeAllCacheBlockOfEngine(staleEngineIpPort);
             globalCacheIndex.removeAllCacheBlockOfEngine(staleEngineIpPort);
             physicalIpPortByLogicalIpPort.remove(staleEngineIpPort);
+            swaCacheByEngine.remove(staleEngineIpPort);
             log.info("Removed stale engine cache: {}, cost={}us",
                     staleEngineIpPort, System.nanoTime() / 1000 - startTime);
         }
@@ -208,6 +233,7 @@ public class KvCacheManager implements EngineCacheInvalidator {
         globalCacheIndex.clear();
         engineLocalView.clear();
         physicalIpPortByLogicalIpPort.clear();
+        swaCacheByEngine.clear();
 
         // Report
         cacheMetricsReporter.reportGlobalCacheMetrics(globalCacheIndex.totalBlocks(), globalCacheIndex.totalMappings());

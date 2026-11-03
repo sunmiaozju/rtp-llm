@@ -24,12 +24,13 @@ class EngineGrpcServiceTest {
         WorkerStatus status = RunnerTestSupport.discovered(
                 role, null, "127.0.0.1", 8080, 8081, "test-site");
 
-        service.getCacheStatusAsync("127.0.0.1", 8081, status, 7L, 100L, role);
+        long version = 1_793_630_000_000_000L;
+        service.getCacheStatusAsync("127.0.0.1", 8081, status, version, 100L, role);
 
         ArgumentCaptor<EngineRpcService.CacheVersionPB> request =
                 ArgumentCaptor.forClass(EngineRpcService.CacheVersionPB.class);
         verify(client).getCacheStatusAsync(eq("127.0.0.1"), eq(8081), request.capture(), eq(100L));
         assertEquals(needsCacheKeys, request.getValue().getNeedCacheKeys());
-        assertEquals(7, request.getValue().getLatestCacheVersion());
+        assertEquals(version, request.getValue().getLatestCacheVersion());
     }
 }
