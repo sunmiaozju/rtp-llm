@@ -39,6 +39,8 @@ import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
@@ -373,12 +375,12 @@ class VitCacheDirectoryTest {
         assertFalse(selector.validate(ctx, "one").isSuccess());
         roundTripped.setWorkerGeneration(a.getGenerationId());
         try (var held = selector.selectHeld(ctx, "one")) {
-            org.junit.jupiter.api.Assertions.assertNotNull(held);
+            assertNotNull(held);
             assertEquals(a.getGenerationId(), held.serverStatus().getWorkerGeneration());
         }
         live.put(a.getIpPort(), worker(a.getIp(), "one"));
         assertFalse(selector.validate(ctx, "one").isSuccess());
-        org.junit.jupiter.api.Assertions.assertNull(selector.selectHeld(ctx, "one"));
+        assertNull(selector.selectHeld(ctx, "one"));
     }
 
 }
