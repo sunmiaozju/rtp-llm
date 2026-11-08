@@ -107,7 +107,7 @@ public class CostBasedPrefillStrategy {
         }
         CacheMatchResult cacheMatch = getCacheMatchResult(context, role, group);
         PrefillCacheMatchInputs cacheInputs = PrefillCacheMatchInputs.build(context, cacheMatch);
-        List<PrefillCandidateWork> candidates = new ArrayList<>();
+        List<PrefillCandidateWork> candidates = new ArrayList<>(discovery.candidates().size());
         for (EndpointRegistry.PrefillRoutingEntry entry : discovery.candidates()) {
             CacheTokenMatch match = calculateCacheMatch(entry.endpoint(), cacheInputs);
             long computeTokens = Math.max(0L, cacheInputs.seqLen() - match.computeHitTokens());
@@ -133,7 +133,7 @@ public class CostBasedPrefillStrategy {
         if (discovery.candidates().isEmpty()) {
             return classifyAdmissionFailure(discovery, context.getPriority(), role, group, 0L);
         }
-        Map<PrefillEndpoint, PrefillCandidateWork> prepared = new IdentityHashMap<>();
+        Map<PrefillEndpoint, PrefillCandidateWork> prepared = new IdentityHashMap<>(inputs.candidates().size());
         for (PrefillCandidateWork candidate : inputs.candidates()) {
             prepared.put(candidate.endpoint(), candidate);
         }
@@ -165,7 +165,7 @@ public class CostBasedPrefillStrategy {
         if (current.candidates().size() != inputs.candidates().size()) {
             return false;
         }
-        Map<PrefillEndpoint, String> prepared = new IdentityHashMap<>();
+        Map<PrefillEndpoint, String> prepared = new IdentityHashMap<>(inputs.candidates().size());
         for (PrefillCandidateWork candidate : inputs.candidates()) {
             prepared.put(candidate.endpoint(), candidate.address());
         }
@@ -281,7 +281,7 @@ public class CostBasedPrefillStrategy {
                                 int selectedIndex,
                                 String reason,
                                 CacheMatchResult cacheMatchResult) {
-        List<RoutingDecision.Candidate> snapshot = new ArrayList<>();
+        List<RoutingDecision.Candidate> snapshot = new ArrayList<>(Math.min(5, candidates.size()));
         if (selectedIndex >= 0) {
             snapshot.add(snapshotCandidate(candidates, selectedIndex, true));
         }
