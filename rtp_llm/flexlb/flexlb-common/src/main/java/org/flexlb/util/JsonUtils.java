@@ -66,6 +66,8 @@ public class JsonUtils {
             "maxQueryRetryCount",
             "recovery_success_threshold",
             "recoverySuccessThreshold",
+            "query_type",
+            "queryType",
             "top_k_host_count",
             "topKHostCount",
             "backend_types",
