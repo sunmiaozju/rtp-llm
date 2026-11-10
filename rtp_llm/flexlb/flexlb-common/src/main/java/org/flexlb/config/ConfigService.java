@@ -237,7 +237,7 @@ public class ConfigService {
      * merge validation runs.
      *
      * <p>These modes select threads and strategy beans at startup, so a
-     * type update cannot take effect safely. Active numeric fields are left in
+     * type or Decode consumer count update cannot take effect safely. Other numeric fields are left in
      * the document and continue through the regular hot-update path. Fields
      * belonging only to a requested-but-inactive fixed-window mode are removed
      * with its type rather than rejected as a whole update.
@@ -259,6 +259,15 @@ public class ConfigService {
         if (document.get("dispatcher") instanceof ObjectNode dispatcher) {
             changed |= preserveStartupMode(dispatcher, "dispatcher.type",
                     startupDecisionTopology.dispatcherType().name(), Set.of("BATCH", "NON_BATCH", "NON_BATCH_V2"));
+            JsonNode threads = dispatcher.get("decodeQueueThreads");
+            if (threads != null && threads.isIntegralNumber() && threads.canConvertToInt() && threads.intValue() > 0
+                    && threads.intValue() != startupDecisionTopology.decodeQueueThreads()) {
+                dispatcher.remove("decodeQueueThreads");
+                changed = true;
+                log.warn(
+                        "Ignored runtime update to startup-fixed dispatcher.decodeQueueThreads: requested={}, active={}",
+                        threads.intValue(), startupDecisionTopology.decodeQueueThreads());
+            }
         }
         return changed ? JsonUtils.toStrictString(document) : content;
     }
@@ -307,14 +316,16 @@ public class ConfigService {
     }
 
     private record StartupDecisionTopology(DispatcherConfig.Type dispatcherType,
-                                           DecisionPolicyConfig.Type decisionType) {
+                                           DecisionPolicyConfig.Type decisionType,
+                                           int decodeQueueThreads) {
 
         /**
          * Captures the scheduling modes selected when the application starts.
          */
         private static StartupDecisionTopology from(FlexlbConfig config) {
             SchedulerConfig scheduler = config.getScheduler();
-            return new StartupDecisionTopology(config.getDispatcher().getType(), scheduler.getDecision().getType());
+            return new StartupDecisionTopology(config.getDispatcher().getType(), scheduler.getDecision().getType(),
+                    config.getDispatcher().getDecodeQueueThreads());
         }
     }
 

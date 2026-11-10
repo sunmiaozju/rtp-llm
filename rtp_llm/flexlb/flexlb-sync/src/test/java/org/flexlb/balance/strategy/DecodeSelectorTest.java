@@ -218,8 +218,7 @@ class DecodeSelectorTest {
         EndpointRegistry registry = decodeRegistry();
         WorkerDirectory actual = new WorkerDirectory(registry);
         Map<String, DecodeEndpoint.DecodeRoutingView> views = new HashMap<>();
-        for (DecodeEndpoint.DecodeRoutingView view
-                : actual.decodeRoutingSnapshot(null)) {
+        for (DecodeEndpoint.DecodeRoutingView view : actual.getDecodeCandidates(null)) {
             views.put(view.address(), view);
         }
         DecodeEndpoint.DecodeRoutingView stale = views.get("127.0.0.1:8080");
@@ -229,9 +228,7 @@ class DecodeSelectorTest {
         Mockito.when(replacementHold.endpoint()).thenReturn(decodeEndpoint(registry, replacement.address()));
         Mockito.when(replacementHold.generationId()).thenReturn(replacement.generationId());
         WorkerDirectory racing = Mockito.mock(WorkerDirectory.class);
-        Mockito.when(racing.decodeRoutingSnapshot(null))
-                .thenReturn(List.of(stale))
-                .thenReturn(List.of(replacement));
+        Mockito.when(racing.getDecodeCandidates(null)).thenReturn(List.of(stale)).thenReturn(List.of(replacement));
         Mockito.when(racing.holdDecodeEndpoint(stale)).thenReturn(null);
         Mockito.when(racing.holdDecodeEndpoint(replacement)).thenReturn(replacementHold);
 
@@ -244,7 +241,7 @@ class DecodeSelectorTest {
         Mockito.verify(replacementHold, Mockito.never()).close();
         selected.close();
         Mockito.verify(replacementHold).close();
-        Mockito.verify(racing, Mockito.times(2)).decodeRoutingSnapshot(null);
+        Mockito.verify(racing, Mockito.times(2)).getDecodeCandidates(null);
         Mockito.verify(racing).holdDecodeEndpoint(stale);
         Mockito.verify(racing).holdDecodeEndpoint(replacement);
     }

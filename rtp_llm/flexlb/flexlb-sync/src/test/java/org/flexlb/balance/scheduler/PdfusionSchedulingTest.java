@@ -53,6 +53,7 @@ class PdfusionSchedulingTest {
     @CsvSource({"false,false,false", "false,false,true", "false,true,false", "false,true,true", "true,false,false",
             "true,false,true", "true,true,false", "true,true,true"})
     void fusionNeedsOnlyItsOwnRole(boolean priority, boolean window, boolean batch) throws Exception {
+        EndpointRegistry.getEndpointsByRole(RoleType.PDFUSION).clear();
         FlexlbConfig config = SchedulingTestConfig.batchConfig();
         SchedulingTestConfig.useNonBatchDispatcher(config);
         if (priority) {

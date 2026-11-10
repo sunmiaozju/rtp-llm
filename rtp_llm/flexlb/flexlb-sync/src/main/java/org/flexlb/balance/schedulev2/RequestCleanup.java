@@ -21,28 +21,25 @@ public final class RequestCleanup {
     private final LoopSignal mainLoopSignal;
     private final PrefillQueueRegistry prefillQueues;
     private final DecodeQueue decodeQueue;
-    private final LoopSignal decodeLoopSignal;
 
     public RequestCleanup(RequestTable requestTable,
                           MainQueue mainQueue,
                           QueueCapacity queueCapacity,
                           LoopSignal mainLoopSignal,
                           PrefillQueueRegistry prefillQueues,
-                          DecodeQueue decodeQueue,
-                          LoopSignal decodeLoopSignal) {
+                          DecodeQueue decodeQueue) {
         this.requestTable = requestTable;
         this.mainQueue = mainQueue;
         this.queueCapacity = queueCapacity;
         this.mainLoopSignal = mainLoopSignal;
         this.prefillQueues = prefillQueues;
         this.decodeQueue = decodeQueue;
-        this.decodeLoopSignal = decodeLoopSignal;
     }
 
     /**
      * 请求失败或取消后调用：取消超时任务，移出主队列、Prefill 队列和 Decode 队列的 waiting，删掉 Prefill 的 dispatch 记录，
      * 归还子队列名额和排队总数，最后从请求表移除。
-     * 在 Decode 上 reserve 了的请求留在 Decode 队列的 reserved 里，由 Decode 队列线程归还 reserve，这里只唤醒它。
+     * 消费者持有的 Prefill 名额和 Decode 预占由消费者归还；这里唤醒它检查取消或失败。
      */
     public void releaseEnded(Request request) {
         request.cancelDeadlineTask();
@@ -53,9 +50,7 @@ public final class RequestCleanup {
             prefillQueue.removeDispatched(request);
         }
         decodeQueue.removeWaiting(request);
-        if (request.decodeChoice() != null) {
-            decodeLoopSignal.wake();
-        }
+        decodeQueue.wake();
         releaseQueueSlot(request);
         queueCapacity.decreaseTotalQueueCount(request.future());
         requestTable.remove(request);

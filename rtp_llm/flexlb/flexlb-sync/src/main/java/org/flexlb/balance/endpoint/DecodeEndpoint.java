@@ -89,6 +89,16 @@ public class DecodeEndpoint extends WorkerEndpoint {
         return result;
     }
 
+    /**
+     * 空机放行不检查 KV 额度，但空机检查与预占必须在同一节点锁内，避免多个消费者同时放行。
+     */
+    public ReservationHandle reserveIfEmpty(String requestId,
+                                            long inputKvTokens,
+                                            long inputAndMaxOutputKvTokens,
+                                            int priority) {
+        return state.reserveIfEmpty(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority);
+    }
+
     /** Select no user outcome here: Prefill rejection alone cannot release Decode ownership. */
     public boolean settleFailedRequest(ReservationHandle reservation, DeliveryResult.Status source) {
         if (source != DeliveryResult.Status.NOT_SENT && source != DeliveryResult.Status.PREFILL_REJECTED) {
@@ -147,6 +157,26 @@ public class DecodeEndpoint extends WorkerEndpoint {
         if (changed) { publishCapacityRelease(); }
         return changed;
     }
+
+    /**
+     * V2 一次取得预占和下发名额；容量不足返回 null，成功后可直接发布。
+     */
+    public DispatchReservation reserveForDispatch(EndpointHold hold,
+                                                  String requestId,
+                                                  long inputKvTokens,
+                                                  long inputAndMaxOutputKvTokens,
+                                                  int priority,
+                                                  CapacityLimit capacity) {
+        checkHold(hold);
+        DecodeState.ReservedDispatch reserved =
+                state.reserveForDispatch(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, capacity);
+        return reserved == null
+                ? null
+                : new DispatchReservation(reserved.reservation(),
+                        new EngineDispatchPermit(this, requestId, reserved.permit()));
+    }
+
+    public record DispatchReservation(ReservationHandle reservation, EngineDispatchPermit permit) {}
 
     public EngineDispatchPermitAcquisition acquireDispatchPermit(ReservationHandle reservation,
                                                                  CapacityLimit capacity) {

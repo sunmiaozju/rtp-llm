@@ -12,6 +12,7 @@ import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
@@ -42,21 +43,22 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         }
     }
 
-    /** Immutable point-in-time view of discovered generations for one role. */
+    /**
+     * Live map of discovered generations for one role; callers must not mutate it.
+     */
     public Map<String, WorkerStatus> statusSnapshot(RoleType role) {
         if (role == null) {
             return Map.of();
         }
-        return Map.copyOf(statusesByRole.get(role));
+        return statusesByRole.get(role);
     }
 
     @Override
-    public List<WorkerStatus> getWorkerStatuses(RoleType role, String group) {
+    public Collection<WorkerStatus> getWorkerStatuses(RoleType role, String group) {
         if (role == null) {
             return List.of();
         }
-        List<WorkerStatus> statuses = List.copyOf(
-                statusSnapshot(role).values());
+        Collection<WorkerStatus> statuses = statusesByRole.get(role).values();
         if (group == null) {
             return statuses;
         }
@@ -107,9 +109,8 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     }
 
     /** Exact endpoint for a discovered generation, or {@code null}. */
-    public WorkerEndpoint exactEndpoint(
-            RoleType role, String address, WorkerStatus expectedStatus) {
-        return endpointRegistry.get(role, address, expectedStatus);
+    public WorkerEndpoint getEndpoint(RoleType role, String address, WorkerStatus workerStatus) {
+        return endpointRegistry.get(role, address, workerStatus);
     }
 
     /** Publish the first endpoint for one exact discovered generation. */
@@ -252,16 +253,11 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         }
     }
 
-    /** Immutable, non-owning address snapshot for lazy selection. */
-    public List<String> endpointAddressSnapshot(RoleType role) {
-        return endpointRegistry.endpointAddressSnapshot(role);
-    }
-
     /**
      * Prefill candidates whose reported DP group has every rank available for routing.
      * The winning address must still be held and identity-checked.
      */
-    public List<EndpointRegistry.PrefillRoutingEntry> prefillRoutingSnapshot(RoleType role) {
+    public List<EndpointRegistry.PrefillRoutingEntry> getPrefillCandidates(RoleType role) {
         List<EndpointRegistry.PrefillRoutingEntry> directory = endpointRegistry.prefillRoutingSnapshot(role);
         if (directory.isEmpty()) {
             return directory;
@@ -298,7 +294,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     /**
      * Decode candidates whose reported DP group has every rank available for routing.
      */
-    public List<DecodeEndpoint.DecodeRoutingView> decodeRoutingSnapshot(String group) {
+    public List<DecodeEndpoint.DecodeRoutingView> getDecodeCandidates(String group) {
         List<DecodeEndpoint.DecodeRoutingView> snapshots = endpointRegistry.decodeRoutingSnapshot();
         if (snapshots.isEmpty()) {
             return snapshots;

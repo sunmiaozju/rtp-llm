@@ -46,7 +46,7 @@ class DpGroupHealthTest {
         assertEquals(List.of(other.getLogicalIpPort()), candidates(directory, role));
         for (WorkerStatus rank : ranks) {
             assertFalse(rank.isActiveGeneration());
-            assertNull(directory.exactEndpoint(role, rank.getLogicalIpPort(), rank));
+            assertNull(directory.getEndpoint(role, rank.getLogicalIpPort(), rank));
             assertNull(directory.statusSnapshot(role).get(rank.getLogicalIpPort()));
             assertNull(rank.tryBeginStatusPoll());
         }
@@ -132,9 +132,9 @@ class DpGroupHealthTest {
 
     private List<String> candidates(WorkerDirectory directory, RoleType role) {
         if (role == RoleType.DECODE) {
-            return directory.decodeRoutingSnapshot("default").stream().map(view -> view.address()).toList();
+            return directory.getDecodeCandidates("default").stream().map(view -> view.address()).toList();
         }
-        return directory.prefillRoutingSnapshot(role)
+        return directory.getPrefillCandidates(role)
                 .stream()
                 .map(EndpointRegistry.PrefillRoutingEntry::address)
                 .toList();

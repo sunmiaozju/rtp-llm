@@ -87,6 +87,7 @@ class EncoderSchedulingIntegrationTest {
             requests.closeExpiration();
             requests.closePublisher();
         }
+        EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).clear();
     }
 
     @Test
@@ -94,7 +95,6 @@ class EncoderSchedulingIntegrationTest {
         useEncoderQueue(1);
         EncoderEndpoint first = worker("first", 8001, true, "group", 0, Map.of(), 0, 0);
         worker("second", 8002, true, "group", 0, Map.of(), 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("first", "second"));
 
         assertEquals("first", scheduler.submit(context(1, 100, 0L)).get(2, TimeUnit.SECONDS)
                 .getServerStatus().getFirst().getServerIp());
@@ -123,7 +123,6 @@ class EncoderSchedulingIntegrationTest {
         useEncoderQueue(2);
         worker("busy", 8001, true, "group", 0, Map.of(), 1, 1);
         worker("open", 8002, true, "group", 0, Map.of(), 0, 1);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("busy", "open"));
 
         assertEquals("open", scheduler.submit(context(4, 100, 0L)).get(2, TimeUnit.SECONDS)
                 .getServerStatus().getFirst().getServerIp());
@@ -138,7 +137,6 @@ class EncoderSchedulingIntegrationTest {
     void queueResumesWhenWorkerStatusReportsFreeCapacityWithoutFinishedTask() throws Exception {
         useEncoderQueue(1);
         EncoderEndpoint encoder = worker("encoder", 8001, true, "group", 0, Map.of(), 1, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("encoder"));
 
         CompletableFuture<Response> waiting = scheduler.submit(context(10, 100, 0L));
         assertFalse(waiting.isDone());
@@ -164,7 +162,6 @@ class EncoderSchedulingIntegrationTest {
     void queuedEncoderRequestExpiresWhenNoWorkerHasCapacity() throws Exception {
         useEncoderQueue(1);
         worker("busy", 8001, true, "group", 0, Map.of(), 1, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("busy"));
         BalanceContext context = context(7, 100, 0L);
         context.setSchedulingMetadata(SchedulingMetadata.explicit(
                 50, System.currentTimeMillis() + 300L));
@@ -227,7 +224,6 @@ class EncoderSchedulingIntegrationTest {
     void closingEncoderQueueFailsWaitingRequests() throws Exception {
         useEncoderQueue(1);
         worker("busy", 8001, true, "group", 0, Map.of(), 1, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("busy"));
         CompletableFuture<Response> waiting = scheduler.submit(context(8, 100, 0L));
         assertFalse(waiting.isDone());
 
@@ -269,7 +265,6 @@ class EncoderSchedulingIntegrationTest {
         worker("short", 8002, true, "group", -1,
                 Map.of("a", task("a", 10), "b", task("b", 10),
                         "c", task("c", 10), "d", task("d", 10)), 4, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("long", "short"));
 
         Response response = scheduler.submit(context(1, 800, 200L)).join();
 
@@ -282,7 +277,6 @@ class EncoderSchedulingIntegrationTest {
     void legacyRequestUsesConcurrencyAndIncludesLocallyPendingSelection() {
         EncoderEndpoint idle = worker("idle", 8001, true, "group", 0, Map.of(), 0, 0);
         worker("busy", 8002, true, "group", 0, Map.of("old", task("old", 1)), 1, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("idle", "busy"));
 
         assertEquals("idle", scheduler.submit(context(2, 800, null)).join()
                 .getServerStatus().getFirst().getServerIp());
@@ -298,7 +292,6 @@ class EncoderSchedulingIntegrationTest {
     void weightedTieUsesConcurrencyAndFullHitStillRoutesToEncoder() {
         worker("busy", 8001, true, "group", 0, Map.of("old", task("old", 0)), 1, 0);
         worker("idle", 8002, true, "group", 0, Map.of(), 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("busy", "idle"));
 
         Response response = scheduler.submit(context(4, 800, 800L)).join();
 
@@ -310,7 +303,6 @@ class EncoderSchedulingIntegrationTest {
     void workerStatusActualInputLengthChangesTheNextPlacement() {
         EncoderEndpoint encoder = worker("encoder", 8001, true, "group", 0, Map.of(), 0, 0);
         worker("other", 8002, true, "group", 0, Map.of("old", task("old", 500)), 1, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("encoder", "other"));
 
         assertEquals("encoder", scheduler.submit(context(7, 1000, 200L)).join()
                 .getServerStatus().getFirst().getServerIp());
@@ -339,7 +331,6 @@ class EncoderSchedulingIntegrationTest {
     void deadOrWrongGroupWorkersCannotWinAndNoCandidateWaitsUntilExpiry() throws Exception {
         worker("dead", 8001, false, "group", 0, Map.of(), 0, 0);
         worker("foreign", 8002, true, "other", 0, Map.of(), 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER)).thenReturn(List.of("dead", "foreign"));
 
         BalanceContext context = context(5, 800, 0L);
         TrafficPolicyConfig groupSelector = mock(TrafficPolicyConfig.class);
@@ -380,6 +371,7 @@ class EncoderSchedulingIntegrationTest {
                         new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                         org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class)));
         when(directory.holdEndpoint(eq(RoleType.ENCODER), eq(ip))).thenAnswer(invocation -> endpoint.tryHold());
+        EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).put(ip, endpoint);
         return endpoint;
     }
 

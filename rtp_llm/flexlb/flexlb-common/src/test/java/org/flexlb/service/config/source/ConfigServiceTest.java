@@ -410,6 +410,24 @@ class ConfigServiceTest {
     }
 
     @Test
+    void runtimeUpdateKeepsStartupDecodeQueueThreadsWhileUpdatingOtherFields() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH_V2","decodeQueueThreads":4}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        assertThat(service.loadBalanceConfig().getDispatcher().getDecodeQueueThreads()).isEqualTo(4);
+
+        source.emit("""
+                {"schemaVersion":3,"dispatcher":{"decodeQueueThreads":2,"maxInflightPerPrefillWorker":9}}
+                """);
+        assertThat(service.loadBalanceConfig().getDispatcher().getDecodeQueueThreads()).isEqualTo(4);
+        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
+        FlexlbConfig previous = service.loadBalanceConfig();
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"decodeQueueThreads\":0}}");
+        assertThat(service.loadBalanceConfig()).isSameAs(previous);
+    }
+
+    @Test
     void runtimeUpdateChangesDispatchStarvationThreshold() {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},

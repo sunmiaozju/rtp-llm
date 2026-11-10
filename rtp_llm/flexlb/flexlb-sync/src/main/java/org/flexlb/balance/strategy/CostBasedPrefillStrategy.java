@@ -658,7 +658,7 @@ public class CostBasedPrefillStrategy {
     }
 
     private EndpointDiscovery discoverEndpoints(RoleType roleType, String group, boolean excludeRetired) {
-        List<EndpointRegistry.PrefillRoutingEntry> directory = workerDirectory.prefillRoutingSnapshot(roleType);
+        List<EndpointRegistry.PrefillRoutingEntry> directory = workerDirectory.getPrefillCandidates(roleType);
         ReadOnlyListFilter<EndpointRegistry.PrefillRoutingEntry> filtered = new ReadOnlyListFilter<>(directory);
         int registered = 0;
         for (int index = 0; index < directory.size(); index++) {

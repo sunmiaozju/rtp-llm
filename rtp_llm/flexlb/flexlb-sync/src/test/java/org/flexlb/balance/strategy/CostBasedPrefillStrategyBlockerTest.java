@@ -35,8 +35,8 @@ class CostBasedPrefillStrategyBlockerTest {
             var outside = mock(PrefillEndpoint.class);
             when(outside.getStatus()).thenReturn(
                     WorkerStatus.createDiscovered(role, "other", "worker", 8080, 8090, "test"));
-            when(directory.prefillRoutingSnapshot(role)).thenReturn(List.of(
-                    new EndpointRegistry.PrefillRoutingEntry("outside", outside)));
+            when(directory.getPrefillCandidates(role))
+                    .thenReturn(List.of(new EndpointRegistry.PrefillRoutingEntry("outside", outside)));
             var context = new BalanceContext(new FlexlbConfig());
             var request = new Request();
             request.setRequestId("1");
@@ -49,7 +49,7 @@ class CostBasedPrefillStrategyBlockerTest {
             assertEquals(role.getErrorType().getErrorCode(), result.failure().getCode());
             assertEquals(0, result.diagnostics().get("workers"));
             assertEquals("NO_MATCHING_ENDPOINTS", context.selectionReason(role));
-            verify(directory).prefillRoutingSnapshot(role);
+            verify(directory).getPrefillCandidates(role);
             verifyNoInteractions(cache);
         }
     }

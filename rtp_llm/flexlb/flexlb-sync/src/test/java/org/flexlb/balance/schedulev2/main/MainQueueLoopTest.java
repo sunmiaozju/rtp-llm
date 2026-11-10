@@ -80,7 +80,7 @@ class MainQueueLoopTest {
         prefillQueues = new PrefillQueueRegistry();
         V2TestSupport.register(prefillQueues, endpoint);
         cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, loopSignal, prefillQueues,
-                new DecodeQueue(false), new LoopSignal());
+                new DecodeQueue(false));
         when(endpointRegistry.getEndpointCount(RoleType.PREFILL)).thenReturn(1);
         loop = new MainQueueLoop(mainQueue, loopSignal, cleanup, queueCapacity, endpointRegistry,
                 new PlacementAvailability(), configService, picker, prefillQueues, RoleType.PREFILL, request -> {

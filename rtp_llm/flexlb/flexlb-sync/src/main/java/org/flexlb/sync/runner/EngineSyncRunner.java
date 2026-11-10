@@ -253,8 +253,7 @@ public class EngineSyncRunner implements Runnable {
                 statusSnapshots.put(workerIpPort, statusSnapshot);
                 sumStepLatency += statusSnapshot.stepLatencyMs();
 
-                WorkerEndpoint endpoint = workerDirectory.exactEndpoint(
-                        roleType, workerIpPort, workerStatus);
+                WorkerEndpoint endpoint = workerDirectory.getEndpoint(roleType, workerIpPort, workerStatus);
                 OptionalLong load = endpoint == null
                         ? OptionalLong.empty() : endpoint.getLoadMetric();
                 if (load.isPresent()) {

@@ -1,6 +1,7 @@
 package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.endpoint.EncoderEndpoint;
+import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -40,7 +41,7 @@ public final class EncoderStrategy {
         long leastUncachedTokens = Long.MAX_VALUE;
         long fewestRequests = Long.MAX_VALUE;
         try {
-            for (String address : workerDirectory.endpointAddressSnapshot(RoleType.ENCODER)) {
+            for (String address : EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).keySet()) {
                 WorkerEndpoint.EndpointHold candidate = workerDirectory.holdEndpoint(RoleType.ENCODER, address);
                 if (candidate == null) {
                     continue;

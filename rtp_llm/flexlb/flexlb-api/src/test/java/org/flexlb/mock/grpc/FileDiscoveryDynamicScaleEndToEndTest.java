@@ -30,6 +30,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -434,8 +435,7 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
      * come from a discovery-driven publication.
      */
     private boolean prefillAddressesRoutable(String... ipPorts) {
-        List<String> routable =
-                endpointRegistry.endpointAddressSnapshot(RoleType.PREFILL);
+        Collection<String> routable = endpointRegistry.endpointAddressSnapshot(RoleType.PREFILL);
         for (String ipPort : ipPorts) {
             if (!routable.contains(logicalWorkerIpPort(ipPort))) {
                 return false;

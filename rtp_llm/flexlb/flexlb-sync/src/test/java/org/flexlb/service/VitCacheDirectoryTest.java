@@ -4,6 +4,7 @@ import io.grpc.Server;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import io.netty.channel.nio.NioEventLoopGroup;
+import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.config.CacheMatchConfiguration;
 import org.flexlb.config.FlexlbConfig;
@@ -67,7 +68,9 @@ class VitCacheDirectoryTest {
         live.put(b.getIpPort(), b);
         var workers = mock(WorkerDirectory.class);
         when(workers.statusSnapshot(RoleType.VIT)).thenAnswer(call -> Map.copyOf(live));
-        when(workers.endpointAddressSnapshot(RoleType.VIT)).thenAnswer(call -> new java.util.ArrayList<>(live.keySet()));
+        EndpointRegistry.getEndpointsByRole(RoleType.VIT).clear();
+        EndpointRegistry.getEndpointsByRole(RoleType.VIT).put(a.getIpPort(), new WorkerEndpoint(a));
+        EndpointRegistry.getEndpointsByRole(RoleType.VIT).put(b.getIpPort(), new WorkerEndpoint(b));
         when(workers.holdEndpoint(eq(RoleType.VIT), any())).thenAnswer(call -> {
             WorkerStatus status = live.get(call.getArgument(1));
             return status == null ? null : new WorkerEndpoint(status).tryHold();
@@ -81,6 +84,7 @@ class VitCacheDirectoryTest {
     @AfterEach
     void tearDown() {
         directory.stop();
+        EndpointRegistry.getEndpointsByRole(RoleType.VIT).clear();
     }
 
     private WorkerStatus worker(String ip, String group) {

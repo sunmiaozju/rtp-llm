@@ -161,6 +161,50 @@ final class DecodeState {
         }
     }
 
+    /**
+     * V2 在同一节点锁内完成容量准入、预占和下发名额获取，成功后不再做第二次容量检查。
+     */
+    ReservedDispatch reserveForDispatch(String requestId,
+                                        long requiredKv,
+                                        long kvBudget,
+                                        int priority,
+                                        CapacityLimit capacity) {
+        lock.lock();
+        try {
+            // 1. 先按完整预占账本检查容量；失败时不留下预占或 permit。
+            if (!requestIdAvailableForReservationLocked(requestId)
+                    || queuedPlacementIsFullLocked(requiredKv, kvBudget, capacity)) {
+                return null;
+            }
+            ReservationHandle reservation = reserveLocked(requestId, requiredKv, kvBudget, priority);
+            DecodeRequestState request = shadowReservation(requestId);
+            // 2. 同一锁内登记 queued 和下发名额；其他消费者只能看到完整的已占用状态。
+            addQueuedPhaseLocked(requestId, request);
+            DispatchLease permit = installEngineDispatchPermitLocked(requestId, request);
+            return new ReservedDispatch(reservation, permit);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    record ReservedDispatch(ReservationHandle reservation, DispatchLease permit) {}
+
+    ReservationHandle reserveIfEmpty(String requestId, long requiredKv, long kvBudget, int priority) {
+        lock.lock();
+        try {
+            WorkerStatus.EngineObservation engine = this.status.committedWorkerStatus().fields();
+            // 1. 空机判定与本地预占共用节点锁，两个消费者不能同时按空机绕过容量限制。
+            if (reservedRequestCount.get() != 0 || confirmedEngineOwnedCount != 0 || engine.runningQueryLen() != 0L
+                    || engine.waitingQueryLen() != 0L || !requestIdAvailableForReservationLocked(requestId)) {
+                return null;
+            }
+            // 2. 不检查大请求的 KV 额度，但仍计入节点账本，使后续消费者看到节点已非空。
+            return reserveLocked(requestId, requiredKv, kvBudget, priority);
+        } finally {
+            lock.unlock();
+        }
+    }
+
     private ReservationHandle reserveLocked(String requestId, long kvTokens, long kvBudgetTokens, int priority) {
         if (!requestIdAvailableForReservationLocked(requestId)) {
             throw new IllegalStateException(

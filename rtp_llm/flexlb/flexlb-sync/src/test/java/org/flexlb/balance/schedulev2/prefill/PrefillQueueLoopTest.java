@@ -67,7 +67,7 @@ class PrefillQueueLoopTest {
         queues = new PrefillQueueRegistry();
         V2TestSupport.register(queues, endpoint);
         cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, mainLoopSignal, queues,
-                new DecodeQueue(false), new LoopSignal());
+                new DecodeQueue(false));
     }
 
     @Test

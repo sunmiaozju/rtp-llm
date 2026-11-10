@@ -212,8 +212,7 @@ public class GrpcWorkerStatusRunner implements Runnable {
                                     + responseVersion);
                 }
                 workerStatus.recordSuccessfulPoll(observation.alive());
-                WorkerEndpoint exactEndpoint = workerDirectory.exactEndpoint(
-                        roleType, ipPort, workerStatus);
+                WorkerEndpoint exactEndpoint = workerDirectory.getEndpoint(roleType, ipPort, workerStatus);
 
                 if (responseVersion > cursor.statusVersion()) {
                     if (observation.alive()

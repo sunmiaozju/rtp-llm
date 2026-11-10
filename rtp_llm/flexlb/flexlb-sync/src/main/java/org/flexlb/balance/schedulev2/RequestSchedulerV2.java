@@ -9,9 +9,9 @@ import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.RequestState;
 import org.flexlb.balance.schedulev2.decode.DecodeQueue;
-import org.flexlb.balance.schedulev2.decode.DecodeQueueLoop;
+import org.flexlb.balance.schedulev2.decode.DecodeQueueConsumer;
+import org.flexlb.balance.schedulev2.decode.DecodeQueueConsumerPoll;
 import org.flexlb.balance.schedulev2.decode.DecodeReservations;
-import org.flexlb.balance.schedulev2.decode.EmptyDecodeFinder;
 import org.flexlb.balance.schedulev2.main.MainQueue;
 import org.flexlb.balance.schedulev2.main.MainQueueLoop;
 import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
@@ -29,7 +29,6 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RoleType;
-import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.service.monitor.V2QueueReporter;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.springframework.context.annotation.Lazy;
@@ -69,14 +68,13 @@ public class RequestSchedulerV2 {
     private final RoleType prefillRole;
     private final RequestTable requestTable = new RequestTable();
     private final LoopSignal mainLoopSignal = new LoopSignal();
-    private final LoopSignal decodeLoopSignal = new LoopSignal();
     private final MainQueue mainQueue;
     private final PrefillQueueRegistry prefillQueues;
     private final DecodeQueue decodeQueue;
     private final RequestCleanup cleanup;
     private final PrefillPublishCheck prefillCheck;
     private final MainQueueLoop mainQueueLoop;
-    private final DecodeQueueLoop decodeQueueLoop;
+    private final DecodeQueueConsumerPoll decodeQueueConsumerPoll;
     private final ScheduledThreadPoolExecutor deadlineTimer;
     private final AtomicBoolean closed = new AtomicBoolean();
     private final V2QueueReporter queueReporter;
@@ -92,7 +90,6 @@ public class RequestSchedulerV2 {
                               PrefillQueueRegistry prefillQueues,
                               ModelMetaConfig modelMetaConfig,
                               DecodePreemptionCoordinator preemptionCoordinator,
-                              RequestSchedulerReporter reporter,
                               WorkerDirectory workerDirectory,
                               DecodeReservations reservations,
                               V2QueueReporter queueReporter) {
@@ -108,14 +105,16 @@ public class RequestSchedulerV2 {
         this.mainQueue = new MainQueue(queueCapacity, mainLoopSignal, priorityOrdering, queueReporter);
         this.prefillQueues = prefillQueues;
         this.decodeQueue = new DecodeQueue(priorityOrdering);
-        this.cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, mainLoopSignal, prefillQueues,
-                decodeQueue, decodeLoopSignal);
+        this.cleanup =
+                new RequestCleanup(requestTable, mainQueue, queueCapacity, mainLoopSignal, prefillQueues, decodeQueue);
         this.mainQueueLoop = new MainQueueLoop(mainQueue, mainLoopSignal, cleanup, queueCapacity, endpointRegistry,
                 placementAvailability, configService, new PrefillPicker(router, prefillStrategy),
                 prefillQueues, prefillRole, this::sendToPrefillQueue, prefillWorkers(), queueReporter);
-        this.decodeQueueLoop = new DecodeQueueLoop(decodeQueue, decodeLoopSignal, cleanup, placementAvailability,
-                decodeSelector, router, preemptionCoordinator, new EmptyDecodeFinder(workerDirectory), configService,
-                reporter, prefillCheck, reservations, queueReporter, endpointRegistry);
+        Runnable capacityWake = decodeQueue::wake;
+        this.decodeQueueConsumerPoll = new DecodeQueueConsumerPoll(
+                configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(), decodeQueue,
+                placementAvailability, () -> new DecodeQueueConsumer(decodeQueue, cleanup, decodeSelector,
+                        preemptionCoordinator, configService, prefillCheck, reservations, queueReporter, capacityWake));
         this.deadlineTimer = new ScheduledThreadPoolExecutor(1, task -> {
             Thread thread = new Thread(task, "flexlb-v2-deadline");
             thread.setDaemon(true);
@@ -123,12 +122,12 @@ public class RequestSchedulerV2 {
         });
         this.deadlineTimer.setRemoveOnCancelPolicy(true);
         prefillQueues.start(queue -> {
-            queue.onCapacityChanged(decodeLoopSignal::wake);
+            queue.onCapacityChanged(decodeQueue::wake);
             return new PrefillQueueLoop(queue, prefillQueues, cleanup, mainQueue, endpointRegistry, configService,
                     this::sendToDecodeQueue, queueReporter);
         });
         mainQueueLoop.start();
-        decodeQueueLoop.start();
+        decodeQueueConsumerPoll.start();
     }
 
     public CompletableFuture<Response> submit(BalanceContext context) {
@@ -230,7 +229,6 @@ public class RequestSchedulerV2 {
             return;
         }
         decodeQueue.addWaiting(request);
-        decodeLoopSignal.wake();
     }
 
     /**
@@ -312,13 +310,13 @@ public class RequestSchedulerV2 {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        // 先让请求失败再停循环：Decode 队列线程退出前要归还这些请求在 Decode 上的 reserve
+        // 1. 先结束请求并通知消费者，再停止线程，消费者退出前归还未发布的两端资源。
         for (Request request : requestTable.list()) {
             request.fail(StrategyErrorType.DISPATCH_FAILED, SHUTTING_DOWN_MESSAGE);
         }
         mainQueueLoop.close();
         prefillQueues.close();
-        decodeQueueLoop.close();
+        decodeQueueConsumerPoll.close();
         deadlineTimer.shutdownNow();
     }
 }

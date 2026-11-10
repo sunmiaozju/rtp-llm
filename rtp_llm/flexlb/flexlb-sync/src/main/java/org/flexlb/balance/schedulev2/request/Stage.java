@@ -20,11 +20,11 @@ public enum Stage {
      */
     PREFILL_WAITING,
     /**
-     * Prefill 已 dispatch，在全局 Decode 队列里等选 Decode 和 reserve。
+     * Prefill 已 dispatch，在全局 Decode 队列或由消费者持有，等待选择 Decode 和预占。
      */
     DECODE_WAITING,
     /**
-     * 已在某台 Decode 上 reserve，等 permit。
+     * 已在某台 Decode 上预占并取得下发名额，等待发布地址。
      */
     DECODE_RESERVED,
     /**

@@ -1,5 +1,6 @@
 package org.flexlb.balance.strategy;
 
+import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -11,6 +12,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -32,8 +34,7 @@ public final class RandomStrategy {
             throw new IllegalArgumentException(
                     "RANDOM endpoint selection is supported only for VIT");
         }
-        List<String> addresses =
-                workerDirectory.endpointAddressSnapshot(RoleType.VIT);
+        List<String> addresses = new ArrayList<>(EndpointRegistry.getEndpointsByRole(RoleType.VIT).keySet());
         if (addresses.isEmpty()) {
             return null;
         }

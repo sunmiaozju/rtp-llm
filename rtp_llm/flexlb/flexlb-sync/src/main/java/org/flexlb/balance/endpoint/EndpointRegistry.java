@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.IdentityHashMap;
@@ -110,8 +111,7 @@ public class EndpointRegistry {
         }
     }
 
-    private final EnumMap<RoleType, ConcurrentHashMap<String, WorkerEndpoint>>
-            endpointsByRole = endpointMaps();
+    private static final EnumMap<RoleType, ConcurrentHashMap<String, WorkerEndpoint>> endpointsByRole = endpointMaps();
     /** Advisory Prefill generations, atomically replaced after each map write. */
     private volatile List<PrefillRoutingEntry> prefillDirectory = List.of();
     /** PDFusion uses the same Prefill planning path but a distinct role map. */
@@ -123,8 +123,7 @@ public class EndpointRegistry {
      * selected address and generation are always revalidated by
      * {@link #holdDecodeEndpoint(DecodeEndpoint.DecodeRoutingView)}.
      */
-    private volatile List<Map.Entry<String, DecodeEndpoint>> decodeDirectory =
-            List.of();
+    private volatile List<Map.Entry<String, DecodeEndpoint>> decodeDirectory = List.of();
     private final ConfigService configService;
     private final EndpointEventHandler endpointEvents;
     private final BatchSchedulerReporter reporter;
@@ -155,7 +154,7 @@ public class EndpointRegistry {
         return maps;
     }
 
-    private ConcurrentHashMap<String, WorkerEndpoint> endpoints(RoleType role) {
+    public static ConcurrentHashMap<String, WorkerEndpoint> getEndpointsByRole(RoleType role) {
         return endpointsByRole.get(role);
     }
 
@@ -181,7 +180,7 @@ public class EndpointRegistry {
     }
 
     public WorkerEndpoint get(RoleType roleType, String ipPort) {
-        Map<String, WorkerEndpoint> endpoints = endpoints(roleType);
+        Map<String, WorkerEndpoint> endpoints = getEndpointsByRole(roleType);
         return endpoints == null ? null : endpoints.get(ipPort);
     }
 
@@ -194,8 +193,7 @@ public class EndpointRegistry {
      * The returned route capability is thread-confined.</p>
      */
     public WorkerEndpoint.EndpointHold hold(RoleType roleType, String ipPort) {
-        ConcurrentHashMap<String, WorkerEndpoint> endpoints =
-                endpoints(roleType);
+        ConcurrentHashMap<String, WorkerEndpoint> endpoints = getEndpointsByRole(roleType);
         return endpoints == null ? null : hold(endpoints, ipPort);
     }
 
@@ -205,7 +203,7 @@ public class EndpointRegistry {
      * acquired through {@link #hold(RoleType, String)}.
      */
     public List<WorkerEndpoint.EndpointHold> hold(RoleType roleType) {
-        List<String> addresses = endpointAddressSnapshot(roleType);
+        Collection<String> addresses = endpointAddressSnapshot(roleType);
         List<WorkerEndpoint.EndpointHold> holds = new ArrayList<>(addresses.size());
         try {
             for (String address : addresses) {
@@ -235,7 +233,7 @@ public class EndpointRegistry {
      * {@link #hold(RoleType, String)}; same-address replacement therefore
      * remains linearized by the address key's remapping critical section.</p>
      */
-    public List<String> endpointAddressSnapshot(RoleType roleType) {
+    public Collection<String> endpointAddressSnapshot(RoleType roleType) {
         if (roleType != null && roleType.supportsPrefill()) {
             List<PrefillRoutingEntry> directory = prefillRoutingSnapshot(roleType);
             return new AbstractList<>() {
@@ -250,9 +248,8 @@ public class EndpointRegistry {
                 }
             };
         }
-        Map<String, WorkerEndpoint> endpoints = endpoints(roleType);
-        return endpoints == null
-                ? List.of() : List.copyOf(endpoints.keySet());
+        Map<String, WorkerEndpoint> endpoints = getEndpointsByRole(roleType);
+        return endpoints == null ? List.of() : endpoints.keySet();
     }
 
     /**
@@ -330,13 +327,10 @@ public class EndpointRegistry {
     }
 
     /** Return the endpoint only when it belongs to the expected status generation. */
-    public WorkerEndpoint get(
-            RoleType roleType,
-            String ipPort,
-            WorkerStatus expectedStatus) {
+    public WorkerEndpoint get(RoleType roleType, String ipPort, WorkerStatus expectedStatus) {
+
         WorkerEndpoint endpoint = get(roleType, ipPort);
-        return endpoint != null && endpoint.getStatus() == expectedStatus
-                ? endpoint : null;
+        return endpoint != null && endpoint.getStatus() == expectedStatus ? endpoint : null;
     }
 
     /**
@@ -350,10 +344,9 @@ public class EndpointRegistry {
      * after commit, the caller withdraws the entire WorkerStatus generation;
      * it is never restored.</p>
      */
-    public EndpointPublication publishPreparedEndpoint(
-            String address,
-            WorkerStatus status,
-            WorkerStatus.PreparedStatus prepared) {
+    public EndpointPublication publishPreparedEndpoint(String address,
+                                                       WorkerStatus status,
+                                                       WorkerStatus.PreparedStatus prepared) {
         beginCandidatePublication();
         try {
             requireGenerationLock(status);
@@ -388,12 +381,7 @@ public class EndpointRegistry {
                 closeCandidate(candidate, reductionOrCommitFailure);
                 throw propagate(reductionOrCommitFailure, address);
             }
-            return publishPrivateEndpoint(
-                    role,
-                    endpoints(role),
-                    address,
-                    candidate,
-                    publication);
+            return publishPrivateEndpoint(role, getEndpointsByRole(role), address, candidate, publication);
         } finally {
             endCandidatePublication();
         }
@@ -526,10 +514,9 @@ public class EndpointRegistry {
     }
 
     /** Build the exact post-mutation Prefill directory before its CHM write. */
-    private List<PrefillRoutingEntry> prefillDirectoryAfterMutationLocked(
-            List<PrefillRoutingEntry> previous,
-            String address,
-            PrefillEndpoint next) {
+    private List<PrefillRoutingEntry> prefillDirectoryAfterMutationLocked(List<PrefillRoutingEntry> previous,
+                                                                          String address,
+                                                                          PrefillEndpoint next) {
         List<PrefillRoutingEntry> updated = new ArrayList<>(
                 previous.size() + (next == null ? 0 : 1));
         boolean replaced = false;
@@ -546,7 +533,7 @@ public class EndpointRegistry {
         if (!replaced && next != null) {
             updated.add(new PrefillRoutingEntry(address, next));
         }
-        return List.copyOf(updated);
+        return updated;
     }
 
     private List<PrefillRoutingEntry> prefillDirectory(RoleType role) {
@@ -568,11 +555,9 @@ public class EndpointRegistry {
     }
 
     /** Build the exact post-mutation directory before the CHM write. */
-    private List<Map.Entry<String, DecodeEndpoint>>
-            decodeDirectoryAfterMutationLocked(
-            List<Map.Entry<String, DecodeEndpoint>> previous,
-            String address,
-            DecodeEndpoint next) {
+    private List<Map.Entry<String, DecodeEndpoint>> decodeDirectoryAfterMutationLocked(List<Map.Entry<String, DecodeEndpoint>> previous,
+                                                                                       String address,
+                                                                                       DecodeEndpoint next) {
         if (registryPhase != RegistryPhase.OPEN) {
             return List.of();
         }
@@ -586,7 +571,7 @@ public class EndpointRegistry {
         if (next != null) {
             entries.add(Map.entry(address, next));
         }
-        return List.copyOf(entries);
+        return entries;
     }
 
     private static void closeCandidate(
@@ -648,10 +633,7 @@ public class EndpointRegistry {
      * the exact endpoint gate has closed and routing withdrawal is visible;
      * the caller closes the returned endpoint outside that lock.
      */
-    public DetachedGeneration detachAndBeginRetirement(
-            RoleType roleType,
-            String ipPort,
-            WorkerStatus expectedStatus) {
+    public DetachedGeneration detachAndBeginRetirement(RoleType roleType, String ipPort, WorkerStatus expectedStatus) {
         if (expectedStatus == null) {
             return null;
         }
@@ -662,8 +644,7 @@ public class EndpointRegistry {
                 throw new IllegalStateException(
                         "EndpointRegistry is closing");
             }
-            ConcurrentHashMap<String, WorkerEndpoint> endpoints =
-                    endpoints(roleType);
+            ConcurrentHashMap<String, WorkerEndpoint> endpoints = getEndpointsByRole(roleType);
             detached = endpoints == null
                     ? null
                     : detach(roleType, endpoints, ipPort, expectedStatus);
@@ -943,31 +924,8 @@ public class EndpointRegistry {
         }
     }
 
-    /** Immutable point-in-time view; publication remains owned by this registry. */
-    @SuppressWarnings("unchecked")
-    public Map<String, PrefillEndpoint> snapshotPrefillEndpoints() {
-        return (Map<String, PrefillEndpoint>) (Map<?, ?>)
-                Map.copyOf(endpoints(RoleType.PREFILL));
-    }
-
-    /**
-     * Immutable point-in-time view of PDFUSION endpoint queues.
-     */
-    @SuppressWarnings("unchecked")
-    public Map<String, PrefillEndpoint> snapshotPdFusionEndpoints() {
-        return (Map<String, PrefillEndpoint>) (Map<?, ?>)
-                Map.copyOf(endpoints(RoleType.PDFUSION));
-    }
-
-    /** Immutable point-in-time view; publication remains owned by this registry. */
-    @SuppressWarnings("unchecked")
-    public Map<String, DecodeEndpoint> snapshotDecodeEndpoints() {
-        return (Map<String, DecodeEndpoint>) (Map<?, ?>)
-                Map.copyOf(endpoints(RoleType.DECODE));
-    }
-
     public int getEndpointCount(RoleType roleType) {
-        Map<String, WorkerEndpoint> endpoints = endpoints(roleType);
+        Map<String, WorkerEndpoint> endpoints = getEndpointsByRole(roleType);
         return endpoints == null ? 0 : endpoints.size();
     }
 
@@ -978,21 +936,20 @@ public class EndpointRegistry {
      * @param retainForSchedulerCleanup current directory lookup, called under endpoint locks;
      *                                  must not acquire request locks or use a historical snapshot
      */
-    public void evictExpiredOrphans(long ttlMs,
-                                    Predicate<String> retainForSchedulerCleanup) {
-        endpoints(RoleType.PREFILL).forEach((endpoint, worker) -> {
+    public void evictExpiredOrphans(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
+        getEndpointsByRole(RoleType.PREFILL).forEach((endpoint, worker) -> {
             PrefillEndpoint ep = (PrefillEndpoint) worker;
             logEndpointEviction(RoleType.PREFILL, endpoint,
                     ep.evictExpiredInflight(
                             ttlMs, retainForSchedulerCleanup), ttlMs);
         });
-        endpoints(RoleType.DECODE).forEach((endpoint, worker) -> {
+        getEndpointsByRole(RoleType.DECODE).forEach((endpoint, worker) -> {
             DecodeEndpoint ep = (DecodeEndpoint) worker;
             logEndpointEviction(RoleType.DECODE, endpoint,
                     ep.evictExpiredRequests(
                             ttlMs, retainForSchedulerCleanup), ttlMs);
         });
-        endpoints(RoleType.PDFUSION).forEach((endpoint, worker) -> {
+        getEndpointsByRole(RoleType.PDFUSION).forEach((endpoint, worker) -> {
             PrefillEndpoint ep = (PrefillEndpoint) worker;
             logEndpointEviction(RoleType.PDFUSION, endpoint,
                     ep.evictExpiredBatches(ttlMs), ttlMs);

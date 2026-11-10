@@ -29,6 +29,7 @@ class RandomStrategyTest {
 
     @BeforeEach
     void setUp() {
+        EndpointRegistry.getEndpointsByRole(RoleType.VIT).clear();
         ConfigService configService = Mockito.mock(ConfigService.class);
         Mockito.when(configService.loadBalanceConfig())
                 .thenReturn(new FlexlbConfig());
@@ -39,6 +40,7 @@ class RandomStrategyTest {
     @AfterEach
     void tearDown() {
         endpoints.close();
+        EndpointRegistry.getEndpointsByRole(RoleType.VIT).clear();
     }
 
     @Test

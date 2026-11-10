@@ -18,6 +18,7 @@ import java.util.Map;
 import static org.flexlb.balance.endpoint.DecodeEndpoint.EngineDispatchPermitTransferStatus.TRANSFERRED;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,6 +35,61 @@ class DecodeEndpointTest {
                 RoleType.DECODE, "10.0.0.1", 8080, 8081);
         endpoint = new DecodeEndpoint(
                 status, EndpointTestSupport.noopEventSink());
+    }
+
+    @Test
+    void reserveForDispatchAcquiresCapacityReservationAndPermitTogether() {
+        updateStatus(null, null, 10000L);
+        DecodeEndpoint.CapacityLimit capacity = new DecodeEndpoint.CapacityLimit(1L, 100L);
+        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
+            var first = endpoint.reserveForDispatch(hold, "100", 500L, 1000L, 30, capacity);
+            assertNotNull(first);
+            assertNotNull(first.reservation());
+            assertNotNull(first.permit());
+            assertEquals(1L, endpoint.routingView().placementUsage().occupiedRequests());
+            assertEquals(1L, endpoint.routingView().dispatchUsage().occupiedRequests());
+            assertNull(endpoint.reserveForDispatch(hold, "101", 500L, 1000L, 30, capacity));
+            assertNull(endpoint.reservationHandle("101"));
+            assertEquals(TRANSFERRED, first.permit().dispatch());
+            assertEquals(1L, endpoint.routingView().dispatchUsage().occupiedRequests());
+        }
+    }
+
+    @Test
+    void releasingUnpublishedDispatchReservationReleasesPermitToo() {
+        updateStatus(null, null, 10000L);
+        DecodeEndpoint.CapacityLimit capacity = new DecodeEndpoint.CapacityLimit(1L, 100L);
+        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
+            var first = endpoint.reserveForDispatch(hold, "100", 500L, 1000L, 30, capacity);
+            assertNotNull(first);
+            assertEquals(DecodeEndpoint.ReservationReleaseResult.RELEASED,
+                    endpoint.release(first.reservation(), DecodeEndpoint.ReleaseReason.NOT_SENT));
+            assertEquals(0L, endpoint.routingView().placementUsage().occupiedRequests());
+            assertEquals(0L, endpoint.routingView().dispatchUsage().occupiedRequests());
+            assertNotNull(endpoint.reserveForDispatch(hold, "101", 500L, 1000L, 30, capacity));
+        }
+    }
+
+    @Test
+    void reserveIfEmptyBlocksSecondReservationBeforeWorkerReport() {
+        DecodeEndpoint.ReservationHandle first = endpoint.reserveIfEmpty("100", 500, 500, 30);
+        assertNotNull(first);
+        assertEquals(0L, status.committedWorkerStatus().fields().runningQueryLen());
+        assertEquals(0L, status.committedWorkerStatus().fields().waitingQueryLen());
+        assertNull(endpoint.reserveIfEmpty("101", 500, 500, 30));
+        endpoint.release(first, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
+        assertNotNull(endpoint.reserveIfEmpty("102", 500, 500, 30));
+    }
+
+    @Test
+    void reserveIfEmptyRejectsRunningOrWaitingEngine() {
+        for (boolean running : new boolean[]{true, false}) {
+            WorkerStatusResponse response = new WorkerStatusResponse();
+            response.setRunningQueryLen(running ? 1L : 0L);
+            response.setWaitingQueryLen(running ? 0L : 1L);
+            EndpointTestSupport.publishStatus(status, response);
+            assertNull(endpoint.reserveIfEmpty("100", 500, 500, 30));
+            }
     }
 
     @Test

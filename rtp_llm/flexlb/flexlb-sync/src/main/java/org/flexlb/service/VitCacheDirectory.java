@@ -1,6 +1,7 @@
 package org.flexlb.service;
 
 import org.apache.commons.lang3.StringUtils;
+import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.consistency.LBStatusConsistencyService;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
@@ -163,7 +164,7 @@ public class VitCacheDirectory {
     private Map<String, WorkerStatus> liveWorkers() {
         var statuses = workers.statusSnapshot(RoleType.VIT);
         Map<String, WorkerStatus> live = new HashMap<>();
-        for (String address : workers.endpointAddressSnapshot(RoleType.VIT)) {
+        for (String address : EndpointRegistry.getEndpointsByRole(RoleType.VIT).keySet()) {
             WorkerStatus status = statuses.get(address);
             if (status != null) {
                 live.put(address, status);
