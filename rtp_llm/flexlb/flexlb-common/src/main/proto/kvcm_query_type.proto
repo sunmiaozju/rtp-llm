@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package kv_cache_manager.proto.meta;
+
+option java_package = "org.flexlb.kvcm.grpc";
+option java_multiple_files = true;
+option java_outer_classname = "KvcmQueryTypeProto";
+
+enum QueryType {
+  QT_UNSPECIFIED = 0;
+  QT_BATCH_GET = 1;
+  QT_PREFIX_MATCH = 2;
+  QT_REVERSE_ROLL_SW_MATCH = 3;
+  QT_PREFIX_MATCH_WITH_MAMBA = 4;
+}

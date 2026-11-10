@@ -3,6 +3,7 @@ package org.flexlb.config;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Getter;
 import lombok.Setter;
+import org.flexlb.kvcm.grpc.QueryType;
 
 import java.util.List;
 
@@ -38,6 +39,10 @@ public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permi
     private int queryFailureThreshold = DEFAULT_QUERY_FAILURE_THRESHOLD;
     private int maxQueryRetryCount = DEFAULT_MAX_QUERY_RETRY_COUNT;
     private int recoverySuccessThreshold = DEFAULT_RECOVERY_SUCCESS_THRESHOLD;
+    /**
+     * Overrides the query type inferred from worker status when set.
+     */
+    private QueryType queryType;
     /**
      * Storage media to match; empty means all media.
      */

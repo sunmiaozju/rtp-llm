@@ -540,6 +540,7 @@ class KvcmGrpcClientTest {
         updatedConfig.setMaxQueryRetryCount(0);
         updatedConfig.setTopKHostCount(0);
         updatedConfig.setBackendTypes(List.of(BackendType.ST_EVENT_REPORT_L2));
+        updatedConfig.setQueryType(QueryType.QT_PREFIX_MATCH_WITH_MAMBA);
         updatedConfig.setMedium(List.of("kvs"));
         updatedConfig.setRequestTimeoutMs(2000L);
         runtimeConfig.set(updatedConfig);
@@ -559,6 +560,9 @@ class KvcmGrpcClientTest {
                 .getHostCacheState(any(), sentRequest.capture(), deadline.capture());
         assertEquals(3, sentRequest.getAllValues().get(0).getTopKHostCount());
         assertEquals(0, sentRequest.getAllValues().get(1).getTopKHostCount());
+        assertEquals(QueryType.QT_PREFIX_MATCH, sentRequest.getAllValues().get(0).getQueryType());
+        assertEquals(QueryType.QT_PREFIX_MATCH_WITH_MAMBA, sentRequest.getAllValues().get(1).getQueryType());
+        verify(metadataResolver).resolveQueryType(RoleType.PREFILL, "default");
         assertTrue(sentRequest.getAllValues().get(0).getBackendTypesList().isEmpty());
         assertEquals(List.of(StorageType.ST_EVENT_REPORT_L2),
                 sentRequest.getAllValues().get(1).getBackendTypesList());
@@ -568,13 +572,14 @@ class KvcmGrpcClientTest {
     }
 
     @Test
-    void reusesRuntimeConfigSnapshotAcrossQueryRetries() {
+    void usesConfiguredQueryTypeWithoutWorkerStatusAndKeepsItAcrossRetries() {
         CacheMatchConfiguration configuration = mock(CacheMatchConfiguration.class);
         KvcmCacheMatchingConfig initialConfig = new KvcmCacheMatchingConfig();
         initialConfig.setLeaderRefreshIntervalMs(60_000);
         initialConfig.setMaxQueryRetryCount(1);
         initialConfig.setTopKHostCount(4);
         initialConfig.setBackendTypes(List.of(BackendType.ST_TAIRMEMPOOL, BackendType.ST_EVENT_REPORT_L2));
+        initialConfig.setQueryType(QueryType.QT_PREFIX_MATCH_WITH_MAMBA);
         initialConfig.setMedium(List.of("hbm"));
         initialConfig.setRequestTimeoutMs(700L);
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
@@ -589,8 +594,6 @@ class KvcmGrpcClientTest {
                 mock(KvcmWorkerMetadataResolver.class);
         when(metadataResolver.resolveNamespace(
                 RoleType.PREFILL, "default", 2192L)).thenReturn("deployment_2192");
-        when(metadataResolver.resolveQueryType(
-                RoleType.PREFILL, "default")).thenReturn(QueryType.QT_PREFIX_MATCH);
         when(leaderResolver.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
         AtomicInteger attempts = new AtomicInteger();
         when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
@@ -627,6 +630,7 @@ class KvcmGrpcClientTest {
                 .getHostCacheState(any(), sentRequest.capture(), deadline.capture());
         for (GetHostCacheStateRequest request : sentRequest.getAllValues()) {
             assertEquals(4, request.getTopKHostCount());
+            assertEquals(QueryType.QT_PREFIX_MATCH_WITH_MAMBA, request.getQueryType());
             assertEquals(List.of(StorageType.ST_TAIRMEMPOOL, StorageType.ST_EVENT_REPORT_L2),
                     request.getBackendTypesList());
             assertEquals(List.of("hbm"), request.getMediumList());
