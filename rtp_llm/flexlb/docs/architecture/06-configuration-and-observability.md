@@ -281,6 +281,8 @@ KVCM 模式下，Nacos v3 配置可设置并热更新查询参数：
 }
 ```
 
+`queryType` 接受 KVCM 协议中 `QueryType` 的枚举名称字符串，配置后覆盖所有 role/group 的
+worker 状态推导值。启动时省略该字段则继续从 worker 状态推导。
 `topKHostCount` 为非负整数，默认 3；0 只计算本地命中。
 `backendTypes` 默认空列表，只接受 `ST_TAIRMEMPOOL` 和 `ST_EVENT_REPORT_L2`，
 例如 `["ST_TAIRMEMPOOL", "ST_EVENT_REPORT_L2"]`。空列表原样发送给 KVCM。

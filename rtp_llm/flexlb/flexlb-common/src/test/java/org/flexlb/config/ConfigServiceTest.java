@@ -96,12 +96,12 @@ class ConfigServiceTest {
 
     @Test
     void rejectsInvalidKvcmQueryParameters() {
-        for (String queryField : new String[]{
-                "\"topKHostCount\":-1", "\"topKHostCount\":1.5", "\"topKHostCount\":\"3\"",
-                "\"backendTypes\":[\"ST_EVENT_REPORT_L1P5\"]", "\"backendTypes\":[\"ST_NFS\"]",
-                "\"backendTypes\":[\"UNKNOWN\"]", "\"backendTypes\":[3]",
-                "\"backendTypes\":null", "\"backendTypes\":[null]",
-                "\"backendTypes\":\"ST_EVENT_REPORT_L2\""}) {
+        for (String queryField : new String[]{"\"topKHostCount\":-1", "\"topKHostCount\":1.5",
+                "\"topKHostCount\":\"3\"", "\"backendTypes\":[\"ST_EVENT_REPORT_L1P5\"]",
+                "\"backendTypes\":[\"ST_NFS\"]", "\"backendTypes\":[\"UNKNOWN\"]", "\"backendTypes\":[3]",
+                "\"backendTypes\":null", "\"backendTypes\":[null]", "\"backendTypes\":\"ST_EVENT_REPORT_L2\"",
+                "\"queryType\":\"UNKNOWN\"", "\"queryType\":\"UNRECOGNIZED\"", "\"queryType\":\"\"",
+                "\"queryType\":2", "\"queryType\":null"}) {
             assertThrows(ConfigValidationException.class, () -> ConfigTestFixtures.parse(
                     "{\"cacheMatching\":{\"type\":\"KVCM\"," + queryField + "}}"), queryField);
         }
@@ -117,16 +117,17 @@ class ConfigServiceTest {
     }
 
     @Test
-    void acceptsKvcmTopKAndBackendTypes() {
+    void acceptsKvcmQueryParameters() {
         FlexlbConfig config = ConfigTestFixtures.parse("""
                 {"cacheMatching":{"type":"KVCM","topKHostCount":5,
-                  "backendTypes":["ST_TAIRMEMPOOL","ST_EVENT_REPORT_L2"]}}
+                  "backendTypes":["ST_TAIRMEMPOOL","ST_EVENT_REPORT_L2"],"queryType":"QT_PREFIX_MATCH"}}
                 """);
 
         var queryConfig = JsonUtils.strictValueToTree(config).path("cacheMatching");
         assertEquals(5, queryConfig.path("topKHostCount").intValue());
         assertEquals("ST_TAIRMEMPOOL", queryConfig.path("backendTypes").get(0).textValue());
         assertEquals("ST_EVENT_REPORT_L2", queryConfig.path("backendTypes").get(1).textValue());
+        assertEquals("QT_PREFIX_MATCH", queryConfig.path("queryType").textValue());
     }
 
     @Test

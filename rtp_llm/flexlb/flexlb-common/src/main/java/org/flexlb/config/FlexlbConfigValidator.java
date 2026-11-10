@@ -8,6 +8,7 @@ import org.flexlb.config.RoutingConfig.DecodeAvailabilityConfig;
 import org.flexlb.config.RoutingConfig.DecodeCostEstimatorConfig;
 import org.flexlb.config.RoutingConfig.EstimatorType;
 import org.flexlb.config.RoutingConfig.PrefillConfig;
+import org.flexlb.kvcm.grpc.QueryType;
 import org.flexlb.util.PriorityNormalizer;
 
 /** Cross-field validation for the public configuration contract. */
@@ -373,6 +374,8 @@ public final class FlexlbConfigValidator {
             return;
         }
         KvcmCacheMatchingConfig kvcm = (KvcmCacheMatchingConfig) cacheMatching;
+        require(kvcm.getQueryType() != QueryType.UNRECOGNIZED,
+                "cacheMatching.queryType", "must be a KVCM QueryType enum name");
         positive(kvcm.getRequestTimeoutMs(), "cacheMatching.requestTimeoutMs");
         positive(kvcm.getLeaderRefreshIntervalMs(),
                 "cacheMatching.leaderRefreshIntervalMs");

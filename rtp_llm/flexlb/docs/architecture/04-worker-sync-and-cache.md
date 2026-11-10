@@ -196,8 +196,9 @@ cache 版本做增量；响应恒更新 KV token 总量，版本更新时把 `ca
   `CacheMatchConfiguration` 推导不变量 **`localSyncEnabled = !kvcmEnabled`、
   `localStandbyEnabled = kvcmEnabled`**。
 - `KvcmGrpcClient`（flexlb-grpc）：向 KVCM **leader** 发 `GetHostCacheState`
-  （namespace = `deploymentName_blockSize`，QueryType 按 worker `kvCacheGroupMode` 映射
-  QT_PREFIX_MATCH / QT_PREFIX_MATCH_WITH_MAMBA），响应 `HostCacheMatch{host_ip_port, local,
+  （namespace = `deploymentName_blockSize`，QueryType 优先使用 `cacheMatching.queryType`，
+  未配置时按 worker `kvCacheGroupMode` 映射 QT_PREFIX_MATCH / QT_PREFIX_MATCH_WITH_MAMBA），
+  响应 `HostCacheMatch{host_ip_port, local,
   global}`；`global` 是 local、P2P 与远端 pool 来源联合后的前缀命中块数，已包含 `local`。
   请求侧 `medium` 默认空列表（空表示匹配全部介质，取值原样透传给 KVCM）；
   `topKHostCount` 默认 3，映射到 PB 的 `top_k_host_count = 7`（int32），按 local
@@ -220,7 +221,7 @@ cache 版本做增量；响应恒更新 KV token 总量，版本更新时把 `ca
   降级后没有查询流量时仍依赖心跳恢复。预热期（warmup）失败忽略。健康变化通知监听者。
 - 参数热更新：`CacheMatchConfiguration` 注册 `ConfigService` 更新监听器，用 volatile 字段发布
   最新的 `KvcmCacheMatchingConfig`；`KvcmGrpcClient` 与 `KvcmLeaderResolver` 不再缓存构造期快照，
-  因此 `requestTimeoutMs`、`maxQueryRetryCount`、健康阈值与三个查询参数在更新后即时生效。
+  因此 `requestTimeoutMs`、`maxQueryRetryCount`、健康阈值与查询参数在更新后即时生效。
   单次查询开始时读取一次快照，同一查询的所有重试复用该快照。`leaderRefreshIntervalMs`、
   `localStandby.*` 在启动时固定，修改需重启。
   `cacheMatching.type` 支持在 `KVCM` 与 `LOCAL_STANDBY` 之间热切换，两个模式共用配置参数和

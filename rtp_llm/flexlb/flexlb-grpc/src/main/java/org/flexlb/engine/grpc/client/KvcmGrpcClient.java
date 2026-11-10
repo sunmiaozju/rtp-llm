@@ -126,8 +126,13 @@ public class KvcmGrpcClient {
             return Collections.emptyMap();
         }
 
+        // One snapshot per query keeps the wire parameters of every attempt consistent.
+        KvcmCacheMatchingConfig config = configuration.getKvcmRuntimeConfig();
         String namespace = workerMetadataResolver.resolveNamespace(roleType, group, blockSize);
-        QueryType queryType = workerMetadataResolver.resolveQueryType(roleType, group);
+        QueryType queryType = config.getQueryType();
+        if (queryType == null) {
+            queryType = workerMetadataResolver.resolveQueryType(roleType, group);
+        }
         if (StringUtils.isBlank(namespace) || queryType == null) {
             requestImmediateRefresh();
             recordQueryFailure();
@@ -135,19 +140,16 @@ public class KvcmGrpcClient {
             throw new KvcmQueryException("KVCM worker metadata unavailable for role=" + roleType
                     + ", group=" + group);
         }
-        return queryWithRetry(
-                requestId, blockCacheKeys, namespace, queryType, roleType, group);
+        return queryWithRetry(config, requestId, blockCacheKeys, namespace, queryType, roleType, group);
     }
 
-    private Map<String, org.flexlb.dao.cache.HostCacheMatch> queryWithRetry(
-            String requestId,
-            List<Long> blockCacheKeys,
-            String namespace,
-            QueryType queryType,
-            RoleType roleType,
-            String group) {
-        // One snapshot per query keeps the wire parameters of every attempt consistent.
-        KvcmCacheMatchingConfig config = configuration.getKvcmRuntimeConfig();
+    private Map<String, org.flexlb.dao.cache.HostCacheMatch> queryWithRetry(KvcmCacheMatchingConfig config,
+                                                                            String requestId,
+                                                                            List<Long> blockCacheKeys,
+                                                                            String namespace,
+                                                                            QueryType queryType,
+                                                                            RoleType roleType,
+                                                                            String group) {
         int maxQueryRetryCount = Math.max(0, config.getMaxQueryRetryCount());
         Deadline queryDeadline = Deadline.after(config.getRequestTimeoutMs(), TimeUnit.MILLISECONDS);
         for (int attemptIndex = 0; ; attemptIndex++) {

@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package kv_cache_manager.proto.meta;
 
+import "kvcm_query_type.proto";
+
 option java_package = "org.flexlb.kvcm.grpc";
 option java_multiple_files = true;
 option java_outer_classname = "KvcmMetaServiceProto";
@@ -60,14 +62,6 @@ message GetClusterInfoResponse {
   string self_node_id = 2;
   string leader_node_id = 3;
   MetaNodeEndpoint leader_endpoint = 4;
-}
-
-enum QueryType {
-  QT_UNSPECIFIED = 0;
-  QT_BATCH_GET = 1;
-  QT_PREFIX_MATCH = 2;
-  QT_REVERSE_ROLL_SW_MATCH = 3;
-  QT_PREFIX_MATCH_WITH_MAMBA = 4;
 }
 
 enum StorageType {
