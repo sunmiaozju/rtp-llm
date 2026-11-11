@@ -45,13 +45,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class DecodeQueueConsumer implements Runnable {
 
-    /**
-     * 一次 Decode 选择及发布尝试的明确结果；返回 null 表示本次未发布，可重试。
-     */
-    private enum AttemptResult {
-        PUBLISHED, RETURN_TO_MAIN // Prefill 不可用，归还资源后退回主队列重选 Prefill
-    }
-
     private final DecodeQueue decodeQueue;
     private final RequestCleanup cleanup;
     private final DecodeSelector decodeSelector;
@@ -135,9 +128,9 @@ public final class DecodeQueueConsumer implements Runnable {
 
     private void process(Request request) throws InterruptedException {
         boolean returnToMain = false;
-        DecodeRequirement requirement = DecodeRequirement.capture(request.ctx());
-        String group = request.selectedPrefill().serverStatus().getGroup();
         try {
+            DecodeRequirement requirement = DecodeRequirement.capture(request.ctx());
+            String group = request.selectedPrefill().serverStatus().getGroup();
             while (running.get()) {
                 if (request.stage() != Stage.DECODE_WAITING) {
                     break;
@@ -150,12 +143,7 @@ public final class DecodeQueueConsumer implements Runnable {
 
                 // 尝试前记下通知版本；尝试期间的容量变化不应再睡眠。
                 long version = decodeQueue.changeVersion();
-                AttemptResult attemptResult = selectAndPublish(request, group, requirement);
-                if (attemptResult == AttemptResult.PUBLISHED) {
-                    break;
-                }
-                if (attemptResult == AttemptResult.RETURN_TO_MAIN) {
-                    returnToMain = true;
+                if (selectAndPublish(request, group, requirement)) { // 发布成功，本次处理完成
                     break;
                 }
                 // 恢复等待阶段，等待容量变化后重试，避免没有可用 Decode 时忙循环。
@@ -181,7 +169,7 @@ public final class DecodeQueueConsumer implements Runnable {
         }
     }
 
-    private AttemptResult selectAndPublish(Request request, String group, DecodeRequirement requirement) {
+    private boolean selectAndPublish(Request request, String group, DecodeRequirement requirement) {
         PlacementResult<SelectedRole, RoleType> result = decodeSelector.select(request.ctx(), requirement, group);
 
         switch (result.status()) {
@@ -189,23 +177,23 @@ public final class DecodeQueueConsumer implements Runnable {
                 return reserve(request, result.value(), requirement);
             }
             case BLOCKED, REJECTED -> { // 无可用节点或请求超过所有节点额度，仍可尝试空机放行
-                AttemptResult notRuningDecode = placeOnEmptyDecode(request, requirement, group);
-                if (notRuningDecode != null) {
-                    return notRuningDecode;
+                if (placeOnEmptyDecode(request, requirement, group)) {
+                    return true;
                 }
                 QueueBlockReason queueBlockReason = result.status() == Status.REJECTED
                         ? QueueBlockReason.REQUEST_EXCEEDS_KV_BUDGET
                         : QueueBlockReason.NO_AVAILABLE_DECODE;
                 queueReporter.blocked(request, Stage.DECODE_WAITING, queueBlockReason, "all");
-                return null;
+                return false;
             }
-            default -> {
-                return null;
+            default -> { // 选择器关闭等终态，重试无意义，直接失败请求
+                request.fail(StrategyErrorType.DISPATCH_FAILED, "decode selection " + result.status());
+                return false;
             }
         }
     }
 
-    private AttemptResult reserve(Request request, SelectedRole selected, DecodeRequirement requirement) {
+    private boolean reserve(Request request, SelectedRole selected, DecodeRequirement requirement) {
 
         DecodeChoice selectedDecode;
         DecodeEndpoint.EngineDispatchPermit permit;
@@ -220,10 +208,10 @@ public final class DecodeQueueConsumer implements Runnable {
                             requirement.inputAndMaxOutputKvTokens(), requirement.priority(), requirement.capacity());
 
             if (reserved == null) { // 所选节点占不到资源，尝试低优抢占
-                reserved = preempt(request, hold, requirement, selected.serverStatus(), preemptedRequests);
+                reserved = preempt(request, hold, requirement, preemptedRequests);
                 if (reserved == null) {
                     reportCapacityBlock(request, decodeEndpoint, requirement);
-                    return null;
+                    return false;
                 }
             }
 
@@ -235,7 +223,7 @@ public final class DecodeQueueConsumer implements Runnable {
         // 先记录预占再推进阶段；取消先赢 CAS 时直接归还刚取得的预占。
         if (!request.moveTo(Stage.DECODE_WAITING, Stage.DECODE_RESERVED)) {
             releaseDecode(request);
-            return null;
+            return false;
         }
 
         return publish(request, selectedDecode, permit, Stage.DECODE_RESERVED);
@@ -244,10 +232,10 @@ public final class DecodeQueueConsumer implements Runnable {
     /**
      * 空机放行不取 permit，预占仍记入节点账本；空机确认和预占在节点锁内完成。
      */
-    private AttemptResult placeOnEmptyDecode(Request request, DecodeRequirement requirement, String group) {
+    private boolean placeOnEmptyDecode(Request request, DecodeRequirement requirement, String group) {
         DecodeChoice choice = reserveEmptyDecode(request, group, requirement);
         if (choice == null) {
-            return null;
+            return false;
         }
         request.setDecodeChoice(choice);
         return publish(request, choice, null, Stage.DECODE_WAITING);
@@ -280,49 +268,40 @@ public final class DecodeQueueConsumer implements Runnable {
         return null;
     }
 
-    private AttemptResult publish(Request request,
-                                  DecodeChoice choice,
-                                  DecodeEndpoint.EngineDispatchPermit permit,
-                                  Stage expected) {
+    private boolean publish(Request request,
+                            DecodeChoice choice,
+                            DecodeEndpoint.EngineDispatchPermit permit,
+                            Stage expected) {
 
-        try (WorkerEndpoint.EndpointHold hold = prefillCheck.hold(request)) {
-            // 发布前再核对 Prefill 生命周期；失效时归还资源，退回主队列重选 Prefill。
-            if (hold == null) {
-                if (permit != null) {
-                    permit.release();
-                }
-                releaseDecode(request);
-                return AttemptResult.RETURN_TO_MAIN;
-            }
-            try { // 移交已取得的下发名额，不再次检查容量
-                if (permit != null
-                        && permit.dispatch() != DecodeEndpoint.EngineDispatchPermitTransferStatus.TRANSFERRED) {
-                    permit.release();
-                    releaseDecode(request);
-                    return null;
-                }
-            } catch (RuntimeException failure) {
+        try { // 移交已取得的下发名额，不再次检查容量
+            if (permit != null && permit.dispatch() != DecodeEndpoint.EngineDispatchPermitTransferStatus.TRANSFERRED) {
                 permit.release();
                 releaseDecode(request);
-                return null;
+                return false;
             }
-
-            // 发布与取消共用阶段 CAS；只有发布成功才保留资源，并上报实际完成的抢占。
-            boolean published = request.publish(expected, List.of(request.selectedPrefill().serverStatus(),
-                    decodeServerStatus(choice.endpoint(), request.requestId())));
-
-            if (published) {
-                choice.endpoint().registerPublished(choice.reservation(), request.publishedAtMs());
-                cleanup.releasePublished(request);
-                for (DecodeEndpoint.DecodeRequestView victim : choice.preemptedRequests()) {
-                    queueReporter.decodePreempted(request.priority(), victim.priority(), victim.phase(),
-                            choice.endpoint().ipPort());
-                }
-                return AttemptResult.PUBLISHED;
-            }
+        } catch (RuntimeException failure) {
+            permit.release();
             releaseDecode(request);
-            return null;
+            return false;
         }
+
+        // 发布与取消共用阶段 CAS；只有发布成功才保留资源，并上报实际完成的抢占。
+        ServerStatus decodeStatus = decodeServerStatus(choice.endpoint(), request.requestId());
+        decodeStatus.setPreemptRequestIds(
+                choice.preemptedRequests().stream().map(DecodeEndpoint.DecodeRequestView::requestId).toList());
+        boolean published = request.publish(expected, List.of(request.selectedPrefill().serverStatus(), decodeStatus));
+
+        if (published) {
+            choice.endpoint().registerPublished(choice.reservation(), request.publishedAtMs());
+            cleanup.releasePublished(request);
+            for (DecodeEndpoint.DecodeRequestView victim : choice.preemptedRequests()) {
+                queueReporter.decodePreempted(request.priority(), victim.priority(), victim.phase(),
+                        choice.endpoint().ipPort());
+            }
+            return true;
+        }
+        releaseDecode(request);
+        return false;
     }
 
     /**
@@ -370,7 +349,6 @@ public final class DecodeQueueConsumer implements Runnable {
     private DecodeEndpoint.DispatchReservation preempt(Request request,
                                                        WorkerEndpoint.EndpointHold hold,
                                                        DecodeRequirement requirement,
-                                                       ServerStatus serverStatus,
                                                        List<DecodeEndpoint.DecodeRequestView> preemptedRequests) {
         PreemptionConfig configured =
                 request.ctx().getConfig().queueScheduler().getOrdering().preemptionPolicy().orElse(null);
@@ -415,9 +393,6 @@ public final class DecodeQueueConsumer implements Runnable {
             endpoint.release(reservation, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
             return null;
         }
-        serverStatus.setPreemptRequestIds(
-                proposal.victims().stream().map(DecodeEndpoint.DecodeRequestView::requestId).toList());
-
         preemptedRequests.addAll(proposal.victims());
 
         return new DecodeEndpoint.DispatchReservation(reservation, acquisition.permit());

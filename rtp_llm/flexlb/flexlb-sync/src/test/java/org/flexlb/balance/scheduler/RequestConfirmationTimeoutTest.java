@@ -22,6 +22,7 @@ import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
@@ -42,6 +43,16 @@ import static org.mockito.Mockito.when;
 class RequestConfirmationTimeoutTest {
     private static final long REQUEST_ID = 101L;
     private static final long TIMEOUT_MS = TimeUnit.HOURS.toMillis(1L);
+
+    @BeforeEach
+    void clearEndpointRegistry() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
+    }
 
     @ParameterizedTest
     @EnumSource(ConfirmationWait.class)

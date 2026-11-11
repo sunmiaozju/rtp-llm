@@ -73,6 +73,7 @@ class CostBasedPrefillSelectionMetricTest {
 
     @BeforeEach
     void setUp() {
+        clearRegisteredEndpoints();
         config = StrategyTestSupport.config();
         config.setDispatcher(DispatcherConfig.nonBatch());
         config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator()
@@ -329,11 +330,12 @@ class CostBasedPrefillSelectionMetricTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"5,1,false", "50,1,false", "5,2,false",
-            "50,1,true", "10,1,true", "5,1,true"})
-    void queueNonBatchCanSelectBusyPrefillRegardlessOfQueuedPreemption(
-            int incomingPriority, int requestLimit, boolean preemptQueued) {
+    @CsvSource({"5,1,false", "50,1,false", "5,2,false", "50,1,true", "10,1,true", "5,1,true"})
+    void queueNonBatchCanSelectBusyPrefillRegardlessOfQueuedPreemption(int incomingPriority,
+                                                                       int requestLimit,
+                                                                       boolean preemptQueued) {
         registry.close();
+        clearRegisteredEndpoints();
         config.queueScheduler().getDecision().setMaxRequests(2);
         config.getDispatcher().setMaxInflightPerPrefillWorker(requestLimit);
         config.queueScheduler().getDecision().setMaxCollectionWaitMs(60_000L);
@@ -381,6 +383,7 @@ class CostBasedPrefillSelectionMetricTest {
     @Test
     void fullRequestCapacityDoesNotHidePrefillWhenQueuedRoutingIsEnabled() {
         registry.close();
+        clearRegisteredEndpoints();
         config.getDispatcher().setMaxInflightPerPrefillWorker(1);
         config.queueScheduler().getDecision().setMaxRequests(2);
         config.queueScheduler().getDecision().setMaxCollectionWaitMs(60_000L);
@@ -814,6 +817,15 @@ class CostBasedPrefillSelectionMetricTest {
         when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
                 Map.of("10.0.0.2:8080", HostCacheMatch.local(5)),
                 CacheMatchSource.KVCM, 0L, 100L));
+    }
+
+    private static void clearRegisteredEndpoints() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
     }
 
     private void publish(String ip, int port) {

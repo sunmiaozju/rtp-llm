@@ -54,6 +54,12 @@ class PreparedPrefillSelectionTest {
     private final PrefillEndpoint second;
 
     PreparedPrefillSelectionTest() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
         config.getDispatcher().setType(DispatcherConfig.Type.NON_BATCH_V2);
         when(configService.loadBalanceConfig()).thenReturn(config);
         registry = StrategyTestSupport.endpointRegistry(configService);

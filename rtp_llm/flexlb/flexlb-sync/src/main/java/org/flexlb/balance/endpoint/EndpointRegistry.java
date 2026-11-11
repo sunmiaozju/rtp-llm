@@ -533,7 +533,7 @@ public class EndpointRegistry {
         if (!replaced && next != null) {
             updated.add(new PrefillRoutingEntry(address, next));
         }
-        return updated;
+        return List.copyOf(updated);
     }
 
     private List<PrefillRoutingEntry> prefillDirectory(RoleType role) {

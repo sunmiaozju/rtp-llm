@@ -93,6 +93,12 @@ class CacheHitFeedbackFlowTest {
 
     @BeforeEach
     void setUp() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
         config = new FlexlbConfig();
         config.setDispatcher(DispatcherConfig.nonBatch());
         config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator().setExpression("sum(computeTokens)");

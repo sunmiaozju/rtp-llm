@@ -22,6 +22,7 @@ import org.flexlb.dao.route.ServiceRoute;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -49,6 +50,16 @@ class RequestResourceAccountingTest {
     private static final long EXPECTED_KV = 320L;
     private static final long TOTAL_KV = 10_000L;
     private static final long TTL = TimeUnit.HOURS.toMillis(1);
+
+    @BeforeEach
+    void clearEndpointRegistry() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
+    }
 
     @ParameterizedTest
     @EnumSource(LocalEnd.class)
