@@ -685,6 +685,9 @@ public class CostBasedPrefillStrategy {
         }
         HostCacheMatch match = cacheMatchResult.hostMatch(ep.getStatus());
         if (match == null) {
+            if (cacheMatchResult.source() == CacheMatchSource.KVCM && cacheMatchResult.querySucceeded()) {
+                engineHealthReporter.reportKvcmPredictionTokens(ep.getStatus().getRole(), 0L, 0L, seqLen);
+            }
             return CacheTokenMatch.NONE;
         }
         long localMatchBlocks = Math.max(0L, match.localMatchBlocks());
@@ -719,6 +722,10 @@ public class CostBasedPrefillStrategy {
         long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
+        if (cacheMatchResult.source() == CacheMatchSource.KVCM && cacheMatchResult.querySucceeded()) {
+            engineHealthReporter.reportKvcmPredictionTokens(ep.getStatus().getRole(), localHitTokens, remoteHitTokens,
+                    seqLen);
+        }
         RoutingConfig.ExecutionTimeEstimatorConfig estimator =
                 config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
         long computeHit =

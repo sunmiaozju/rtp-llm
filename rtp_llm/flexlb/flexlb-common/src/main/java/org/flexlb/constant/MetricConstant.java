@@ -390,6 +390,9 @@ public class MetricConstant {
     public static final String CACHE_HIT_RATIO = "app.cache.hit.ratio";
 
     public static final String CACHE_KVCM_PREDICTED_TOKENS = "app.cache.kvcm.predicted.tokens";
+    public static final String CACHE_KVCM_PREDICTED_LOCAL_TOKENS = "app.cache.kvcm.predicted.local.tokens";
+    public static final String CACHE_KVCM_PREDICTED_REMOTE_TOKENS = "app.cache.kvcm.predicted.remote.tokens";
+    public static final String CACHE_KVCM_PREDICTED_INPUT_TOKENS = "app.cache.kvcm.predicted.input.tokens";
     public static final String CACHE_KVCM_PREDICTED_RATIO = "app.cache.kvcm.predicted.ratio";
     public static final String CACHE_LOCAL_STANDBY_PREDICTED_TOKENS = "app.cache.local.standby.predicted.tokens";
     public static final String CACHE_LOCAL_STANDBY_PREDICTED_RATIO = "app.cache.local.standby.predicted.ratio";

@@ -164,6 +164,10 @@ Prefill 请求自身的工作量抵扣使用
 FORMULA 和 LEARNING 均支持。Nacos/UniConfig 更新后，新请求使用新权重，已预测请求保留原值。
 抵扣全量输入时仍保留一个 block 重算；权重不改变缓存亲和、选路命中指标或 KV 预留。
 
+候选缓存计算时上报 `app.cache.kvcm.predicted.{local,remote,input}.tokens` 三个 COUNTER，
+仅包含成功的 KVCM 查询，按 role 聚合，包含未命中候选的 input。local/remote 是加权前的命中；
+用同一时间窗口的累计增量除以 input 增量计算命中率。这是候选预测口径，重试会重复计入，不等于最终选中请求口径。
+
 ### Nacos 连接
 
 | 环境变量 | 默认值 | 说明 |

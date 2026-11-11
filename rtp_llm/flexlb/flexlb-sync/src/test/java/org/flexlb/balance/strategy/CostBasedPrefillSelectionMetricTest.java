@@ -351,6 +351,25 @@ class CostBasedPrefillSelectionMetricTest {
             commit(selected);
             verify(reporter).reportRoutingSelectedCacheMatchMetrics(RoleType.PREFILL, 320L);
         }
+        verify(reporter, times(2)).reportKvcmPredictionTokens(RoleType.PREFILL, 200L, 600L, 1_000L);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"KVCM,true,true", "KVCM,true,false", "KVCM,false,true", "LOCAL_SYNC,true,true",
+            "LOCAL_STANDBY,true,true"})
+    void predictionTokenMetricsIncludeMissesButExcludeOtherSources(CacheMatchSource source,
+                                                                   boolean querySucceeded,
+                                                                   boolean hasMatch) {
+        when(cache.findMatchingEngines(any())).thenReturn(
+                new CacheMatchResult(hasMatch ? Map.of("10.0.0.1:8080@0", new HostCacheMatch(2L, 8L)) : Map.of(),
+                        source, 0L, 100L, querySucceeded));
+        strategy.prepare(context, RoleType.PREFILL, null);
+        if (source == CacheMatchSource.KVCM && querySucceeded) {
+            verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, hasMatch ? 200L : 0L, hasMatch ? 600L : 0L,
+                    1_000L);
+        } else {
+            verify(reporter, never()).reportKvcmPredictionTokens(any(), anyLong(), anyLong(), anyLong());
+        }
     }
 
     @Test
