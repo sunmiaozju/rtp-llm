@@ -16,12 +16,15 @@ import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
+import org.flexlb.config.RoutingConfig;
+import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -129,6 +132,41 @@ class PreparedPrefillSelectionTest {
         assertEquals(1, refreshed.candidates().size());
         try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", refreshed).value()) {
             assertSame(second, SelectedPrefill.from(selected, request.seqLen()).endpoint());
+        }
+    }
+
+    @Test
+    void preparedSelectionKeepsLocalAffinityButQueuesGlobalUncachedWork() {
+        first.close();
+        second.close();
+        RoutingConfig.CacheAffinityConfig affinity = new RoutingConfig.CacheAffinityConfig();
+        affinity.setMaxExtraTtftMs(10L);
+        affinity.setRemoteDiscount(0.2);
+        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        PrefillEndpoint remote = publish("10.0.0.3", "sum(computeTokens)");
+        PrefillEndpoint local = publish("10.0.0.4", "sum(computeTokens) + 5");
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of(remote.ipPort(), new HostCacheMatch(2L, 8L), local.ipPort(), new HostCacheMatch(6L, 8L)),
+                CacheMatchSource.KVCM, 0L, 100L));
+        Request request = request("1");
+        request.ctx().getRequest().setSeqLen(1_000L);
+        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+
+        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
+            request.setSelectedPrefill(SelectedPrefill.from(selected, request.seqLen()));
+        }
+        assertSame(local, request.selectedPrefill().endpoint());
+        assertEquals(640L, request.selectedPrefill().hitCacheTokens());
+        assertEquals(360L, request.selectedPrefill().kvTokens(request.seqLen()));
+        assertEquals(205L, request.selectedPrefill().predictedMs());
+        request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
+        queues.addWaiting(request);
+        Request next = request("2");
+        next.ctx().getRequest().setSeqLen(1_000L);
+        PrefillInputs nextInputs = picker.prepare(next.ctx(), RoleType.PREFILL, "g");
+        try (SelectedRole selected = picker.pick(next, RoleType.PREFILL, "g", nextInputs).value()) {
+            assertSame(remote, SelectedPrefill.from(selected, next.seqLen()).endpoint());
+            assertEquals(200L, selected.serverStatus().getPrefillTime());
         }
     }
 

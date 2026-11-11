@@ -112,7 +112,7 @@ public class CostBasedPrefillStrategy {
                     calculateCacheMatch(entry.endpoint(), cacheMatch, context.getRequest(), context.getConfig());
             long predictedMs =
                     PrefillPredictionBoundary.predictSingleRequestMs(entry.endpoint().getPredictor().evaluator(),
-                            context.getRequest().getSeqLen(), match.effectiveHitTokens());
+                            context.getRequest().getSeqLen(), match.computeHitTokens());
             candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.effectiveHitTokens(),
                     match.routingHitTokens(), predictedMs));
         }
@@ -150,7 +150,8 @@ public class CostBasedPrefillStrategy {
                             : PrefillTtftEstimate.Candidate.State.MODELED,
                     estimatedMs, candidate.predictedMs(), PrefillTtftEstimate.Candidate.InitialHeadDisposition.NONE, "",
                     null, candidate.cacheHitTokens(), candidate.routingCacheMatchTokens());
-            candidates.addCandidate(entry.address(), entry.endpoint(), estimate, entry.endpoint().placementVersion());
+            candidates.addCandidate(entry.address(), entry.endpoint(), estimate, candidate.cacheHitTokens(),
+                    entry.endpoint().placementVersion());
         }
         return finishSelection(context, role, group, discovery, inputs.cacheMatch(), candidates);
     }
@@ -597,7 +598,7 @@ public class CostBasedPrefillStrategy {
             String endpointAddress = routingEntry.address();
 
             CacheTokenMatch cacheMatch = calculateCacheMatch(ep, cacheMatchResult, request, balanceContext.getConfig());
-            long cacheHit = cacheMatch.effectiveHitTokens();
+            long cacheHit = cacheMatch.computeHitTokens();
             long routingCacheMatchTokens = cacheMatch.routingHitTokens();
             PrefillTtftEstimate.LoadView loadView = loadProvider.loadView(ep);
             PrefillTtftEstimate.CandidateView estimate =
@@ -616,7 +617,8 @@ public class CostBasedPrefillStrategy {
                             ep.getPredictor().evaluator(),
                             ep.ttftEstimationRule(),
                             planningAtMs);
-            candidates.addCandidate(endpointAddress, ep, estimate, loadView.ownershipVersion());
+            candidates.addCandidate(endpointAddress, ep, estimate, cacheMatch.effectiveHitTokens(),
+                    loadView.ownershipVersion());
             if (Logger.isTraceEnabled()) {
                 Logger.trace("Prefill estimate - ip: " + endpointAddress
                         + ", order: "
@@ -665,11 +667,8 @@ public class CostBasedPrefillStrategy {
         return observed;
     }
 
-    private record CacheTokenMatch(
-            long effectiveHitTokens,
-            long routingHitTokens) {
-        private static final CacheTokenMatch NONE =
-                new CacheTokenMatch(0L, 0L);
+    private record CacheTokenMatch(long effectiveHitTokens, long routingHitTokens, long computeHitTokens) {
+        private static final CacheTokenMatch NONE = new CacheTokenMatch(0L, 0L, 0L);
     }
 
     private CacheTokenMatch calculateCacheMatch(
@@ -698,9 +697,6 @@ public class CostBasedPrefillStrategy {
                 : Math.max(0.0, affinity.getRemoteDiscount());
         double effectiveMatchBlocks = localMatchBlocks
                 + remoteMatchBlocks * remoteDiscount;
-        if (effectiveMatchBlocks <= 0.0) {
-            return CacheTokenMatch.NONE;
-        }
         long blockSize = cacheMatchResult.blockSize();
         if (blockSize <= 0L) {
             blockSize = request.getBlockSize() > 0L
@@ -720,10 +716,12 @@ public class CostBasedPrefillStrategy {
                 ? Long.MAX_VALUE
                 : Math.max(0L, Math.round(rawMatchTokens));
         long routingHit = Math.min(seqLen, Math.max(0L, rawHit));
-        long effectiveHit = rawHit >= seqLen
-                ? Math.max(0L, seqLen - blockSize)
-                : routingHit;
-        return new CacheTokenMatch(effectiveHit, routingHit);
+        long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
+        long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
+        long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
+        long computeHit = saturatingAdd(localHitTokens, remoteHitTokens);
+        computeHit = computeHit >= seqLen ? Math.max(0L, seqLen - blockSize) : computeHit;
+        return new CacheTokenMatch(effectiveHit, routingHit, computeHit);
     }
 
     private void reportSelectedEstimates(
