@@ -159,10 +159,14 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 ### Prefill 缓存工作量权重
 
 Prefill 请求自身的工作量抵扣使用
-`localHitTokens * localWeight + remoteHitTokens * remoteWeight`。
+`localHitTokens * localWeight + sharedRemoteHitTokens * remoteWeight`。
+KVCM 查询后取返回节点的 `max(0, global - local)` 最大值，换算为 token 并保存到
+`BalanceContext.sharedRemoteCacheHitTokens`；所有候选共用，包括 top K 外和未返回记录的节点。
+每次查询覆盖该值，未命中、失败或非 KVCM 来源清零；Local Sync / Standby 仍按各自节点的命中计算。
 两个权重位于 `router.roles.prefill.executionTimeEstimator`，默认均为 `1`，允许有限的非负数；
 FORMULA 和 LEARNING 均支持。Nacos/UniConfig 更新后，新请求使用新权重，已预测请求保留原值。
-抵扣全量输入时仍保留一个 block 重算；权重不改变缓存亲和、选路命中指标或 KV 预留。
+抵扣全量输入时仍保留一个 block 重算；缓存亲和命中计算、选路命中指标和 KV 预留口径不变，
+工作量变化会影响预计 TTFT 和选址。候选监控仍上报节点自身的原始 local/remote，不替换为共享值。
 
 候选缓存计算时上报 `app.cache.kvcm.predicted.{local,remote,input}.tokens` 三个 COUNTER，
 仅包含成功的 KVCM 查询，按 role 聚合，包含未命中候选的 input。local/remote 是加权前的命中；

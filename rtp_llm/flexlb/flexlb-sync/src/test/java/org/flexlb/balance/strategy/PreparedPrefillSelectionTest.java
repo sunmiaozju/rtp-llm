@@ -136,11 +136,11 @@ class PreparedPrefillSelectionTest {
     }
 
     @Test
-    void preparedSelectionKeepsLocalAffinityButQueuesGlobalUncachedWork() {
+    void preparedSelectionKeepsLocalAffinityButQueuesSharedRemoteUncachedWork() {
         first.close();
         second.close();
         RoutingConfig.CacheAffinityConfig affinity = new RoutingConfig.CacheAffinityConfig();
-        affinity.setMaxExtraTtftMs(10L);
+        affinity.setMaxExtraTtftMs(5L);
         affinity.setRemoteDiscount(0.2);
         config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
         PrefillEndpoint remote = publish("10.0.0.3", "sum(computeTokens)");
@@ -155,10 +155,11 @@ class PreparedPrefillSelectionTest {
         try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
             request.setSelectedPrefill(SelectedPrefill.from(selected, request.seqLen()));
         }
+        assertEquals(600L, request.ctx().getSharedRemoteCacheHitTokens());
         assertSame(local, request.selectedPrefill().endpoint());
         assertEquals(640L, request.selectedPrefill().hitCacheTokens());
         assertEquals(360L, request.selectedPrefill().kvTokens(request.seqLen()));
-        assertEquals(205L, request.selectedPrefill().predictedMs());
+        assertEquals(105L, request.selectedPrefill().predictedMs());
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         queues.addWaiting(request);
         Request next = request("2");

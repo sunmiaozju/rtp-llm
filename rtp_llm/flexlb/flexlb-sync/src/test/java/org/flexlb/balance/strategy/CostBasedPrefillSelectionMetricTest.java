@@ -372,6 +372,71 @@ class CostBasedPrefillSelectionMetricTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({"1,1,100,100,200,300,500", "0.5,0.2,650,700,750,800,900", "1,0,500,600,700,800,1000"})
+    void sharedRemoteHitsReduceWorkForEveryCandidate(double localWeight,
+                                                     double remoteWeight,
+                                                     long firstWork,
+                                                     long secondWork,
+                                                     long thirdWork,
+                                                     long fourthWork,
+                                                     long missingHostWork) {
+        configureFocusedAffinity();
+        config.getRouter().getRoles().getPrefill().getCacheAffinity().setRemoteDiscount(0.0);
+        var estimator = config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        estimator.setLocalWeight(localWeight);
+        estimator.setRemoteWeight(remoteWeight);
+        for (int i = 2; i <= 5; i++) {
+            publish("10.0.0." + i, 8080);
+        }
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of("10.0.0.1:8080@0", new HostCacheMatch(5L, 8L), "10.0.0.2:8080@0", new HostCacheMatch(4L, 9L),
+                        "10.0.0.3:8080@0", new HostCacheMatch(3L, 7L), "10.0.0.4:8080@0", HostCacheMatch.local(2L)),
+                CacheMatchSource.KVCM, 0L, 100L));
+
+        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+
+        assertEquals(500L, context.getSharedRemoteCacheHitTokens());
+        long[] work = {firstWork, secondWork, thirdWork, fourthWork, missingHostWork};
+        for (PrefillCandidateWork candidate : inputs.candidates()) {
+            int index = Integer.parseInt(candidate.endpoint().getIp().substring("10.0.0.".length())) - 1;
+            assertEquals(work[index], candidate.predictedMs());
+            long localHit = index < 4 ? (5L - index) * 100L : 0L;
+            assertEquals(localHit, candidate.cacheHitTokens());
+            assertEquals(localHit, candidate.routingCacheMatchTokens());
+        }
+        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 200L, 0L, 1_000L);
+        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 0L, 0L, 1_000L);
+        try (SelectedRole selected = select()) {
+            assertEquals("10.0.0.1", selected.serverStatus().getServerIp());
+            assertEquals(firstWork, selected.prefillWorkMs());
+            assertEquals(500L, selected.serverStatus().getDebugInfo().getHitCacheLen());
+            for (var candidate : context.getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL).candidates()) {
+                int index = Integer.parseInt(
+                        candidate.endpoint().substring("10.0.0.".length(), candidate.endpoint().indexOf(':'))) - 1;
+                assertEquals(work[index], candidate.incomingPrefillMs());
+            }
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"KVCM,true", "KVCM,false", "LOCAL_SYNC,true", "LOCAL_STANDBY,true"})
+    void nextCacheQueryClearsPreviousSharedRemoteHits(CacheMatchSource source, boolean querySucceeded) {
+        configureFocusedAffinity();
+        when(cache.findMatchingEngines(any()))
+                .thenReturn(
+                        new CacheMatchResult(Map.of("10.0.0.1:8080@0", new HostCacheMatch(2L, 8L)),
+                                CacheMatchSource.KVCM, 0L, 100L),
+                        new CacheMatchResult(Map.of(), source, 0L, 100L, querySucceeded));
+        strategy.prepare(context, RoleType.PREFILL, null);
+        assertEquals(600L, context.getSharedRemoteCacheHitTokens());
+
+        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+
+        assertEquals(0L, context.getSharedRemoteCacheHitTokens());
+        assertEquals(1_000L, inputs.candidates().getFirst().predictedMs());
+    }
+
     @Test
     void abandonedSelectionsReportNoCacheMetricsAndACommitReportsExactlyOnce() {
         when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(

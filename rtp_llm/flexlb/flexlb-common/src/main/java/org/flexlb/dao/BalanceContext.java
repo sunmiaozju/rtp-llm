@@ -36,6 +36,12 @@ public class BalanceContext {
     private Request request;
 
     /**
+     * Maximum remote hit tokens from the latest successful KVCM query, shared by all Prefill candidates.
+     * Replaced on each cache query; zero for misses, failed queries and non-KVCM sources.
+     */
+    private volatile long sharedRemoteCacheHitTokens;
+
+    /**
      * Numeric request ID received on the Schedule RPC; zero when omitted.
      */
     private long numericRequestId;
