@@ -132,8 +132,44 @@ class ConfigServiceTest {
     @Test
     void rejectsRemovedCacheAffinityOutstandingTokenLimit() {
         assertInvalid("""
-                {"router":{"roles":{"prefill":{"cacheAffinity":{"maxOutstandingUncachedTokens":50000}}}}}
+                        {"router":{"roles":{"prefill":{"cacheAffinity":{"maxOutstandingUncachedTokens":50000}}}}}
                 """, "maxOutstandingUncachedTokens");
+    }
+
+    @Test
+    void prefillCacheWorkWeightsDefaultToOneAndSupportBothEstimators() {
+        var defaults = ConfigTestFixtures.parse("{}").getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        assertEquals(1.0, defaults.getLocalWeight());
+        assertEquals(1.0, defaults.getRemoteWeight());
+        for (String type : new String[]{"FORMULA", "LEARNING"}) {
+            var estimator = ConfigTestFixtures.parse("""
+                    {"router":{"roles":{"prefill":{"executionTimeEstimator":{
+                        "type":"%s","localWeight":0.5,"remoteWeight":1.5}}}}}
+                    """.formatted(type)).getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+            assertEquals(0.5, estimator.getLocalWeight());
+            assertEquals(1.5, estimator.getRemoteWeight());
+        }
+    }
+
+    @Test
+    void rejectsInvalidPrefillCacheWorkWeights() {
+        for (String field : new String[]{"localWeight", "remoteWeight"}) {
+            for (String value : new String[]{"-0.1", "1e309", "\"1\"", "null", "true"}) {
+                assertInvalid("""
+                        {"router":{"roles":{"prefill":{"executionTimeEstimator":{"%s":%s}}}}}
+                        """.formatted(field, value), field);
+            }
+        }
+        var config = ConfigTestFixtures.parse("{}");
+        var estimator = config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            estimator.setLocalWeight(invalid);
+            assertThrows(ConfigValidationException.class, () -> FlexlbConfigValidator.validate(config));
+            estimator.setLocalWeight(1.0);
+            estimator.setRemoteWeight(invalid);
+            assertThrows(ConfigValidationException.class, () -> FlexlbConfigValidator.validate(config));
+            estimator.setRemoteWeight(1.0);
+        }
     }
 
     @Test

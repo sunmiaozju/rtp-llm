@@ -719,7 +719,10 @@ public class CostBasedPrefillStrategy {
         long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
-        long computeHit = saturatingAdd(localHitTokens, remoteHitTokens);
+        RoutingConfig.ExecutionTimeEstimatorConfig estimator =
+                config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        long computeHit =
+                Math.round(localHitTokens * estimator.getLocalWeight() + remoteHitTokens * estimator.getRemoteWeight());
         computeHit = computeHit >= seqLen ? Math.max(0L, seqLen - blockSize) : computeHit;
         return new CacheTokenMatch(effectiveHit, routingHit, computeHit);
     }

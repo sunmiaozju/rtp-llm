@@ -156,6 +156,14 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 使用最新窗口值。因此缩短窗口不会保证已有等待立即结束，后续窗口无需重启即可使用新值。
 此行为仅覆盖窗口时长，不承诺调度模式、交付模式或其他启动时配置的热切换。
 
+### Prefill 缓存工作量权重
+
+Prefill 请求自身的工作量抵扣使用
+`localHitTokens * localWeight + remoteHitTokens * remoteWeight`。
+两个权重位于 `router.roles.prefill.executionTimeEstimator`，默认均为 `1`，允许有限的非负数；
+FORMULA 和 LEARNING 均支持。Nacos/UniConfig 更新后，新请求使用新权重，已预测请求保留原值。
+抵扣全量输入时仍保留一个 block 重算；权重不改变缓存亲和、选路命中指标或 KV 预留。
+
 ### Nacos 连接
 
 | 环境变量 | 默认值 | 说明 |

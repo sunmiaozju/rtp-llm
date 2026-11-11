@@ -333,6 +333,26 @@ class CostBasedPrefillSelectionMetricTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({"1, 1, 200", "0.5, 0.2, 780", "0, 1, 400", "1, 0, 800", "0, 0, 1000", "2, 2, 100", "0.333, 0, 933",
+            "1.7976931348623157E308, 1, 100"})
+    void weightsOnlyChangePredictedWork(double localWeight, double remoteWeight, long expectedWork) {
+        configureFocusedAffinity();
+        var estimator = config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        estimator.setLocalWeight(localWeight);
+        estimator.setRemoteWeight(remoteWeight);
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of("10.0.0.1:8080@0", new HostCacheMatch(2L, 8L)), CacheMatchSource.KVCM, 0L, 100L));
+        assertEquals(expectedWork,
+                strategy.prepare(context, RoleType.PREFILL, null).candidates().getFirst().predictedMs());
+        try (SelectedRole selected = select()) {
+            assertEquals(expectedWork, selected.prefillWorkMs());
+            assertEquals(320L, selected.serverStatus().getDebugInfo().getHitCacheLen());
+            commit(selected);
+            verify(reporter).reportRoutingSelectedCacheMatchMetrics(RoleType.PREFILL, 320L);
+        }
+    }
+
     @Test
     void abandonedSelectionsReportNoCacheMetricsAndACommitReportsExactlyOnce() {
         when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(

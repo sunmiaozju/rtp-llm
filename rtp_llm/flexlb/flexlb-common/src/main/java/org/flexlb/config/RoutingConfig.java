@@ -37,6 +37,8 @@ public final class RoutingConfig {
         private EstimatorType type = EstimatorType.FORMULA;
         private String expression =
                 "sum(computeTokens) + 0.3*sum(hitCacheTokens)";
+        private double localWeight = 1.0;
+        private double remoteWeight = 1.0;
     }
 
     public enum EstimatorType {
