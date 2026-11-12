@@ -156,6 +156,15 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 使用最新窗口值。因此缩短窗口不会保证已有等待立即结束，后续窗口无需重启即可使用新值。
 此行为仅覆盖窗口时长，不承诺调度模式、交付模式或其他启动时配置的热切换。
 
+### Prefill 缓存工作量权重
+
+Prefill 请求自身的工作量抵扣使用
+`localHitTokens * localWeight + (globalHitTokens - localHitTokens) * remoteWeight`。
+
+候选缓存计算时上报 `app.cache.kvcm.predicted.{local,remote,input}.tokens` 三个 COUNTER，
+仅包含成功的 KVCM 查询，按 role 聚合，包含未命中候选的 input。local/remote 是加权前的命中；
+用同一时间窗口的累计增量除以 input 增量计算命中率。这是候选预测口径，重试会重复计入，不等于最终选中请求口径。
+
 ### Nacos 连接
 
 | 环境变量 | 默认值 | 说明 |

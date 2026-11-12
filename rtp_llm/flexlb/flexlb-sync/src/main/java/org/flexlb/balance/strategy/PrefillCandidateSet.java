@@ -41,6 +41,7 @@ final class PrefillCandidateSet {
     void addCandidate(String address,
                       PrefillEndpoint endpoint,
                       PrefillTtftEstimate.CandidateView candidate,
+                      long effectiveHitTokens,
                       long ownershipVersion) {
         if (!candidate.selectable() && !candidate.engineWorkUnmodeled()) {
             throw new IllegalStateException("Prefill estimate cannot be scored: "
@@ -51,7 +52,7 @@ final class PrefillCandidateSet {
         endpoints[size] = endpoint;
         estimatedTtftMs[size] = candidate.estimatedTtftMsValue();
         incomingPrefillMs[size] = candidate.incomingPrefillMs();
-        cacheHitTokens[size] = candidate.cacheHitTokens();
+        cacheHitTokens[size] = effectiveHitTokens;
         routingCacheMatchTokens[size] = candidate.routingCacheMatchTokens();
         ownershipVersions[size] = ownershipVersion;
         hasKnownTtft |= estimatedTtftMs[size] >= 0L;

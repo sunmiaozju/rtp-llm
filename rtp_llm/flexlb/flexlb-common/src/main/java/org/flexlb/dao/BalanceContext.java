@@ -35,6 +35,8 @@ public class BalanceContext {
 
     private Request request;
 
+    private volatile long globalHitTokens;
+
     /**
      * Numeric request ID received on the Schedule RPC; zero when omitted.
      */

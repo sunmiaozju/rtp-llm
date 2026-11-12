@@ -60,11 +60,11 @@ public final class FlexlbConfigValidator {
         }
         String type = estimator.path("type").asText("FORMULA");
         if ("FORMULA".equals(type)) {
-            rejectFieldsExcept(estimator,
-                    "router.roles.prefill.executionTimeEstimator", "type", "expression");
+            rejectFieldsExcept(estimator, "router.roles.prefill.executionTimeEstimator", "type", "expression",
+                    "localWeight", "remoteWeight");
         } else if ("LEARNING".equals(type)) {
-            rejectFieldsExcept(estimator,
-                    "router.roles.prefill.executionTimeEstimator", "type");
+            rejectFieldsExcept(estimator, "router.roles.prefill.executionTimeEstimator", "type", "localWeight",
+                    "remoteWeight");
         }
     }
 
@@ -227,6 +227,10 @@ public final class FlexlbConfigValidator {
                 "router.roles.prefill.executionTimeEstimator", "is required");
         require(prefill.getExecutionTimeEstimator().getType() != null,
                 "router.roles.prefill.executionTimeEstimator.type", "is required");
+        range(prefill.getExecutionTimeEstimator().getLocalWeight(), 0, Double.MAX_VALUE,
+                "router.roles.prefill.executionTimeEstimator.localWeight");
+        range(prefill.getExecutionTimeEstimator().getRemoteWeight(), 0, Double.MAX_VALUE,
+                "router.roles.prefill.executionTimeEstimator.remoteWeight");
         if (prefill.getExecutionTimeEstimator().getType()
                 == EstimatorType.FORMULA) {
             String expression = prefill.getExecutionTimeEstimator().getExpression();

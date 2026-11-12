@@ -222,6 +222,12 @@ public class EngineHealthReporter {
                 FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
         this.monitor.register(CACHE_HIT_COMPARISON_KVCM_PREDICTED_TOKENS, FlexMetricType.COUNTER,
                 FlexPriorityType.NORMAL);
+        monitor.register(MetricConstant.CACHE_KVCM_PREDICTED_LOCAL_TOKENS, FlexMetricType.COUNTER,
+                FlexPriorityType.NORMAL);
+        monitor.register(MetricConstant.CACHE_KVCM_PREDICTED_REMOTE_TOKENS, FlexMetricType.COUNTER,
+                FlexPriorityType.NORMAL);
+        monitor.register(MetricConstant.CACHE_KVCM_PREDICTED_INPUT_TOKENS, FlexMetricType.COUNTER,
+                FlexPriorityType.NORMAL);
         this.monitor.register(CACHE_HIT_COMPARISON_INPUT_TOKENS,
                 FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
         this.monitor.register(CACHE_HIT_COMPARISON_DELTA_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
@@ -680,6 +686,20 @@ public class EngineHealthReporter {
                                          long inputTokens) {
         cacheMetricsReporter.reportKvcmSelectedMatch(
                 roleType, engineIp, localMatchTokens, globalMatchTokens, inputTokens);
+    }
+
+    /**
+     * Raw KVCM token counts for each candidate prediction, before applying work weights.
+     */
+    public void reportKvcmPredictionTokens(RoleType roleType, long localTokens, long remoteTokens, long inputTokens) {
+        try {
+            FlexMetricTags tags = FlexMetricTags.of("role", roleType.name());
+            monitor.report(MetricConstant.CACHE_KVCM_PREDICTED_LOCAL_TOKENS, tags, localTokens);
+            monitor.report(MetricConstant.CACHE_KVCM_PREDICTED_REMOTE_TOKENS, tags, remoteTokens);
+            monitor.report(MetricConstant.CACHE_KVCM_PREDICTED_INPUT_TOKENS, tags, inputTokens);
+        } catch (RuntimeException failure) {
+            logger.warn("Failed to report KVCM prediction token metrics", failure);
+        }
     }
 
     public void reportCacheHitComparisonMetrics(WorkerStatus worker, CacheHitComparisonResult comparison) {

@@ -266,6 +266,33 @@ class ConfigServiceTest {
     }
 
     @Test
+    void runtimeUpdatesPrefillCacheWorkWeightsAndKeepsTheLastValidSnapshot() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, "{\"schemaVersion\":3}");
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        var initial = service.loadBalanceConfig().getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        source.emit("""
+                {"schemaVersion":3,"router":{"roles":{"prefill":{"executionTimeEstimator":{
+                    "localWeight":0.5,"remoteWeight":0.2}}}}}
+                """);
+        var updated = service.loadBalanceConfig().getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        assertThat(initial.getLocalWeight()).isEqualTo(1.0);
+        assertThat(initial.getRemoteWeight()).isEqualTo(1.0);
+        assertThat(updated.getLocalWeight()).isEqualTo(0.5);
+        assertThat(updated.getRemoteWeight()).isEqualTo(0.2);
+        source.emit("""
+                {"schemaVersion":3,"router":{"roles":{"prefill":{"executionTimeEstimator":{"remoteWeight":0}}}}}
+                """);
+        FlexlbConfig latest = service.loadBalanceConfig();
+        var estimator = latest.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        assertThat(estimator.getLocalWeight()).isEqualTo(0.5);
+        assertThat(estimator.getRemoteWeight()).isEqualTo(0.0);
+        source.emit("""
+                {"schemaVersion":3,"router":{"roles":{"prefill":{"executionTimeEstimator":{"localWeight":-1}}}}}
+                """);
+        assertThat(service.loadBalanceConfig()).isSameAs(latest);
+    }
+
+    @Test
     void runtimeUpdateLogsTheNewSourceSchemaVersion() {
         ch.qos.logback.classic.Logger logger =
                 (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ConfigService.class);

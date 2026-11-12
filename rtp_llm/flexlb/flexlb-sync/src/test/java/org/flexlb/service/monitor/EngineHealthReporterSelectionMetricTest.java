@@ -17,8 +17,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.netty.resources.LoopResources;
 
+import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_INPUT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_LOCAL_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_REMOTE_TOKENS;
 import static org.flexlb.constant.MetricConstant.PREFILL_SELECTED_ESTIMATED_TTFT_MS;
 import static org.flexlb.constant.MetricConstant.PREFILL_SELECTED_EXECUTION_TIME_MS;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,5 +79,25 @@ class EngineHealthReporterSelectionMetricTest {
                 "delivery_mode", "NON_BATCH");
         verify(monitor).report(PREFILL_SELECTED_ESTIMATED_TTFT_MS, tags, 1_250.0);
         verify(monitor).report(PREFILL_SELECTED_EXECUTION_TIME_MS, tags, 400.0);
+    }
+
+    @Test
+    void registersAndReportsKvcmPredictionTokenCounters() {
+        reporter.init();
+        verify(monitor).register(CACHE_KVCM_PREDICTED_LOCAL_TOKENS, FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
+        verify(monitor).register(CACHE_KVCM_PREDICTED_REMOTE_TOKENS, FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
+        verify(monitor).register(CACHE_KVCM_PREDICTED_INPUT_TOKENS, FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
+        reporter.reportKvcmPredictionTokens(RoleType.PREFILL, 200L, 600L, 1000L);
+        FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL");
+        verify(monitor).report(CACHE_KVCM_PREDICTED_LOCAL_TOKENS, tags, 200.0);
+        verify(monitor).report(CACHE_KVCM_PREDICTED_REMOTE_TOKENS, tags, 600.0);
+        verify(monitor).report(CACHE_KVCM_PREDICTED_INPUT_TOKENS, tags, 1000.0);
+    }
+
+    @Test
+    void predictionMetricFailureDoesNotInterruptRouting() {
+        doThrow(new IllegalStateException("monitor unavailable")).when(monitor)
+                .report(CACHE_KVCM_PREDICTED_LOCAL_TOKENS, FlexMetricTags.of("role", "PREFILL"), 200.0);
+        assertDoesNotThrow(() -> reporter.reportKvcmPredictionTokens(RoleType.PREFILL, 200L, 600L, 1000L));
     }
 }
