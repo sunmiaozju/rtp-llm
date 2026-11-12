@@ -22,6 +22,7 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.loadbalance.Request;
+import org.flexlb.dao.master.CacheStatus;
 import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.pv.PvLogData;
@@ -46,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -357,6 +359,33 @@ class CostBasedPrefillSelectionMetricTest {
     }
 
     @ParameterizedTest
+    @CsvSource({"1000,100,8,0,1,1,200", "1000,100,9,0,1,1,100", "1000,100,9,1,1.5,1,100", "1000,100,9,1,2,1,100",
+            "1000,100,9,3,1.5,1,100", "134920,2304,58,0,2,1,2304", "134920,2304,58,1,2,1,2304", "80,100,1,0,1,1,80"})
+    void predictedCacheCreditAlwaysLeavesOneBlock(long seqLen,
+                                                  long blockSize,
+                                                  long globalBlocks,
+                                                  long localBlocks,
+                                                  double localWeight,
+                                                  double remoteWeight,
+                                                  long expectedWorkMs) {
+        configureFocusedAffinity();
+        var estimator = config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        estimator.setLocalWeight(localWeight);
+        estimator.setRemoteWeight(remoteWeight);
+        context.getRequest().setSeqLen(seqLen);
+        context.getRequest().setBlockSize(blockSize);
+        when(cache.findMatchingEngines(any())).thenReturn(
+                new CacheMatchResult(Map.of("10.0.0.1:8080@0", new HostCacheMatch(localBlocks, globalBlocks)),
+                        CacheMatchSource.KVCM, 0L, blockSize));
+
+        assertEquals(expectedWorkMs,
+                strategy.prepare(context, RoleType.PREFILL, null).candidates().getFirst().predictedMs());
+        try (SelectedRole selected = select()) {
+            assertEquals(expectedWorkMs, selected.prefillWorkMs());
+        }
+    }
+
+    @ParameterizedTest
     @CsvSource({"KVCM,true,true", "KVCM,true,false", "KVCM,false,true", "LOCAL_SYNC,true,true",
             "LOCAL_STANDBY,true,true"})
     void predictionTokenMetricsIncludeMissesButExcludeOtherSources(CacheMatchSource source,
@@ -480,6 +509,55 @@ class CostBasedPrefillSelectionMetricTest {
         verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 126_720L, 0L, 194_662L);
         verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 16_128L, 110_592L, 194_662L);
         verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 0L, 0L, 194_662L);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,100,200,300,900,900", "true,100,200,300,900,900", "false,0,200,300,800,800",
+            "true,0,200,300,800,800", "false,0,0,300,700,700", "true,0,0,300,700,700", "false,0,0,0,600,500",
+            "true,0,0,0,600,500"})
+    void bothSelectionPathsKeepBlockSizePriorityAndPerWorkerFallback(boolean prepared,
+                                                                     long resultBlockSize,
+                                                                     long requestBlockSize,
+                                                                     long cacheKeyBlockSize,
+                                                                     long firstWorkMs,
+                                                                     long secondWorkMs) {
+        publish("10.0.0.2", 8080);
+        for (var entry : new WorkerDirectory(registry).prefillRoutingSnapshot(RoleType.PREFILL)) {
+            long workerBlockSize = entry.endpoint().getIp().equals("10.0.0.1") ? 400L : 500L;
+            CacheStatus cacheStatus = new CacheStatus();
+            cacheStatus.setBlockSize(workerBlockSize);
+            WorkerStatus status = entry.endpoint().getStatus();
+            status.lock.lock();
+            try {
+                status.publishCacheStatus(cacheStatus);
+            } finally {
+                status.lock.unlock();
+            }
+        }
+        context.getRequest().setBlockSize(requestBlockSize);
+        context.getRequest().setCacheKeyBlockSize(cacheKeyBlockSize);
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of("10.0.0.1:8080@0", HostCacheMatch.local(1L), "10.0.0.2:8080@0", HostCacheMatch.local(1L)),
+                CacheMatchSource.LOCAL_SYNC, 0L, resultBlockSize));
+
+        Map<String, Long> predictedMs;
+        if (prepared) {
+            predictedMs = strategy.prepare(context, RoleType.PREFILL, null)
+                    .candidates()
+                    .stream()
+                    .collect(Collectors.toMap(PrefillCandidateWork::address, PrefillCandidateWork::predictedMs));
+        } else {
+            try (SelectedRole selected = select()) {
+                predictedMs = context.getRoutingTelemetry()
+                        .routingDecisions()
+                        .get(RoleType.PREFILL)
+                        .candidates()
+                        .stream()
+                        .collect(Collectors.toMap(candidate -> candidate.endpoint(),
+                                candidate -> candidate.incomingPrefillMs()));
+            }
+        }
+        assertEquals(Map.of("10.0.0.1:8080@0", firstWorkMs, "10.0.0.2:8080@0", secondWorkMs), predictedMs);
     }
 
     @ParameterizedTest
