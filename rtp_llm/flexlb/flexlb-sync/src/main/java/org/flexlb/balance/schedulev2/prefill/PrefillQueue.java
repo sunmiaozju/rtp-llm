@@ -270,7 +270,7 @@ public final class PrefillQueue {
             return;
         }
         synchronized (requestRecordsLock) {
-            if (dispatched.get(request.requestId()) != dispatchedRequest) {
+            if (!dispatched.containsKey(request.requestId())) {
                 return;
             }
             long previousMs = dispatchedRequest.predictedMs();
