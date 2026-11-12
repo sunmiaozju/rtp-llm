@@ -646,8 +646,7 @@ public class CostBasedPrefillStrategy {
         return new EndpointDiscovery(directory, matching, registered);
     }
 
-    private CacheMatchResult getCacheMatchResult(
-            BalanceContext balanceContext, RoleType roleType, String group) {
+    private CacheMatchResult getCacheMatchResult(BalanceContext balanceContext, RoleType roleType, String group) {
         Request request = balanceContext.getRequest();
         long blockSize = request.getBlockSize() > 0L
                 ? request.getBlockSize()
@@ -662,15 +661,14 @@ public class CostBasedPrefillStrategy {
         CacheMatchResult observed = result == null
                 ? CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC)
                 : result;
-        long sharedRemoteMatchBlocks = 0L;
+        long maxGlobalHitBlocks = 0L;
         if (observed.source() == CacheMatchSource.KVCM && observed.querySucceeded()) {
             for (HostCacheMatch match : observed.hostMatches().values()) {
-                sharedRemoteMatchBlocks = Math.max(sharedRemoteMatchBlocks,
-                        Math.max(0L, match.globalMatchBlocks()) - Math.max(0L, match.localMatchBlocks()));
+                maxGlobalHitBlocks = Math.max(maxGlobalHitBlocks, match.globalMatchBlocks());
             }
         }
-        balanceContext.setSharedRemoteCacheHitTokens(CacheMatchResult.matchedTokens(sharedRemoteMatchBlocks,
-                observed.blockSize() > 0L ? observed.blockSize() : blockSize, request.getSeqLen()));
+        balanceContext
+                .setGlobalHitTokens(CacheMatchResult.matchedTokens(maxGlobalHitBlocks, blockSize, request.getSeqLen()));
         balanceContext.recordCacheQuery(observed.source().name(), observed.queryTimeUs());
         return observed;
     }
@@ -719,7 +717,7 @@ public class CostBasedPrefillStrategy {
         long rawHit = rawMatchTokens >= Long.MAX_VALUE
                 ? Long.MAX_VALUE
                 : Math.max(0L, Math.round(rawMatchTokens));
-        long routingHit = Math.min(seqLen, Math.max(0L, rawHit));
+        long routingHit = Math.min(seqLen, rawHit);
         long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
@@ -727,14 +725,18 @@ public class CostBasedPrefillStrategy {
             engineHealthReporter.reportKvcmPredictionTokens(ep.getStatus().getRole(), localHitTokens, remoteHitTokens,
                     seqLen);
         }
-        RoutingConfig.ExecutionTimeEstimatorConfig estimator =
+        RoutingConfig.ExecutionTimeEstimatorConfig estimatorConfig =
                 config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
-        // KVCM only calculates global hits for top-K hosts; remote work savings apply to every candidate.
+
+        double localWeight = estimatorConfig.getLocalWeight();
+        double remoteWeight = estimatorConfig.getRemoteWeight();
+
         long remoteWorkHitTokens = cacheMatchResult.source() == CacheMatchSource.KVCM
-                ? context.getSharedRemoteCacheHitTokens()
+                ? context.getGlobalHitTokens() - localHitTokens
                 : remoteHitTokens;
-        long computeHit = Math
-                .round(localHitTokens * estimator.getLocalWeight() + remoteWorkHitTokens * estimator.getRemoteWeight());
+
+        long computeHit = Math.round(localHitTokens * localWeight + remoteWorkHitTokens * remoteWeight);
+
         computeHit = computeHit >= seqLen ? Math.max(0L, seqLen - blockSize) : computeHit;
         return new CacheTokenMatch(effectiveHit, routingHit, computeHit);
     }

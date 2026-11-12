@@ -7,6 +7,7 @@ import org.flexlb.balance.estimate.EndpointPrefillLoadProvider;
 import org.flexlb.balance.estimate.PrefillLoadProvider;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.scheduler.ScheduledRequest;
+import org.flexlb.cache.domain.CacheMatchQuery;
 import org.flexlb.cache.domain.CacheMatchResult;
 import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.cache.match.CacheAwareService;
@@ -92,6 +93,7 @@ class CostBasedPrefillSelectionMetricTest {
         Request request = new Request();
         request.setRequestId("10001");
         request.setSeqLen(1_000L);
+        request.setBlockSize(100L);
         request.setPriority(50);
         request.setBlockCacheKeys(List.of());
         context = new BalanceContext(config);
@@ -373,14 +375,14 @@ class CostBasedPrefillSelectionMetricTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"1,1,100,100,200,300,500", "0.5,0.2,650,700,750,800,900", "1,0,500,600,700,800,1000"})
-    void sharedRemoteHitsReduceWorkForEveryCandidate(double localWeight,
-                                                     double remoteWeight,
-                                                     long firstWork,
-                                                     long secondWork,
-                                                     long thirdWork,
-                                                     long fourthWork,
-                                                     long missingHostWork) {
+    @CsvSource({"1,1,100,100,100,100,100", "0.5,0.2,670,700,730,760,820", "1,0,500,600,700,800,1000"})
+    void sharedGlobalHitsCreditOnlyTheMissingPrefixOfEachCandidate(double localWeight,
+                                                                   double remoteWeight,
+                                                                   long firstWork,
+                                                                   long secondWork,
+                                                                   long thirdWork,
+                                                                   long fourthWork,
+                                                                   long missingHostWork) {
         configureFocusedAffinity();
         config.getRouter().getRoles().getPrefill().getCacheAffinity().setRemoteDiscount(0.0);
         var estimator = config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
@@ -396,7 +398,8 @@ class CostBasedPrefillSelectionMetricTest {
 
         PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
 
-        assertEquals(500L, context.getSharedRemoteCacheHitTokens());
+        assertEquals(900L, context.getGlobalHitTokens());
+        assertEquals(5, inputs.candidates().size());
         long[] work = {firstWork, secondWork, thirdWork, fourthWork, missingHostWork};
         for (PrefillCandidateWork candidate : inputs.candidates()) {
             int index = Integer.parseInt(candidate.endpoint().getIp().substring("10.0.0.".length())) - 1;
@@ -421,7 +424,7 @@ class CostBasedPrefillSelectionMetricTest {
 
     @ParameterizedTest
     @CsvSource({"KVCM,true", "KVCM,false", "LOCAL_SYNC,true", "LOCAL_STANDBY,true"})
-    void nextCacheQueryClearsPreviousSharedRemoteHits(CacheMatchSource source, boolean querySucceeded) {
+    void nextCacheQueryClearsPreviousGlobalHits(CacheMatchSource source, boolean querySucceeded) {
         configureFocusedAffinity();
         when(cache.findMatchingEngines(any()))
                 .thenReturn(
@@ -429,12 +432,76 @@ class CostBasedPrefillSelectionMetricTest {
                                 CacheMatchSource.KVCM, 0L, 100L),
                         new CacheMatchResult(Map.of(), source, 0L, 100L, querySucceeded));
         strategy.prepare(context, RoleType.PREFILL, null);
-        assertEquals(600L, context.getSharedRemoteCacheHitTokens());
+        assertEquals(800L, context.getGlobalHitTokens());
 
         PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
 
-        assertEquals(0L, context.getSharedRemoteCacheHitTokens());
+        assertEquals(0L, context.getGlobalHitTokens());
         assertEquals(1_000L, inputs.candidates().getFirst().predictedMs());
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0L, 2_304L})
+    void sharedGlobalPrefixDoesNotCountTargetLocalHitsTwice(long requestBlockSize) {
+        configureFocusedAffinity();
+        config.getRouter().getRoles().getPrefill().getCacheAffinity().setRemoteDiscount(0.0);
+        config.getRouter()
+                .getRoles()
+                .getPrefill()
+                .getExecutionTimeEstimator()
+                .setExpression("1000 + 0.069*sum(computeTokens) + 0.0008*sum(hitCacheTokens)");
+        registry.get(RoleType.PREFILL, "10.0.0.1:8080@0").close();
+        for (int i = 2; i <= 4; i++) {
+            publish("10.0.0." + i, 8080);
+        }
+        context.getRequest().setSeqLen(194_662L);
+        context.getRequest().setBlockSize(requestBlockSize);
+        context.getRequest().setCacheKeyBlockSize(2_304L);
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of("10.0.0.2:8080@0", HostCacheMatch.local(55L), "10.0.0.3:8080@0", new HostCacheMatch(7L, 55L)),
+                CacheMatchSource.KVCM, 0L, 2_304L));
+
+        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+
+        assertEquals(126_720L, context.getGlobalHitTokens());
+        assertEquals(3, inputs.candidates().size());
+        for (PrefillCandidateWork candidate : inputs.candidates()) {
+            assertEquals(5_789L, candidate.predictedMs());
+            long localHit = switch (candidate.endpoint().getIp()) {
+                case "10.0.0.2" -> 126_720L;
+                case "10.0.0.3" -> 16_128L;
+                default -> 0L;
+            };
+            assertEquals(localHit, candidate.cacheHitTokens());
+            assertEquals(localHit, candidate.routingCacheMatchTokens());
+        }
+        verify(cache).findMatchingEngines(new CacheMatchQuery(context.getRequestId(),
+                context.getRequest().getBlockCacheKeys(), 2_304L, RoleType.PREFILL, null));
+        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 126_720L, 0L, 194_662L);
+        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 16_128L, 110_592L, 194_662L);
+        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 0L, 0L, 194_662L);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"LOCAL_SYNC,1,1,800", "LOCAL_STANDBY,1,1,800", "LOCAL_SYNC,0.5,0.2,900", "LOCAL_STANDBY,0.5,0.2,900"})
+    void localCacheSourcesKeepLocalWorkCredit(CacheMatchSource source,
+                                              double localWeight,
+                                              double remoteWeight,
+                                              long expectedWork) {
+        configureFocusedAffinity();
+        var estimator = config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
+        estimator.setLocalWeight(localWeight);
+        estimator.setRemoteWeight(remoteWeight);
+        when(cache.findMatchingEngines(any())).thenReturn(
+                new CacheMatchResult(Map.of("10.0.0.1:8080@0", HostCacheMatch.local(2L)), source, 0L, 100L));
+
+        PrefillCandidateWork candidate = strategy.prepare(context, RoleType.PREFILL, null).candidates().getFirst();
+
+        assertEquals(0L, context.getGlobalHitTokens());
+        assertEquals(expectedWork, candidate.predictedMs());
+        assertEquals(200L, candidate.cacheHitTokens());
+        assertEquals(200L, candidate.routingCacheMatchTokens());
+        verify(reporter, never()).reportKvcmPredictionTokens(any(), anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -929,11 +996,11 @@ class CostBasedPrefillSelectionMetricTest {
         return candidates;
     }
 
-    private void configureAffinity(
-            long maxExtraTtftMs,
-            double minPrefixHitPercent) {
+    private void configureAffinity(long maxExtraTtftMs, double minPrefixHitPercent) {
         config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator()
                 .setExpression("sum(computeTokens) + 2*sum(hitCacheTokens)");
+        // Affinity gate cases compare local-cache costs without shared remote work savings.
+        config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator().setRemoteWeight(0.0);
         RoutingConfig.CacheAffinityConfig affinity =
                 new RoutingConfig.CacheAffinityConfig();
         affinity.setMaxExtraTtftMs(maxExtraTtftMs);
