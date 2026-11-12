@@ -18,7 +18,10 @@ public final class DispatchedRequest {
      * 这个请求在引擎上要新占的 KV token 数（输入 token 数减去命中缓存的部分）。
      */
     private final long kvTokens;
-    private final long predictedMs;
+    /**
+     * 初次预测的 Prefill 工作量；引擎上报有效缓存命中或剩余 token 进度后替换为纠偏后的工作量。
+     */
+    private volatile long predictedMs;
     /**
      * 最近一次包含该请求的引擎上报时间；未上报时为零。
      */
@@ -41,6 +44,13 @@ public final class DispatchedRequest {
 
     public long predictedMs() {
         return predictedMs;
+    }
+
+    /**
+     * 由 PrefillQueue 在记录锁内更新，与节点累计工作量的差值更新一起完成。
+     */
+    void updatePredictedMs(long predictedMs) {
+        this.predictedMs = predictedMs;
     }
 
     public WorkView.Phase phase() {

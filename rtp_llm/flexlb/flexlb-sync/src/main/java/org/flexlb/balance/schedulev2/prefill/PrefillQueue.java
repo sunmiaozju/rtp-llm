@@ -5,6 +5,7 @@ import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.QueueView;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.planner.GroupPlanner;
+import org.flexlb.balance.prediction.PrefillPredictionBoundary;
 import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.request.Request;
@@ -231,6 +232,7 @@ public final class PrefillQueue {
                 record.updateStatus(task.phase() == TaskPhase.RUNNING
                         ? WorkView.Phase.ENGINE_RUNNING
                         : WorkView.Phase.ENGINE_QUEUED, nowMs);
+                updatePredictedWork(record, task);
             }
         }
         long unknown = 0L;
@@ -247,6 +249,68 @@ public final class PrefillQueue {
         unknownRequestCount = unknown;
         capacityChanged.run();
         changeVersion.incrementAndGet();
+    }
+
+    /**
+     * 缓存加载完成后，按实际命中及引擎剩余计算 token 重估工作量。
+     * 没有剩余进度时按实际命中重估完整请求，不能把旧引擎缺失的进度当作零工作量。
+     * 预测在锁外执行；记录仍存在时才在短临界区内更新它及累计工作量，不能与清理重复增减。
+     */
+    private void updatePredictedWork(DispatchedRequest dispatchedRequest, WorkerStatus.TaskObservation task) {
+        Request request = dispatchedRequest.request();
+        long predictedMs;
+        try {
+            predictedMs = predictReportedWorkMs(dispatchedRequest, task);
+        } catch (RuntimeException error) {
+            Logger.warn("Prefill cache-hit workload update failed: requestId={}, endpoint={}", request.requestId(),
+                    endpoint.ipPort(), error);
+            return;
+        }
+        if (predictedMs < 0L) {
+            return;
+        }
+        synchronized (requestRecordsLock) {
+            if (!dispatched.containsKey(request.requestId())) {
+                return;
+            }
+            long previousMs = dispatchedRequest.predictedMs();
+            if (predictedMs == previousMs) {
+                return;
+            }
+            dispatchedRequest.updatePredictedMs(predictedMs);
+            totalPredictedWorkMs += predictedMs - previousMs;
+            changeVersion.incrementAndGet();
+        }
+    }
+
+    /**
+     * 有效命中用于纠偏，RUNNING 的剩余 token 用于扣除已完成计算。
+     * 缓存命中尚未有效时返回 -1，保留已有工作量。
+     */
+    private long predictReportedWorkMs(DispatchedRequest dispatchedRequest, WorkerStatus.TaskObservation workerStatus) {
+        WorkerStatus.TaskTelemetry telemetry = workerStatus.telemetry();
+        if (telemetry == null || workerStatus.isPriorityCancelOverlayOnly()) {
+            return -1L;
+        }
+        if (!telemetry.prefixLengthValid()) {
+            return -1L;
+        }
+        Request request = dispatchedRequest.request();
+        long inputTokens = workerStatus.inputLength() > 0L ? workerStatus.inputLength() : request.seqLen();
+        long hitTokens = workerStatus.prefixLength();
+
+        Long remainingTokens = telemetry.remainingPrefillTokens();
+        boolean hasRemainingTokens = workerStatus.phase() == TaskPhase.RUNNING && remainingTokens != null;
+        if (hasRemainingTokens) {
+            // 最后一次 GPU forward 已完成，不能再次计入公式的常数项和缓存成本。
+            if (remainingTokens == 0L) {
+                return 0L;
+            }
+            // 预测器的 computeTokens = inputTokens - hitTokens，已完成计算不冒充缓存命中。
+            inputTokens = hitTokens + remainingTokens;
+        }
+        return PrefillPredictionBoundary.predictSingleRequestMs(endpoint.getPredictor().evaluator(), inputTokens,
+                hitTokens);
     }
 
     /**
@@ -342,7 +406,8 @@ public final class PrefillQueue {
     /**
      * 当前累计预测工作量加新请求自身耗时，用于选路评分，不承诺实际等待时间。
      * <p>
-     * 工作量在记录增删时更新，waiting 与 dispatched 的过渡记录只算一次，不按新请求优先级过滤。
+     * 工作量在记录增删及有效缓存命中上报时更新，waiting 与 dispatched 的过渡记录只算一次，
+     * 不按新请求优先级过滤，也不按墙钟已执行时间扣减。
      * 读取不遍历队列，也不获取记录锁。未知引擎任务不虚构耗时，返回 -1。
      */
     public long estimatedWorkMs(long predictedMs) {
