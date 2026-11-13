@@ -21,6 +21,7 @@ import org.flexlb.engine.grpc.client.EngineGrpcClient;
 import org.flexlb.enums.BalanceStatusEnum;
 import org.flexlb.enums.FlexMetricType;
 import org.flexlb.enums.FlexPriorityType;
+import org.flexlb.enums.TaskPhase;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
 import org.flexlb.metric.FlexStatisticsType;
@@ -159,9 +160,11 @@ class EngineHealthReporterTest {
 
     @Test
     void lifecycleMetricsRetainMissingLabelsAsEmptyValues() {
-        WorkerStatus.TaskTelemetry task = new WorkerStatus.TaskTelemetry(
+        WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
+                "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
+                TaskPhase.RUNNING, 0, null,
                 true, 900, 0, 0, 1000, 1042, 0, 1100,
-                0, 0, 1, 1, 1, 0, 0);
+                0, 0, 1, 1, 1, 0, 0, null, null, null);
 
         reporter.reportPrefillWorkerStatusTask(null, null, null, task);
 
@@ -337,9 +340,11 @@ class EngineHealthReporterTest {
     @Test
     void shouldReportPrefillWorkerStatusTaskMetrics() {
         reporter.init();
-        WorkerStatus.TaskTelemetry task = new WorkerStatus.TaskTelemetry(
+        WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
+                "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
+                TaskPhase.RUNNING, 0, null,
                 true, 900, 1000, 1100, 1200, 1600, 200, 1900,
-                512, 256, 1, 3, 3, 128, 256);
+                512, 256, 1, 3, 3, 128, 256, null, null, null);
 
         reporter.reportPrefillWorkerStatusTask(
                 "10.0.0.1:8080@0", "PREFILL", "test-group", task);
@@ -367,9 +372,11 @@ class EngineHealthReporterTest {
 
     @Test
     void shouldExcludeRequestsWithoutNonfinalChunksFromChunkMetrics() {
-        WorkerStatus.TaskTelemetry task = new WorkerStatus.TaskTelemetry(
+        WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
+                "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
+                TaskPhase.RUNNING, 0, null,
                 true, 900, 1000, 1100, 1200, 1600, 0, 1900,
-                0, 0, 1, 1, 1, 0, 0);
+                0, 0, 1, 1, 1, 0, 0, null, null, null);
 
         reporter.reportPrefillWorkerStatusTask(
                 "10.0.0.1:8080@0", "PREFILL", "test-group", task);
@@ -414,8 +421,10 @@ class EngineHealthReporterTest {
 
     @Test
     void remoteKvZeroRemainsALegitimateDurationWithoutTimestampPresence() {
-        WorkerStatus.TaskTelemetry task = new WorkerStatus.TaskTelemetry(
-                true, 0, 0, 0, 0, 0, 0, 1900, 0, 0, 1, 1, 1, 0, 0);
+        WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
+                "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
+                TaskPhase.RUNNING, 0, null,
+                true, 0, 0, 0, 0, 0, 0, 1900, 0, 0, 1, 1, 1, 0, 0, null, null, null);
 
         reporter.reportPrefillWorkerStatusTask("10.0.0.1:8080", "PREFILL", "test-group", task);
 
@@ -428,8 +437,10 @@ class EngineHealthReporterTest {
 
     @Test
     void zeroRemoteKvWaitPreservesFullSchedulerWait() {
-        WorkerStatus.TaskTelemetry task = new WorkerStatus.TaskTelemetry(
-                true, 900, 1000, 1100, 1200, 1600, 0, 1900, 0, 0, 1, 1, 1, 0, 0);
+        WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
+                "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
+                TaskPhase.RUNNING, 0, null,
+                true, 900, 1000, 1100, 1200, 1600, 0, 1900, 0, 0, 1, 1, 1, 0, 0, null, null, null);
 
         reporter.reportPrefillWorkerStatusTask("10.0.0.1:8080", "PREFILL", "test-group", task);
 

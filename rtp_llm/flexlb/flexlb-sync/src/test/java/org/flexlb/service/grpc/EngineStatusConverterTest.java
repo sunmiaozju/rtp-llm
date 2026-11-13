@@ -89,7 +89,7 @@ class EngineStatusConverterTest {
         assertEquals(expected, observation.finishedTasks().keySet());
         for (var task : observation.finishedTasks().values()) {
             assertEquals(3584, task.prefixLength());
-            assertTrue(task.telemetry().prefixLengthValid());
+            assertTrue(task.prefixLengthValid());
         }
     }
 
@@ -164,7 +164,7 @@ class EngineStatusConverterTest {
         var task = observation.activeTasks().get("1");
 
         assertEquals(128, task.prefixLength());
-        assertTrue(task.telemetry().prefixLengthValid());
+        assertTrue(task.prefixLengthValid());
     }
 
     @Test
@@ -186,19 +186,19 @@ class EngineStatusConverterTest {
         var status = statusBuilder().addFinishedTaskList(finishedTask).build();
 
         var observation = EngineStatusConverter.convertToStatusObservation(owner, status);
-        var telemetry = observation.finishedTasks().get("1").telemetry();
+        var task = observation.finishedTasks().get("1");
 
-        assertEquals(1000, telemetry.inputQueueEnqueueTimeMs());
-        assertEquals(1100, telemetry.inputQueueDrainTimeMs());
-        assertEquals(200, telemetry.remoteKvWaitMs());
-        assertEquals(1500, telemetry.firstTokenTimeMs());
-        assertEquals(512, telemetry.hbmLocalMatchTokens());
-        assertEquals(256, telemetry.remoteKvAddedMatchTokens());
-        assertEquals(7, telemetry.firstPrefillStepId());
-        assertEquals(9, telemetry.lastPrefillStepId());
-        assertEquals(3, telemetry.prefillStepCount());
-        assertEquals(128, telemetry.prefillNonfinalChunkTokensMin());
-        assertEquals(256, telemetry.prefillNonfinalChunkTokensMax());
+        assertEquals(1000, task.inputQueueEnqueueTimeMs());
+        assertEquals(1100, task.inputQueueDrainTimeMs());
+        assertEquals(200, task.remoteKvWaitMs());
+        assertEquals(1500, task.firstTokenTimeMs());
+        assertEquals(512, task.hbmLocalMatchTokens());
+        assertEquals(256, task.remoteKvAddedMatchTokens());
+        assertEquals(7, task.firstPrefillStepId());
+        assertEquals(9, task.lastPrefillStepId());
+        assertEquals(3, task.prefillStepCount());
+        assertEquals(128, task.prefillNonfinalChunkTokensMin());
+        assertEquals(256, task.prefillNonfinalChunkTokensMax());
     }
 
     @Test
@@ -227,15 +227,15 @@ class EngineStatusConverterTest {
                 .build();
 
         var observation = EngineStatusConverter.convertToStatusObservation(owner, status);
-        var missing = observation.activeTasks().get("old-engine").telemetry();
+        var missing = observation.activeTasks().get("old-engine");
         assertNull(missing.completedPrefillTokens());
         assertNull(missing.remainingPrefillTokens());
         assertNull(missing.lastCompletedPrefillStepId());
-        var progress = observation.activeTasks().get("prefilling").telemetry();
+        var progress = observation.activeTasks().get("prefilling");
         assertEquals(128L, progress.completedPrefillTokens());
         assertEquals(256L, progress.remainingPrefillTokens());
         assertEquals(7L, progress.lastCompletedPrefillStepId());
-        var finished = observation.finishedTasks().get("finished").telemetry();
+        var finished = observation.finishedTasks().get("finished");
         assertEquals(384L, finished.completedPrefillTokens());
         assertEquals(0L, finished.remainingPrefillTokens());
         assertEquals(9L, finished.lastCompletedPrefillStepId());

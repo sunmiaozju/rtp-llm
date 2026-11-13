@@ -49,13 +49,12 @@ class CacheHitFeedbackTrackerTest {
             tracker.track(requestId, RoleType.PREFILL, "default", worker,
                     100, 0, CacheMatchResult.empty(CacheMatchSource.KVCM), CompletableFuture.completedFuture(null));
         }
-        WorkerStatus.TaskTelemetry telemetry = new WorkerStatus.TaskTelemetry(
-                true, 1, 2, 3, 4, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0);
         Map<String, WorkerStatus.TaskObservation> tasks = new LinkedHashMap<>();
         for (String requestId : List.of("broken", "healthy")) {
             tasks.put(requestId, new WorkerStatus.TaskObservation(
                     requestId, 0, 0, 100, 0, 0, 0, 0, 0, "", 0,
-                    TaskPhase.RUNNING, 0, null, telemetry));
+                    TaskPhase.RUNNING, 0, null,
+                    true, 1, 2, 3, 4, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0, null, null, null));
         }
         WorkerStatus.StatusObservation status = mock(WorkerStatus.StatusObservation.class);
         when(status.role()).thenReturn(RoleType.PREFILL);
@@ -83,11 +82,10 @@ class CacheHitFeedbackTrackerTest {
         CacheHitFeedbackTracker tracker = new CacheHitFeedbackTracker(comparisonService, configService);
         tracker.track("request-1", RoleType.PREFILL, "default", worker,
                 100, 0, CacheMatchResult.empty(CacheMatchSource.KVCM), CompletableFuture.completedFuture(null));
-        WorkerStatus.TaskTelemetry telemetry = new WorkerStatus.TaskTelemetry(
-                true, 1, 2, 3, 4, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0);
         WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
                 "request-1", 0, 0, 100, 0, 0, 0, 0, 0, "", 0,
-                TaskPhase.RUNNING, 0, null, telemetry);
+                TaskPhase.RUNNING, 0, null,
+                true, 1, 2, 3, 4, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0, null, null, null);
         WorkerStatus.StatusObservation status = mock(WorkerStatus.StatusObservation.class);
         when(status.role()).thenReturn(RoleType.PREFILL);
         when(status.activeTasks()).thenReturn(Map.of(task.requestId(), task));
@@ -164,11 +162,10 @@ class CacheHitFeedbackTrackerTest {
                 tracker.track("request-1", RoleType.PREFILL, "default", worker, 100, 20,
                         predictionAvailable ? CacheMatchResult.empty(CacheMatchSource.KVCM)
                                 : CacheMatchResult.failed(CacheMatchSource.KVCM, 10), theory);
-                WorkerStatus.TaskTelemetry telemetry = actualAvailable ? new WorkerStatus.TaskTelemetry(
-                        true, 1, 2, 3, 4, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0) : null;
                 WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
                         "request-1", 0, 0, 100, 40, 0, 0, 0, 0, "", 0,
-                        TaskPhase.RUNNING, 0, null, telemetry);
+                        TaskPhase.RUNNING, 0, null,
+                        actualAvailable, 1, 2, 3, 4, 5, 0, 6, 0, 0, 0, 0, 0, 0, 0, null, null, null);
                 WorkerStatus.StatusObservation status = mock(WorkerStatus.StatusObservation.class);
                 when(status.role()).thenReturn(RoleType.PREFILL);
                 when(status.finishedTasks()).thenReturn(Map.of(task.requestId(), task));

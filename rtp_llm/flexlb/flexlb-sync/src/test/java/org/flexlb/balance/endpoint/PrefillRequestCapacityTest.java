@@ -277,7 +277,8 @@ class PrefillRequestCapacityTest {
     private static WorkerStatus.TaskObservation observed(long id) {
         return new WorkerStatus.TaskObservation(Long.toString(id), 0L, 0L, 0L,
                 0L, 0L, 0L, 0L, 0L, "", 0L, TaskPhase.RUNNING, 0L,
-                PriorityPreemptionProgress.NONE, mock(WorkerStatus.TaskTelemetry.class));
+                PriorityPreemptionProgress.NONE,
+                false, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null);
     }
 
     private static ScheduledRequest item(long id) {

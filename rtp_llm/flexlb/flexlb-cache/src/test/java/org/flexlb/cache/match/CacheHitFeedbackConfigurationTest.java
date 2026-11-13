@@ -87,9 +87,9 @@ class CacheHitFeedbackConfigurationTest {
             assertEquals(4, maximum(associations));
             assertEquals(2000, timeoutMs(associations));
 
-            var telemetry = new WorkerStatus.TaskTelemetry(true, 1, 2, 3, 4, 5, 0, 6, 700, 0, 0, 0, 0, 0, 0);
             var finished = new WorkerStatus.TaskObservation("before-update", 700, 0, 1000, 0, 0, 0, 0, 0, "", 0,
-                    TaskPhase.RUNNING, 0, null, telemetry);
+                    TaskPhase.RUNNING, 0, null,
+                    true, 1, 2, 3, 4, 5, 0, 6, 700, 0, 0, 0, 0, 0, 0, null, null, null);
             var status = worker.bindStatusObservation(worker.committedEngineObservation(), true, 1L, 1L,
                     Map.of(finished.requestId(), finished));
             assertEquals(700, service.observeCacheHitFeedback(worker, status).getFirst().join().actualHitTokens());

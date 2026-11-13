@@ -138,24 +138,24 @@ public class EngineStatusConverter {
                         case PRIORITY_PREEMPTION_NONE, UNRECOGNIZED ->
                                 PriorityPreemptionProgress.NONE;
                     },
-                    new WorkerStatus.TaskTelemetry(task.getPrefixLengthValid(),
-                            task.getRequestReceivedTimeMs(),
-                            task.getInputQueueEnqueueTimeMs(),
-                            task.getInputQueueDrainTimeMs(),
-                            task.getWaitingEnteredTimeMs(),
-                            task.getRunningEnteredTimeMs(),
-                            task.getRemoteKvWaitMs(),
-                            task.getFirstTokenTimeMs(),
-                            task.getHbmLocalMatchTokens(),
-                            task.getRemoteKvAddedMatchTokens(),
-                            task.getFirstPrefillStepId(),
-                            task.getLastPrefillStepId(),
-                            task.getPrefillStepCount(),
-                            task.getPrefillNonfinalChunkTokensMin(),
-                            task.getPrefillNonfinalChunkTokensMax(),
-                            task.hasCompletedPrefillTokens() ? task.getCompletedPrefillTokens() : null,
-                            task.hasRemainingPrefillTokens() ? task.getRemainingPrefillTokens() : null,
-                            task.hasLastCompletedPrefillStepId() ? task.getLastCompletedPrefillStepId() : null));
+                    task.getPrefixLengthValid(),
+                    task.getRequestReceivedTimeMs(),
+                    task.getInputQueueEnqueueTimeMs(),
+                    task.getInputQueueDrainTimeMs(),
+                    task.getWaitingEnteredTimeMs(),
+                    task.getRunningEnteredTimeMs(),
+                    task.getRemoteKvWaitMs(),
+                    task.getFirstTokenTimeMs(),
+                    task.getHbmLocalMatchTokens(),
+                    task.getRemoteKvAddedMatchTokens(),
+                    task.getFirstPrefillStepId(),
+                    task.getLastPrefillStepId(),
+                    task.getPrefillStepCount(),
+                    task.getPrefillNonfinalChunkTokensMin(),
+                    task.getPrefillNonfinalChunkTokensMax(),
+                    task.hasCompletedPrefillTokens() ? task.getCompletedPrefillTokens() : null,
+                    task.hasRemainingPrefillTokens() ? task.getRemainingPrefillTokens() : null,
+                    task.hasLastCompletedPrefillStepId() ? task.getLastCompletedPrefillStepId() : null);
             tasks.put(observation.requestId(), observation);
         }
         return Map.copyOf(tasks);

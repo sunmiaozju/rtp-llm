@@ -415,11 +415,11 @@ public class GrpcWorkerStatusRunner implements Runnable {
             }
             if (observation.role() == RoleType.PREFILL || observation.role() == RoleType.PDFUSION) {
                 for (WorkerStatus.TaskObservation task : observation.finishedTasks().values()) {
-                    if (task.telemetry() != null && task.telemetry().firstTokenTimeMs() > 0) {
+                    if (task.firstTokenTimeMs() > 0) {
                         engineHealthReporter.reportPrefillWorkerStatusTask(
                                 workerStatus.getMetricIpPort(),
                                 observation.role().name(), workerStatus.getGroup(),
-                                task.telemetry());
+                                task);
                     }
                 }
             }

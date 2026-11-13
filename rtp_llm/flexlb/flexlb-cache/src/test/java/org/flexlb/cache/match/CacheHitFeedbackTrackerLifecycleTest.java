@@ -23,7 +23,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.slf4j.LoggerFactory;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -140,7 +139,7 @@ class CacheHitFeedbackTrackerLifecycleTest {
         tracker = trackerWithClock(timeNs);
         track("waiting", 1000, CompletableFuture.completedFuture(null));
         var waiting = new WorkerStatus.TaskObservation("waiting", 700, 0, 1000, 0, 0, 0, 0, 0, "", 0, phase, 0, null,
-                task("waiting", 1000, 700, false, 0).telemetry());
+                false, 1, 2, 3, 4, 5, 0, 0, 700, 0, 0, 0, 0, 0, 0, null, null, null);
         timeNs.addAndGet(TimeUnit.MILLISECONDS.toNanos(900));
 
         assertTrue(observe(waiting, false).isEmpty());
@@ -201,13 +200,10 @@ class CacheHitFeedbackTrackerLifecycleTest {
         assertEquals(1, pv.list.size());
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void finishedWithoutValidActualHitStillReleasesAssociation(boolean hasTelemetry) {
+    @Test
+    void finishedWithoutValidActualHitStillReleasesAssociation() {
         track("unavailable", 1000, CompletableFuture.completedFuture(600L));
-        var telemetry = hasTelemetry ? task("unavailable", 1000, 700, false, 0).telemetry() : null;
-        var finished = new WorkerStatus.TaskObservation("unavailable", 700, 0, 1000, 0, 0, 0, 0, 0, "", 0,
-                TaskPhase.RUNNING, 0, null, telemetry);
+        var finished = task("unavailable", 1000, 700, false, 0);
 
         var result = observe(finished, true).getFirst().join();
 
@@ -380,10 +376,9 @@ class CacheHitFeedbackTrackerLifecycleTest {
                                                      long hitTokens,
                                                      boolean valid,
                                                      long firstTokenTimeMs) {
-        var telemetry =
-                new WorkerStatus.TaskTelemetry(valid, 1, 2, 3, 4, 5, 0, firstTokenTimeMs, hitTokens, 0, 0, 0, 0, 0, 0);
         return new WorkerStatus.TaskObservation(requestId, hitTokens, 0, inputTokens, 0, 0, 0, 0, 0, "", 0,
-                TaskPhase.RUNNING, 0, null, telemetry);
+                TaskPhase.RUNNING, 0, null,
+                valid, 1, 2, 3, 4, 5, 0, firstTokenTimeMs, hitTokens, 0, 0, 0, 0, 0, 0, null, null, null);
     }
 
     private long associationCount() {

@@ -152,6 +152,7 @@ public final class V2TestSupport {
 
     private static WorkerStatus.TaskObservation task(String requestId, TaskPhase phase) {
         return new WorkerStatus.TaskObservation(requestId, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, "", 0L, phase, 0L,
-                PriorityPreemptionProgress.NONE, mock(WorkerStatus.TaskTelemetry.class));
+                PriorityPreemptionProgress.NONE,
+                false, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null);
     }
 }

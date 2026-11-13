@@ -115,7 +115,7 @@ PAI-vLLM 端的 Encoder 状态上报不属于 FlexLB 实现范围。
 `finishedTasks` 单独保存完成上报。任务按字符串 request ID 索引，并保留各自的 `phase`。
 纯运行任务需按 `phase == RUNNING` 筛选，不能用 `activeTasks.size()` 代替；
 `runningQueryLen` 与 `waitingQueryLen` 则直接保留引擎上报的数量。
-`TaskTelemetry` 保留可选的 `completed_prefill_tokens`、`remaining_prefill_tokens` 和
+`TaskObservation` 保留可选的 `completed_prefill_tokens`、`remaining_prefill_tokens` 和
 `last_completed_prefill_step_id`；未上报时为 `null`，与明确上报的 `0` 区分。
 其余字段包括 `alive`、`available_concurrency`、`status_version`、`step_latency_ms`、
 `iterate_count`、dp/tp size、KV cache 容量、`block_size`、`block_hash_lookahead_tokens`、

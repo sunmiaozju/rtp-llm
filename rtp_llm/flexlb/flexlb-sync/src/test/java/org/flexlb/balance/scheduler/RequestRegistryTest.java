@@ -261,12 +261,10 @@ class RequestRegistryTest {
         assertEquals(800L, endpoint.inflightUncachedTokenEstimate());
 
         WorkerStatus.TaskObservation task = mock(WorkerStatus.TaskObservation.class);
-        WorkerStatus.TaskTelemetry telemetry = mock(WorkerStatus.TaskTelemetry.class);
         when(task.requestId()).thenReturn("109");
         when(task.inputLength()).thenReturn(400L);
         when(task.prefixLength()).thenReturn(600L);
-        when(task.telemetry()).thenReturn(telemetry);
-        when(telemetry.prefixLengthValid()).thenReturn(false);
+        when(task.prefixLengthValid()).thenReturn(false);
         when(engine.runningTaskList()).thenReturn(Map.of("109", task));
         WorkerStatus.StatusObservation running = mock(WorkerStatus.StatusObservation.class);
         when(running.owner()).thenReturn(worker);
@@ -275,7 +273,7 @@ class RequestRegistryTest {
 
         assertEquals(400L, endpoint.inflightUncachedTokenEstimate());
 
-        when(telemetry.prefixLengthValid()).thenReturn(true);
+        when(task.prefixLengthValid()).thenReturn(true);
         assertEquals(400L, endpoint.inflightUncachedTokenEstimate());
 
         lifecycle.cancelRequest("109", 0L, CancelReason.CLIENT_CANCELLED, RequestPhase.ENCODER);

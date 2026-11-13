@@ -66,7 +66,9 @@ public class WorkerStatus {
         }
     }
 
-    /** Deeply immutable copy of the task fields reported by one status RPC. */
+    /**
+     * Deeply immutable copy of the task fields reported by one status RPC.
+     */
     public record TaskObservation(String requestId,
                                   long prefixLength,
                                   long prefillTime,
@@ -81,7 +83,24 @@ public class WorkerStatus {
                                   TaskPhase phase,
                                   long executionTimeMs,
                                   PriorityPreemptionProgress priorityPreemptionProgress,
-                                  TaskTelemetry telemetry) {
+                                  boolean prefixLengthValid,
+                                  long requestReceivedTimeMs,
+                                  long inputQueueEnqueueTimeMs,
+                                  long inputQueueDrainTimeMs,
+                                  long waitingEnteredTimeMs,
+                                  long runningEnteredTimeMs,
+                                  long remoteKvWaitMs,
+                                  long firstTokenTimeMs,
+                                  long hbmLocalMatchTokens,
+                                  long remoteKvAddedMatchTokens,
+                                  long firstPrefillStepId,
+                                  long lastPrefillStepId,
+                                  long prefillStepCount,
+                                  long prefillNonfinalChunkTokensMin,
+                                  long prefillNonfinalChunkTokensMax,
+                                  Long completedPrefillTokens,
+                                  Long remainingPrefillTokens,
+                                  Long lastCompletedPrefillStepId) {
 
         /** A pending observation that reports only priority cancellation progress. */
         @JsonIgnore
@@ -107,70 +126,24 @@ public class WorkerStatus {
                     task.getPhase(),
                     task.getExecutionTimeMs(),
                     task.getPriorityPreemptionProgress(),
-                    new TaskTelemetry(task.isPrefixLengthValid(),
-                            task.getRequestReceivedTimeMs(),
-                            task.getInputQueueEnqueueTimeMs(),
-                            task.getInputQueueDrainTimeMs(),
-                            task.getWaitingEnteredTimeMs(),
-                            task.getRunningEnteredTimeMs(),
-                            task.getRemoteKvWaitMs(),
-                            task.getFirstTokenTimeMs(),
-                            task.getHbmLocalMatchTokens(),
-                            task.getRemoteKvAddedMatchTokens(),
-                            task.getFirstPrefillStepId(),
-                            task.getLastPrefillStepId(),
-                            task.getPrefillStepCount(),
-                            task.getPrefillNonfinalChunkTokensMin(),
-                            task.getPrefillNonfinalChunkTokensMax(),
-                            task.getCompletedPrefillTokens(),
-                            task.getRemainingPrefillTokens() < 0 ? null : task.getRemainingPrefillTokens(),
-                            task.getLastCompletedPrefillStepId()));
-        }
-    }
-
-    /**
-     * Immutable request telemetry retained from the Engine status RPC.
-     * Nullable prefill progress values preserve omitted protobuf fields.
-     */
-    public record TaskTelemetry(boolean prefixLengthValid,
-                                long requestReceivedTimeMs,
-                                long inputQueueEnqueueTimeMs,
-                                long inputQueueDrainTimeMs,
-                                long waitingEnteredTimeMs,
-                                long runningEnteredTimeMs,
-                                long remoteKvWaitMs,
-                                long firstTokenTimeMs,
-                                long hbmLocalMatchTokens,
-                                long remoteKvAddedMatchTokens,
-                                long firstPrefillStepId,
-                                long lastPrefillStepId,
-                                long prefillStepCount,
-                                long prefillNonfinalChunkTokensMin,
-                                long prefillNonfinalChunkTokensMax,
-                                Long completedPrefillTokens,
-                                Long remainingPrefillTokens,
-                                Long lastCompletedPrefillStepId) {
-
-        public TaskTelemetry(boolean prefixLengthValid,
-                             long requestReceivedTimeMs,
-                             long inputQueueEnqueueTimeMs,
-                             long inputQueueDrainTimeMs,
-                             long waitingEnteredTimeMs,
-                             long runningEnteredTimeMs,
-                             long remoteKvWaitMs,
-                             long firstTokenTimeMs,
-                             long hbmLocalMatchTokens,
-                             long remoteKvAddedMatchTokens,
-                             long firstPrefillStepId,
-                             long lastPrefillStepId,
-                             long prefillStepCount,
-                             long prefillNonfinalChunkTokensMin,
-                             long prefillNonfinalChunkTokensMax) {
-            this(prefixLengthValid, requestReceivedTimeMs, inputQueueEnqueueTimeMs, inputQueueDrainTimeMs,
-                    waitingEnteredTimeMs, runningEnteredTimeMs, remoteKvWaitMs, firstTokenTimeMs,
-                    hbmLocalMatchTokens, remoteKvAddedMatchTokens, firstPrefillStepId, lastPrefillStepId,
-                    prefillStepCount, prefillNonfinalChunkTokensMin, prefillNonfinalChunkTokensMax,
-                    null, null, null);
+                    task.isPrefixLengthValid(),
+                    task.getRequestReceivedTimeMs(),
+                    task.getInputQueueEnqueueTimeMs(),
+                    task.getInputQueueDrainTimeMs(),
+                    task.getWaitingEnteredTimeMs(),
+                    task.getRunningEnteredTimeMs(),
+                    task.getRemoteKvWaitMs(),
+                    task.getFirstTokenTimeMs(),
+                    task.getHbmLocalMatchTokens(),
+                    task.getRemoteKvAddedMatchTokens(),
+                    task.getFirstPrefillStepId(),
+                    task.getLastPrefillStepId(),
+                    task.getPrefillStepCount(),
+                    task.getPrefillNonfinalChunkTokensMin(),
+                    task.getPrefillNonfinalChunkTokensMax(),
+                    task.getCompletedPrefillTokens(),
+                    task.getRemainingPrefillTokens() < 0 ? null : task.getRemainingPrefillTokens(),
+                    task.getLastCompletedPrefillStepId());
         }
     }
 

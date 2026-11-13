@@ -125,10 +125,9 @@ public final class CacheHitFeedbackTracker {
                                     WorkerStatus.TaskObservation task,
                                     boolean finished,
                                     List<CompletableFuture<CacheHitComparisonResult>> results) {
-        WorkerStatus.TaskTelemetry telemetry = task.telemetry();
         CacheHitFeedback seed = prediction.seed;
         String state = finished ? "FINISHED" : task.phase() == null ? "UNKNOWN" : task.phase().name();
-        boolean actualAvailable = telemetry != null && telemetry.prefixLengthValid()
+        boolean actualAvailable = task.prefixLengthValid()
                 && (finished || task.phase() == TaskPhase.RUNNING)
                 && task.prefixLength() >= 0 && task.prefixLength() <= seed.inputTokens();
         if (finished || actualAvailable) {
@@ -147,10 +146,7 @@ public final class CacheHitFeedbackTracker {
                         CacheHitComparisonResult::withTheoryHitTokens));
             }
         }
-        if (telemetry == null) {
-            return;
-        }
-        if ((finished || telemetry.firstTokenTimeMs() > 0) && prediction.statusLogged.compareAndSet(false, true)) {
+        if ((finished || task.firstTokenTimeMs() > 0) && prediction.statusLogged.compareAndSet(false, true)) {
             Map<String, Object> pv = new LinkedHashMap<>(32);
             pv.put("event", "prefill_worker_status");
             pv.put("requestId", task.requestId());
@@ -165,29 +161,29 @@ public final class CacheHitFeedbackTracker {
             pv.put("inputTokensDelta", task.inputLength() > 0 ? task.inputLength() - seed.inputTokens() : null);
             pv.put("batchId", task.batchId());
             pv.put("errorCode", task.errorCode());
-            pv.put("prefixLengthValid", telemetry.prefixLengthValid());
-            pv.put("actualHitTokens", telemetry.prefixLengthValid() ? task.prefixLength() : null);
-            pv.put("requestReceivedTimeMs", positive(telemetry.requestReceivedTimeMs()));
-            pv.put("inputQueueEnqueueTimeMs", positive(telemetry.inputQueueEnqueueTimeMs()));
-            pv.put("inputQueueDrainTimeMs", positive(telemetry.inputQueueDrainTimeMs()));
-            pv.put("firstTokenTimeMs", positive(telemetry.firstTokenTimeMs()));
-            pv.put("inputQueueWaitMs", elapsed(telemetry.inputQueueDrainTimeMs(), telemetry.inputQueueEnqueueTimeMs()));
-            Long schedulerToRunning = elapsed(telemetry.runningEnteredTimeMs(), telemetry.waitingEnteredTimeMs());
+            pv.put("prefixLengthValid", task.prefixLengthValid());
+            pv.put("actualHitTokens", task.prefixLengthValid() ? task.prefixLength() : null);
+            pv.put("requestReceivedTimeMs", positive(task.requestReceivedTimeMs()));
+            pv.put("inputQueueEnqueueTimeMs", positive(task.inputQueueEnqueueTimeMs()));
+            pv.put("inputQueueDrainTimeMs", positive(task.inputQueueDrainTimeMs()));
+            pv.put("firstTokenTimeMs", positive(task.firstTokenTimeMs()));
+            pv.put("inputQueueWaitMs", elapsed(task.inputQueueDrainTimeMs(), task.inputQueueEnqueueTimeMs()));
+            Long schedulerToRunning = elapsed(task.runningEnteredTimeMs(), task.waitingEnteredTimeMs());
             pv.put("schedulerToRunningMs", schedulerToRunning);
-            pv.put("remoteKvWaitMs", schedulerToRunning == null ? null : telemetry.remoteKvWaitMs());
-            pv.put("schedulerWaitMs", schedulerToRunning == null || schedulerToRunning < telemetry.remoteKvWaitMs()
-                    ? null : schedulerToRunning - telemetry.remoteKvWaitMs());
-            pv.put("runningToFirstTokenMs", elapsed(telemetry.firstTokenTimeMs(), telemetry.runningEnteredTimeMs()));
-            if (telemetry.prefixLengthValid()
-                    && telemetry.hbmLocalMatchTokens() + telemetry.remoteKvAddedMatchTokens() == task.prefixLength()) {
-                pv.put("hbmLocalMatchTokens", telemetry.hbmLocalMatchTokens());
-                pv.put("remoteKvAddedMatchTokens", telemetry.remoteKvAddedMatchTokens());
+            pv.put("remoteKvWaitMs", schedulerToRunning == null ? null : task.remoteKvWaitMs());
+            pv.put("schedulerWaitMs", schedulerToRunning == null || schedulerToRunning < task.remoteKvWaitMs()
+                    ? null : schedulerToRunning - task.remoteKvWaitMs());
+            pv.put("runningToFirstTokenMs", elapsed(task.firstTokenTimeMs(), task.runningEnteredTimeMs()));
+            if (task.prefixLengthValid()
+                    && task.hbmLocalMatchTokens() + task.remoteKvAddedMatchTokens() == task.prefixLength()) {
+                pv.put("hbmLocalMatchTokens", task.hbmLocalMatchTokens());
+                pv.put("remoteKvAddedMatchTokens", task.remoteKvAddedMatchTokens());
             }
-            pv.put("firstPrefillStepId", positive(telemetry.firstPrefillStepId()));
-            pv.put("lastPrefillStepId", positive(telemetry.lastPrefillStepId()));
-            pv.put("prefillStepCount", positive(telemetry.prefillStepCount()));
-            pv.put("prefillNonfinalChunkTokensMin", positive(telemetry.prefillNonfinalChunkTokensMin()));
-            pv.put("prefillNonfinalChunkTokensMax", positive(telemetry.prefillNonfinalChunkTokensMax()));
+            pv.put("firstPrefillStepId", positive(task.firstPrefillStepId()));
+            pv.put("lastPrefillStepId", positive(task.lastPrefillStepId()));
+            pv.put("prefillStepCount", positive(task.prefillStepCount()));
+            pv.put("prefillNonfinalChunkTokensMin", positive(task.prefillNonfinalChunkTokensMin()));
+            pv.put("prefillNonfinalChunkTokensMax", positive(task.prefillNonfinalChunkTokensMax()));
             PV.info(JsonUtils.toStringOrEmpty(pv));
 
         }

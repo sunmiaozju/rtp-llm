@@ -392,7 +392,7 @@ public class EngineHealthReporter {
 
     public void reportPrefillWorkerStatusTask(
             String engineIp, String role, String group,
-            WorkerStatus.TaskTelemetry task) {
+            WorkerStatus.TaskObservation task) {
         FlexMetricTags tags = lifecycleTags(engineIp, role, group);
         monitor.report(ENGINE_WORKER_STATUS_HBM_LOCAL_MATCH_TOKENS,
                 tags, task.hbmLocalMatchTokens());
