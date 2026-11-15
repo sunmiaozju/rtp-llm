@@ -102,12 +102,22 @@ public class WorkerStatus {
                                   Long remainingPrefillTokens,
                                   Long lastCompletedPrefillStepId) {
 
-        /** A pending observation that reports only priority cancellation progress. */
+        /**
+         * 判断是否为等待阶段携带的抢占取消进度上报。
+         */
         @JsonIgnore
-        public boolean isPriorityCancelOverlayOnly() {
-            return (priorityPreemptionProgress == PriorityPreemptionProgress.CANCELING
-                    || priorityPreemptionProgress == PriorityPreemptionProgress.CANCELED)
-                    && phase == TaskPhase.PENDING;
+        public boolean isPriorityCancelProgress() {
+            // PENDING：这条任务上报标记为等待阶段。
+            boolean pending = phase == TaskPhase.PENDING;
+
+            // CANCELING：抢占触发的取消仍在进行。
+            boolean canceling = priorityPreemptionProgress == PriorityPreemptionProgress.CANCELING;
+
+            // CANCELED：抢占触发的取消已完成，不等同于收到 Finished 上报。
+            boolean canceled = priorityPreemptionProgress == PriorityPreemptionProgress.CANCELED;
+
+            // 等待阶段携带任一取消状态时，将其识别为抢占取消进度上报。
+            return pending && (canceling || canceled);
         }
 
         private static TaskObservation copyOf(TaskInfo task) {
@@ -179,9 +189,8 @@ public class WorkerStatus {
             StepMetrics lastStepMetrics) {
 
         public EngineObservation {
-            Objects.requireNonNull(role, "role");
-            kvCacheGroupMode = kvCacheGroupMode == null
-                    ? KvCacheGroupMode.UNSPECIFIED : kvCacheGroupMode;
+
+            kvCacheGroupMode = kvCacheGroupMode == null ? KvCacheGroupMode.UNSPECIFIED : kvCacheGroupMode;
             runningTaskList = Map.copyOf(runningTaskList);
         }
 

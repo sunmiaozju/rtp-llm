@@ -219,13 +219,10 @@ public class DefaultRouter {
                                                                String group,
                                                                DecodeRequirement decodeRequirement) {
         return switch (role) {
-            case PREFILL, PDFUSION ->
-                    prefillSelector.select(context, role, group);
+            case PREFILL, PDFUSION -> prefillSelector.select(context, role, group);
             case DECODE -> decodeSelector.select(context, decodeRequirement, group);
-            case VIT -> selectedOrBlocked(
-                    vitSelector.select(context, role, group), role);
-            case ENCODER -> selectedOrBlocked(
-                    encoderSelector.select(context, group), role);
+            case VIT -> selectedOrBlocked(vitSelector.select(context, role, group), role);
+            case ENCODER -> selectedOrBlocked(encoderSelector.select(context, group), role);
             case FRONTEND -> throw new IllegalArgumentException(
                     "Endpoint selection is not supported for FRONTEND");
         };

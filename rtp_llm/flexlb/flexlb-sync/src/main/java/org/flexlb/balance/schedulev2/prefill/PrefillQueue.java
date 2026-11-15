@@ -4,7 +4,9 @@ import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.QueueView;
 import org.flexlb.balance.estimate.WorkView;
+import org.flexlb.balance.estimate.WorkView.Phase;
 import org.flexlb.balance.planner.GroupPlanner;
+import org.flexlb.balance.prediction.PrefillPredictionBoundary;
 import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.request.Request;
@@ -12,6 +14,7 @@ import org.flexlb.balance.schedulev2.request.RequestOrder;
 import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.master.WorkerStatus.TaskObservation;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.util.Logger;
@@ -27,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 
 /**
  * 一台 Prefill 的队列。同一地址重新上线后是另一个 {@link PrefillEndpoint} 对象，对应另一个队列。
@@ -61,7 +65,7 @@ public final class PrefillQueue {
      * 只保护记录增删和预测工作量更新，不包含状态扫描、容量释放或通知。
      */
     private final Object requestRecordsLock = new Object();
-    private volatile long totalPredictedWorkMs;
+    private final LongAdder totalPredictedWorkMs = new LongAdder();
     /**
      * 等待请求或已 dispatch 记录每变一次加一，选 Prefill 时用来判断负载视图有没有变。
      */
@@ -92,7 +96,7 @@ public final class PrefillQueue {
         request.setPrefillQueuedAtMs(System.currentTimeMillis());
         synchronized (requestRecordsLock) {
             if (waiting.add(request)) {
-                totalPredictedWorkMs += selectedPrefill.predictedMs();
+                totalPredictedWorkMs.add(selectedPrefill.predictedMs());
                 changeVersion.incrementAndGet();
             }
         }
@@ -131,7 +135,7 @@ public final class PrefillQueue {
         synchronized (requestRecordsLock) {
             if (waiting.remove(request)) {
                 if (!dispatched.containsKey(request.requestId())) {
-                    totalPredictedWorkMs -= request.selectedPrefill().predictedMs();
+                    totalPredictedWorkMs.add(-request.selectedPrefill().predictedMs());
                 }
                 changeVersion.incrementAndGet();
             }
@@ -173,7 +177,7 @@ public final class PrefillQueue {
         if (record == null) {
             return false;
         }
-        boolean removedSuccess = removeRequestRecord(record);
+        boolean removedSuccess = removeDispatchedRequest(record);
         if (!removedSuccess) {
             return false;
         }
@@ -183,14 +187,14 @@ public final class PrefillQueue {
         return true;
     }
 
-    private boolean removeRequestRecord(DispatchedRequest dispatchedRequest) {
+    private boolean removeDispatchedRequest(DispatchedRequest dispatchedRequest) {
         synchronized (requestRecordsLock) {
             boolean removeSuccess = dispatched.remove(dispatchedRequest.request().requestId(), dispatchedRequest);
             if (!removeSuccess) {
                 return false;
             }
             if (!waiting.contains(dispatchedRequest.request())) {
-                totalPredictedWorkMs -= dispatchedRequest.predictedMs();
+                totalPredictedWorkMs.add(-dispatchedRequest.predictedMs());
             }
             changeVersion.incrementAndGet();
             return true;
@@ -215,23 +219,41 @@ public final class PrefillQueue {
         }
     }
 
-    private void updateActiveTasks(WorkerStatus.EngineObservation engine) {
-        activeTasks.updateWorkerCapacity(engine);
+    private void updateActiveTasks(WorkerStatus.EngineObservation engineObservation) {
+
+        activeTasks.updateWorkerCapacity(engineObservation);
         long nowMs = System.currentTimeMillis();
-        Map<String, WorkerStatus.TaskObservation> tasks =
-                engine.runningTaskList() == null ? Map.of() : engine.runningTaskList();
+
+        Map<String, WorkerStatus.TaskObservation> tasks;
+        if (engineObservation.runningTaskList() == null) {
+            tasks = Map.of();
+        } else {
+            tasks = engineObservation.runningTaskList();
+        }
+
         Set<String> engineRequestIds = new HashSet<>();
-        for (WorkerStatus.TaskObservation task : tasks.values()) {
-            if (task.requestId() == null) {
+        for (WorkerStatus.TaskObservation taskObservation : tasks.values()) {
+            String requestId = taskObservation.requestId();
+            if (requestId == null) {
                 continue;
             }
-            engineRequestIds.add(task.requestId());
-            DispatchedRequest record = dispatched.get(task.requestId());
-            if (record != null) {
-                record.updateStatus(task.phase() == TaskPhase.RUNNING
-                        ? WorkView.Phase.ENGINE_RUNNING
-                        : WorkView.Phase.ENGINE_QUEUED, nowMs);
+            engineRequestIds.add(requestId);
+
+            DispatchedRequest dispatchedRequest = dispatched.get(requestId);
+            if (dispatchedRequest == null) {
+                continue;
             }
+
+            if (taskObservation.phase() == TaskPhase.RUNNING) {
+                dispatchedRequest.updateStatus(Phase.ENGINE_RUNNING, nowMs);
+            } else {
+                dispatchedRequest.updateStatus(Phase.ENGINE_QUEUED, nowMs);
+            }
+
+            if (dispatchedRequest.isWorkLoadChanged(taskObservation)) {
+                updatePredictedWork(dispatchedRequest, taskObservation);
+            }
+            dispatchedRequest.updateWorkerStatus(taskObservation);
         }
         long unknown = 0L;
         for (String requestId : engineRequestIds) {
@@ -247,6 +269,112 @@ public final class PrefillQueue {
         unknownRequestCount = unknown;
         capacityChanged.run();
         changeVersion.incrementAndGet();
+    }
+
+    /**
+     * 缓存加载完成后，按实际命中及引擎剩余计算 token 重估工作量。
+     */
+    private void updatePredictedWork(DispatchedRequest dispatchedRequest, WorkerStatus.TaskObservation workerStatus) {
+
+        long predictedMs = reEstimateWorkerStatusWorkMs(dispatchedRequest, workerStatus);
+        // 非正估计不覆盖当前工作量，避免误计算，等待 Finished 上报统一移除即可。
+        if (predictedMs <= 0L) {
+            return;
+        }
+        if (predictedMs == dispatchedRequest.predictedMs()) {
+            return;
+        }
+        synchronized (requestRecordsLock) {
+            if (!dispatched.containsKey(dispatchedRequest.request().requestId())) {
+                return;
+            }
+            long previousMs = dispatchedRequest.predictedMs();
+            dispatchedRequest.updatePredictedMs(predictedMs);
+            totalPredictedWorkMs.add(predictedMs - previousMs);
+            changeVersion.incrementAndGet();
+        }
+    }
+
+    private long reEstimateWorkerStatusWorkMs(DispatchedRequest dispatchedRequest,
+                                              WorkerStatus.TaskObservation workerStatus) {
+        // 引擎缓存没有加载完成，不进行纠偏处理
+        if (!workerStatus.prefixLengthValid()) {
+            dispatchedRequest.setCorrectedTotalMs(-1L);
+            return -1;
+        }
+
+        long inputTokens = dispatchedRequest.request().seqLen();
+        long actualHitTokens = workerStatus.prefixLength();                // 实际命中 token
+        long totalComputeTokens = Math.max(0L, inputTokens - actualHitTokens); // 总待计算 token
+
+        // vllm 可能因为请求枪占，原 KV 释放，重新进入等待流程，导致 prefixLength 发生变化不一致, 需要重新评估总待计算 token
+        var previousWorkerStatus = dispatchedRequest.getWorkerStatus();
+        if (previousWorkerStatus != null && previousWorkerStatus.prefixLength() != actualHitTokens) {
+            dispatchedRequest.setCorrectedTotalMs(-1L);
+        }
+
+        long completedTokens = completedComputeTokens(workerStatus, previousWorkerStatus, totalComputeTokens);
+
+        try {
+            // 评估总工作耗时
+            if (dispatchedRequest.getCorrectedTotalMs() == -1) {
+                long correctedTotalMs = estimateWorkMs(inputTokens, totalComputeTokens, actualHitTokens);
+                dispatchedRequest.setCorrectedTotalMs(correctedTotalMs);
+            }
+            // 评估已完成工作耗时
+            long completedMs = estimateWorkMs(inputTokens, completedTokens, actualHitTokens);
+
+            // 计算剩余工作耗时
+            return Math.max(0L, dispatchedRequest.getCorrectedTotalMs() - completedMs);
+        } catch (RuntimeException error) {
+            Logger.warn("Prefill workload update failed: requestId={}, endpoint={}",
+                    dispatchedRequest.request().requestId(), endpoint.ipPort(), error);
+            return -1L;
+        }
+    }
+
+    /**
+     * 已完成的待计算 token 数。
+     * <p>
+     * 引擎上报的剩余 token 为 0 有两种含义：本请求还没开始 step，或者已经算完。
+     * 只有上一次上报仍为正时才认定是算完，否则按进度未知处理，已完成 0 个 token。
+     */
+    private long completedComputeTokens(TaskObservation workerStatus,
+                                        TaskObservation previousWorkerStatus,
+                                        long totalComputeTokens) {
+        Long reportedRemainingTokens = workerStatus.remainingPrefillTokens();
+        if (reportedRemainingTokens == null) {
+            // 引擎没上报进度，按一个 token 都没算处理
+            return 0L;
+        }
+        if (reportedRemainingTokens == 0L && !observedRemainingDropToZero(previousWorkerStatus)) {
+            // 0 是尚未开始 step 时的上报值，不能当作算完
+            return 0L;
+        }
+        // 引擎与调度侧的 prompt 长度口径可能不一致，或进度尚未随新的缓存命中重置，限制在 [0, totalComputeTokens] 内
+        return Math.clamp(totalComputeTokens - reportedRemainingTokens, 0L, totalComputeTokens);
+    }
+
+    /**
+     * 上一次上报的剩余 token 为正，才说明本次的 0 是“算完”而不是“还没开始”。
+     */
+    private static boolean observedRemainingDropToZero(TaskObservation previousWorkerStatus) {
+        if (previousWorkerStatus == null) {
+            return false;
+        }
+        Long previousRemainingTokens = previousWorkerStatus.remainingPrefillTokens();
+        return previousRemainingTokens != null && previousRemainingTokens > 0L;
+    }
+
+    /**
+     * @param inputTokens      表示预处理成本
+     * @param computeTokens    表达待计算成本
+     * @param hitTokens        表达缓存加载成本
+     * @return 预估工作耗时
+     */
+    private long estimateWorkMs(long inputTokens, long computeTokens, long hitTokens) {
+        var evaluator = endpoint.getPredictor().evaluator();
+        return PrefillPredictionBoundary.predictSingleRequestMs(evaluator, inputTokens, computeTokens, hitTokens);
     }
 
     /**
@@ -276,14 +404,14 @@ public final class PrefillQueue {
      */
     public void removeRequestStatusExpired(long nowMs, long statusTimeoutMs, RequestSchedulerReporter reporter) {
         boolean removed = false;
-        for (DispatchedRequest record : dispatched.values()) {
-            if (!record.statusExpired(nowMs, statusTimeoutMs)) {
+        for (DispatchedRequest dispatchedRequest : dispatched.values()) {
+            if (!dispatchedRequest.statusExpired(nowMs, statusTimeoutMs)) {
                 continue;
             }
-            if (removeRequestRecord(record)) {
-                activeTasks.releaseExpired(record, nowMs, statusTimeoutMs);
+            if (removeDispatchedRequest(dispatchedRequest)) {
+                activeTasks.releaseExpired(dispatchedRequest, nowMs, statusTimeoutMs);
                 removed = true;
-                Request request = record.request();
+                Request request = dispatchedRequest.request();
                 reporter.reportStatusUpdateTimeout(endpoint.getStatus().getRole(), endpoint.ipPort());
                 Logger.warn(
                         "Request worker status timeout: requestId={}, role=PREFILL, endpoint={}, publishedAgeMs={}, timeoutMs={}",
@@ -342,14 +470,15 @@ public final class PrefillQueue {
     /**
      * 当前累计预测工作量加新请求自身耗时，用于选路评分，不承诺实际等待时间。
      * <p>
-     * 工作量在记录增删时更新，waiting 与 dispatched 的过渡记录只算一次，不按新请求优先级过滤。
+     * 工作量在记录增删及有效缓存命中上报时更新，waiting 与 dispatched 的过渡记录只算一次，
+     * 不按新请求优先级过滤，也不按墙钟已执行时间扣减。
      * 读取不遍历队列，也不获取记录锁。未知引擎任务不虚构耗时，返回 -1。
      */
     public long estimatedWorkMs(long predictedMs) {
         if (unknownRequestCount > 0L) {
             return -1L;
         }
-        return totalPredictedWorkMs + predictedMs;
+        return totalPredictedWorkMs.sum() + predictedMs;
     }
 
     /**

@@ -58,7 +58,7 @@ class RouteTtftEstimateTest {
         PrefillTimePredictor.Evaluator captured = predictor.evaluator();
         PrefillBatchFeatures sample = new PrefillBatchFeatures(List.of(
                 new PrefillBatchFeatures.Item(100L, 0L)));
-        long before = captured.estimateMs(20L, 0L);
+        long before = captured.estimateMs(20L, 20L, 0L);
 
         for (int sampleIndex = 0; sampleIndex < 4; sampleIndex++) {
             predictor.learn(sample, 1L, 100L);
@@ -71,7 +71,7 @@ class RouteTtftEstimateTest {
                 captured,
                 routeEstimationRule());
         assertTrue(result.selectable());
-        assertEquals(before, captured.estimateMs(20L, 0L),
+        assertEquals(before, captured.estimateMs(20L, 20L, 0L),
                 "a estimate-owned evaluator cannot change mid-call");
     }
 
@@ -134,9 +134,9 @@ class RouteTtftEstimateTest {
         private final AtomicInteger invocations = new AtomicInteger();
 
         @Override
-        public long estimateMs(long totalTokens, long hitTokens) {
+        public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
             invocations.incrementAndGet();
-            return Math.max(0L, totalTokens - hitTokens);
+            return Math.max(0L, computeTokens);
         }
 
         @Override

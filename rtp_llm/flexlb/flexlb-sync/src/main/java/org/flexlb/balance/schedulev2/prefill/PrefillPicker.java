@@ -44,9 +44,9 @@ public final class PrefillPicker {
      * 调度线程读取最新队列，选中后紧接着入队，下一次决策才能看到新增负载。
      */
     public PlacementResult<SelectedRole, RoleType> pick(Request request,
-                                                      RoleType role,
-                                                      String group,
-                                                      PrefillInputs inputs) {
+                                                        RoleType role,
+                                                        String group,
+                                                        PrefillInputs inputs) {
         return prefillStrategy.selectPrepared(request.ctx(), role, group, inputs,
                 candidate -> candidate.endpoint().prefillQueue()
                         .estimatedWorkMs(candidate.predictedMs()));

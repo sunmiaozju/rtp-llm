@@ -57,7 +57,7 @@ class FormulaPredictorTest {
                         + " + 1 * sum((inputTokens / 1024.0) * (hitCacheTokens / 1024.0))"
                         + " + 1 * sum((hitCacheTokens / 1024.0) * (hitCacheTokens / 1024.0))");
 
-        assertEquals(4, predictor.evaluator().estimateMs(1024, 512));
+        assertEquals(4, predictor.evaluator().estimateMs(1024, 512, 512));
         PrefillBatchFeatures features = batchFeatures(
                 item(1024, 512), item(2048, 1024));
         // Per-item feature sums are 4.25 and 11.0; batch prediction retains fractions.
@@ -70,42 +70,42 @@ class FormulaPredictorTest {
     void estimateMsEmptyFormula() {
         // "0" → always 0
         FormulaPredictor p = new FormulaPredictor("0");
-        assertEquals(0, p.evaluator().estimateMs(1000, 0));
-        assertEquals(0, p.evaluator().estimateMs(1000, 500));
+        assertEquals(0, p.evaluator().estimateMs(1000, 1000, 0));
+        assertEquals(0, p.evaluator().estimateMs(1000, 500, 500));
     }
 
     @Test
     void estimateMsConstantTerm() {
         // "50" → always 50
         FormulaPredictor p = new FormulaPredictor("50");
-        assertEquals(50, p.evaluator().estimateMs(100, 0));
-        assertEquals(50, p.evaluator().estimateMs(0, 0));
+        assertEquals(50, p.evaluator().estimateMs(100, 100, 0));
+        assertEquals(50, p.evaluator().estimateMs(0, 0, 0));
     }
 
     @Test
     void estimateMsLinearInComputeTokens() {
         FormulaPredictor p = new FormulaPredictor("2*computeTokens");
-        assertEquals(2000, p.evaluator().estimateMs(1500, 500));
-        assertEquals(600, p.evaluator().estimateMs(300, 0));
+        assertEquals(2000, p.evaluator().estimateMs(1500, 1000, 500));
+        assertEquals(600, p.evaluator().estimateMs(300, 300, 0));
     }
 
     @Test
     void estimateMsQuadraticInComputeTokens() {
         FormulaPredictor p = new FormulaPredictor("0.1*computeTokens^2");
-        assertEquals(1000, p.evaluator().estimateMs(100, 0));
+        assertEquals(1000, p.evaluator().estimateMs(100, 100, 0));
     }
 
     @Test
     void estimateMsInteractionTerm() {
         FormulaPredictor p = new FormulaPredictor("0.5*computeTokens*hitCacheTokens");
-        assertEquals(40000, p.evaluator().estimateMs(600, 400));
+        assertEquals(40000, p.evaluator().estimateMs(600, 200, 400));
     }
 
     @Test
     void estimateMsSumFunctionInSingleMode() {
         FormulaPredictor p = new FormulaPredictor(
                 "sum(computeTokens) + 0.3*sum(hitCacheTokens)");
-        assertEquals(360, p.evaluator().estimateMs(500, 200));
+        assertEquals(360, p.evaluator().estimateMs(500, 300, 200));
     }
 
     @Test
@@ -113,8 +113,8 @@ class FormulaPredictorTest {
         FormulaPredictor p = new FormulaPredictor(
                 "sum(hitCacheTokens) + 100*sum(hasHitCache)");
 
-        assertEquals(300, p.evaluator().estimateMs(500, 200));
-        assertEquals(0, p.evaluator().estimateMs(500, 0));
+        assertEquals(300, p.evaluator().estimateMs(500, 300, 200));
+        assertEquals(0, p.evaluator().estimateMs(500, 500, 0));
     }
 
     @Test
@@ -125,8 +125,8 @@ class FormulaPredictorTest {
                         + " + 3*sum(max(computeTokens - 24576, 0))");
 
         // tokens=30000, hitCacheTokens=1000, computeTokens=29000, positive parts=(26952,4424).
-        assertEquals(76024, p.evaluator().estimateMs(30000, 1000));
-        assertEquals(0, p.evaluator().estimateMs(2048, 0));
+        assertEquals(76024, p.evaluator().estimateMs(30000, 29000, 1000));
+        assertEquals(0, p.evaluator().estimateMs(2048, 2048, 0));
     }
 
     @Test
@@ -134,8 +134,8 @@ class FormulaPredictorTest {
         FormulaPredictor p = new FormulaPredictor(
                 "inputTokens - hitCacheTokens + computeTokens + 10*hasHitCache");
 
-        assertEquals(610, p.evaluator().estimateMs(500, 200));
-        assertEquals(1000, p.evaluator().estimateMs(500, 0));
+        assertEquals(610, p.evaluator().estimateMs(500, 300, 200));
+        assertEquals(1000, p.evaluator().estimateMs(500, 500, 0));
     }
 
     @Test
@@ -148,13 +148,13 @@ class FormulaPredictorTest {
                         + " + 0.001*sum(computeTokens * hitCacheTokens)"
                         + " + 0.5*sum(hitCacheTokens)"
                         + " + 5*batchSize");
-        assertEquals(1105, p.evaluator().estimateMs(500, 200));
+        assertEquals(1105, p.evaluator().estimateMs(500, 300, 200));
     }
 
     @Test
-    void estimateMsHitTokensCannotExceedTotal() {
+    void estimateMsUsesExplicitComputeTokens() {
         FormulaPredictor p = new FormulaPredictor("2*computeTokens");
-        assertEquals(0, p.evaluator().estimateMs(100, 500));
+        assertEquals(0, p.evaluator().estimateMs(100, 0, 500));
     }
 
     @Test
@@ -165,7 +165,7 @@ class FormulaPredictorTest {
                         + " + 0.0001*sum(computeTokens * hitCacheTokens)"
                         + " + 0.5*sum(hitCacheTokens)"
                         + " + 10*batchSize");
-        long result = p.evaluator().estimateMs(100_000, 50_000);
+        long result = p.evaluator().estimateMs(100_000, 50_000, 50_000);
         assertTrue(result >= 0, "Should not overflow or produce negative values");
     }
 
@@ -192,7 +192,7 @@ class FormulaPredictorTest {
                         + " + 0.001*sum(computeTokens * hitCacheTokens)"
                         + " + 0.5*sum(hitCacheTokens)"
                         + " + 5*batchSize");
-        long single = p.evaluator().estimateMs(500, 200);
+        long single = p.evaluator().estimateMs(500, 300, 200);
 
         PrefillBatchFeatures features = batchFeatures(item(500, 200));
         long batch = (long) p.evaluator().predictBatchMs(features);
@@ -234,7 +234,7 @@ class FormulaPredictorTest {
         // 2 + 800 + 300 + 500 + 500 + 300
         assertEquals(2402, p.evaluator().predictBatchMs(features));
         // Single-request mode binds the same explicit batch variables.
-        assertEquals(1801, p.evaluator().estimateMs(500, 200));
+        assertEquals(1801, p.evaluator().estimateMs(500, 300, 200));
     }
 
     @Test
@@ -390,9 +390,9 @@ class FormulaPredictorTest {
         // All-miss single requests, verified against the production DSv4 fit:
         // 512 -> ~219 ms, 32768 -> ~342 ms, 49152 -> ~494 ms. The legacy
         // 1 ms/token default predicted 32768 -> 32768 ms (96x too slow).
-        long v512 = p.evaluator().estimateMs(512, 0);
-        long v32k = p.evaluator().estimateMs(32768, 0);
-        long v48k = p.evaluator().estimateMs(49152, 0);
+        long v512 = p.evaluator().estimateMs(512, 512, 0);
+        long v32k = p.evaluator().estimateMs(32768, 32768, 0);
+        long v48k = p.evaluator().estimateMs(49152, 49152, 0);
         assertTrue(v512 >= 210 && v512 <= 230,
                 "512 all-miss expected ~219ms, got " + v512);
         assertTrue(v32k >= 330 && v32k <= 350,
@@ -401,7 +401,7 @@ class FormulaPredictorTest {
                 "49152 all-miss expected ~494ms, got " + v48k);
 
         // Cache hits shorten the prediction: 32768 with half cached ~274ms.
-        long v32kHalf = p.evaluator().estimateMs(32768, 16384);
+        long v32kHalf = p.evaluator().estimateMs(32768, 16384, 16384);
         assertTrue(v32kHalf >= 260 && v32kHalf <= 290,
                 "32768 half-cached expected ~274ms, got " + v32kHalf);
         assertTrue(v32kHalf < v32k, "cache hits must reduce the prediction");
@@ -411,7 +411,7 @@ class FormulaPredictorTest {
     void dsv4ProductionFitEvaluatesInBatchModeWithBatchSizeStairs() {
         FormulaPredictor p = new FormulaPredictor(DSV4_PRODUCTION_EXPRESSION);
 
-        long single = p.evaluator().estimateMs(512, 0);
+        long single = p.evaluator().estimateMs(512, 512, 0);
 
         List<PrefillBatchFeatures.Item> items = new ArrayList<>();
         for (int i = 0; i < 32; i++) {
@@ -434,7 +434,7 @@ class FormulaPredictorTest {
     void powerOperatorRightAssociative() {
         // 2^3^2 = 2^(3^2) = 2^9 = 512
         FormulaPredictor p = new FormulaPredictor("2^3^2");
-        assertEquals(512, p.evaluator().estimateMs(0, 0));
+        assertEquals(512, p.evaluator().estimateMs(0, 0, 0));
     }
 
     // ---- functions ----
@@ -442,14 +442,14 @@ class FormulaPredictorTest {
     @Test
     void sqrtFunction() {
         FormulaPredictor p = new FormulaPredictor("sqrt(100)");
-        assertEquals(10, p.evaluator().estimateMs(0, 0));
+        assertEquals(10, p.evaluator().estimateMs(0, 0, 0));
     }
 
     @Test
     void maxFunction() {
         FormulaPredictor p = new FormulaPredictor("max(sum(computeTokens), 50)");
-        assertEquals(100, p.evaluator().estimateMs(100, 0));
-        assertEquals(50, p.evaluator().estimateMs(30, 0));
+        assertEquals(100, p.evaluator().estimateMs(100, 100, 0));
+        assertEquals(50, p.evaluator().estimateMs(30, 30, 0));
     }
 
     @Test
@@ -457,7 +457,7 @@ class FormulaPredictorTest {
         FormulaPredictor p = new FormulaPredictor(
                 "sqrt(pow(sum(computeTokens), 2) + pow(sum(hitCacheTokens), 2))");
         // inputTokens=7, hitCacheTokens=4, computeTokens=3, sqrt(9+16) = 5
-        assertEquals(5, p.evaluator().estimateMs(7, 4));
+        assertEquals(5, p.evaluator().estimateMs(7, 3, 4));
     }
 
     // ---- parentheses ----
@@ -465,7 +465,7 @@ class FormulaPredictorTest {
     @Test
     void parenthesesOverridePrecedence() {
         FormulaPredictor p = new FormulaPredictor("(2 + 3) * 4");
-        assertEquals(20, p.evaluator().estimateMs(0, 0));
+        assertEquals(20, p.evaluator().estimateMs(0, 0, 0));
     }
 
     // ---- learn (interface stub) ----
@@ -485,8 +485,8 @@ class FormulaPredictorTest {
     @DisplayName("param() basic parsing returns initial value")
     void paramBasicParsing() {
         FormulaPredictor p = new FormulaPredictor("param(w0, 100)");
-        assertEquals(100, p.evaluator().estimateMs(0, 0));
-        assertEquals(100, p.evaluator().estimateMs(500, 200));
+        assertEquals(100, p.evaluator().estimateMs(0, 0, 0));
+        assertEquals(100, p.evaluator().estimateMs(500, 300, 200));
     }
 
     @Test
@@ -495,7 +495,7 @@ class FormulaPredictorTest {
         // param(w0, 10) + param(w1, 0.5) * computeTokens
         // inputTokens=100, hitCache=0, computeTokens=100 → 10 + 0.5*100 = 60
         FormulaPredictor p = new FormulaPredictor("param(w0, 10) + param(w1, 0.5) * computeTokens");
-        assertEquals(60, p.evaluator().estimateMs(100, 0));
+        assertEquals(60, p.evaluator().estimateMs(100, 100, 0));
     }
 
     @Test
@@ -504,7 +504,7 @@ class FormulaPredictorTest {
         // param(w0, 1) * computeTokens + param(w0, 1) * hitCacheTokens
         // inputTokens=100, hitCache=50, computeTokens=50 → 1*50 + 1*50 = 100
         FormulaPredictor p = new FormulaPredictor("param(w0, 1) * computeTokens + param(w0, 1) * hitCacheTokens");
-        assertEquals(100, p.evaluator().estimateMs(100, 50));
+        assertEquals(100, p.evaluator().estimateMs(100, 50, 50));
     }
 
     @Test
@@ -525,7 +525,7 @@ class FormulaPredictorTest {
     void paramInitialValueExpression() {
         // param(w0, 2+3) * computeTokens → 5 * 100 = 500
         FormulaPredictor p = new FormulaPredictor("param(w0, 2+3) * computeTokens");
-        assertEquals(500, p.evaluator().estimateMs(100, 0));
+        assertEquals(500, p.evaluator().estimateMs(100, 100, 0));
     }
 
     // ---- concurrency ----
@@ -558,7 +558,7 @@ class FormulaPredictorTest {
                 futures.add(executor.submit(() -> {
                     start.await();
                     for (int iteration = 0; iteration < 2_000; iteration++) {
-                        assertEquals(expectedSingle, single.evaluator().estimateMs(seqLen, hitCache));
+                        assertEquals(expectedSingle, single.evaluator().estimateMs(seqLen, seqLen - hitCache, hitCache));
                         assertEquals(expectedBatch, (long) batch.evaluator().predictBatchMs(features));
                     }
                     return null;
@@ -585,9 +585,9 @@ class FormulaPredictorTest {
                 "sum(computeTokens) + 2*sum(hitCacheTokens)");
         FormulaPredictor second = new FormulaPredictor(
                 "sum(max(computeTokens - 10, 0))");
-        assertEquals(500, first.evaluator().estimateMs(400, 100));
-        assertEquals(290, second.evaluator().estimateMs(400, 100));
-        assertEquals(500, first.evaluator().estimateMs(400, 100));
+        assertEquals(500, first.evaluator().estimateMs(400, 300, 100));
+        assertEquals(290, second.evaluator().estimateMs(400, 300, 100));
+        assertEquals(500, first.evaluator().estimateMs(400, 300, 100));
     }
 
     @Test

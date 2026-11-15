@@ -5,13 +5,11 @@ public final class PrefillPredictionBoundary {
 
     private PrefillPredictionBoundary() {
     }
-
-    /** Evaluate one request and require a non-negative duration. */
-    public static long predictSingleRequestMs(
-            PrefillTimePredictor.Evaluator evaluator,
-            long totalTokens,
-            long hitTokens) {
-        long predictedMs = evaluator.estimateMs(totalTokens, hitTokens);
+    public static long predictSingleRequestMs(PrefillTimePredictor.Evaluator evaluator,
+                                              long inputTokens,
+                                              long computeTokens,
+                                              long hitCacheTokens) {
+        long predictedMs = evaluator.estimateMs(inputTokens, computeTokens, hitCacheTokens);
         if (predictedMs < 0L) {
             throw new InvalidPrefillPredictionException(
                     "SINGLE_REQUEST",

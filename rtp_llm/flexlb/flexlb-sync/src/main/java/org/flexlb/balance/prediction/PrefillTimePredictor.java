@@ -25,8 +25,7 @@ public interface PrefillTimePredictor {
             return this;
         }
 
-        /** Estimate one request from its input and cache-hit token counts. */
-        long estimateMs(long totalTokens, long hitTokens);
+        long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens);
 
         /** Fresh state for one append-only planning operation on this immutable model. */
         default BatchPrediction newBatchPrediction() {

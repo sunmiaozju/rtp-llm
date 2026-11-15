@@ -15,7 +15,8 @@ import java.util.stream.Collectors;
  * <p>
  * Formula: {@code y = w0*1 + w1*batchSize + w2*sum(reuse) + w3*sum(compute)
  * + w4*sum(compute^2) + w5*sum(reuse*compute)}
- * where {@code reuse = hitCache / 1024}, {@code compute = (seqLen - hitCache) / 1024}.
+ * where {@code reuse = hitCache / 1024}, {@code compute = computeTokens / 1024}.
+ * Single-request compute tokens are supplied by the caller; batch compute tokens are input minus cache hits.
  *
  * <p>
  * The immutable model evaluator is atomically published. The
@@ -41,11 +42,9 @@ public class LearningPredictor implements PrefillTimePredictor {
         }
 
         @Override
-        public long estimateMs(long totalTokens, long hitTokens) {
-            long seq = Math.max(0L, totalTokens);
-            long hit = Math.max(0L, Math.min(hitTokens, seq));
-            double thisReuse = hit / TOKENS_PER_FEATURE_UNIT;
-            double thisCompute = (seq - hit) / TOKENS_PER_FEATURE_UNIT;
+        public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+            double thisReuse = Math.max(0L, hitCacheTokens) / TOKENS_PER_FEATURE_UNIT;
+            double thisCompute = Math.max(0L, computeTokens) / TOKENS_PER_FEATURE_UNIT;
             double[] inputs = new double[weights.length];
             inputs[0] = 1.0;
             inputs[1] = 1.0;

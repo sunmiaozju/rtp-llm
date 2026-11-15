@@ -35,8 +35,8 @@ class RouteTtftEstimateTest {
     void disabledExecutionBudgetDoesNotConstructAnUnusedPrefixPredictor() {
         PrefillTimePredictor.Evaluator evaluator = new PrefillTimePredictor.Evaluator() {
             @Override
-            public long estimateMs(long seqLen, long hitCache) {
-                return TOKEN_EVALUATOR.estimateMs(seqLen, hitCache);
+            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+                return TOKEN_EVALUATOR.estimateMs(inputTokens, computeTokens, hitCacheTokens);
             }
 
             @Override
@@ -596,9 +596,9 @@ class RouteTtftEstimateTest {
             }
 
             @Override
-            public long estimateMs(long totalTokens, long hitTokens) {
+            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
                 singleCalls.incrementAndGet();
-                return totalTokens - hitTokens;
+                return computeTokens;
             }
 
             @Override
@@ -657,8 +657,8 @@ class RouteTtftEstimateTest {
             BatchPrediction batch) {
         return new PrefillTimePredictor.Evaluator() {
             @Override
-            public long estimateMs(long totalTokens, long hitTokens) {
-                return single.predict(totalTokens, hitTokens);
+            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+                return single.predict(inputTokens, hitCacheTokens);
             }
 
             @Override

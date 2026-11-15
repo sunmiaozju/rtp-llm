@@ -184,12 +184,12 @@ public final class WorkerStatusUpdater {
             }
             RequestEntry entry = prefillState.requests.get(task.requestId());
             if (entry == null || !BatchPrefill.matchesObservedBatch(entry, task.batchId())) {
-                if (!task.isPriorityCancelOverlayOnly()) {
+                if (!task.isPriorityCancelProgress()) {
                     unknownDetailed.add(task.requestId());
                 }
                 continue;
             }
-            if (!task.isPriorityCancelOverlayOnly()) {
+            if (!task.isPriorityCancelProgress()) {
                 knownObserved.add(task.requestId());
                 if (activeFacts != null && !entry.isActive()) {
                     activeFacts.add(WorkerStatusFact.active(entry.committedItem));
@@ -260,7 +260,7 @@ public final class WorkerStatusUpdater {
         prefillState.requireLock();
         RequestEntry entry = prefillState.requests.get(task.requestId());
         if (entry == null || entry.isActive() || !BatchPrefill.matchesObservedBatch(entry, task.batchId())
-                || entry.committedItem == null || task.isPriorityCancelOverlayOnly()) {
+                || entry.committedItem == null || task.isPriorityCancelProgress()) {
             return null;
         }
         return WorkerStatusFact.active(entry.committedItem);

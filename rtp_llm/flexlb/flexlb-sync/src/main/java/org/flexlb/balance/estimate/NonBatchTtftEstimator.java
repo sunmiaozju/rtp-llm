@@ -26,8 +26,9 @@ public final class NonBatchTtftEstimator implements PrefillTtftEstimator {
             PrefillTimePredictor.Evaluator evaluator) {
         double totalMs = 0.0;
         for (ScheduledRequest item : items) {
+            long computeTokens = Math.max(0L, item.seqLen() - item.hitCache());
             totalMs += PrefillPredictionBoundary.predictSingleRequestMs(
-                    evaluator, item.seqLen(), item.hitCache());
+                    evaluator, item.seqLen(), computeTokens, item.hitCache());
         }
         return PrefillPredictionBoundary.requireValidDecisionGroupMs(totalMs);
     }

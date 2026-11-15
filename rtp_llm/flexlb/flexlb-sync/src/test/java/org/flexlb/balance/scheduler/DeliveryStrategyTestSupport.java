@@ -43,8 +43,8 @@ public final class DeliveryStrategyTestSupport {
     static final PrefillTimePredictor.Evaluator EVALUATOR =
             new PrefillTimePredictor.Evaluator() {
                 @Override
-                public long estimateMs(long totalTokens, long hitTokens) {
-                    return totalTokens - hitTokens;
+                public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+                    return computeTokens;
                 }
 
                 @Override

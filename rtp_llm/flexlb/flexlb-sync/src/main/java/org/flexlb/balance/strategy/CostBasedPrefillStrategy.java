@@ -110,8 +110,10 @@ public class CostBasedPrefillStrategy {
         List<PrefillCandidateWork> candidates = new ArrayList<>();
         for (EndpointRegistry.PrefillRoutingEntry entry : discovery.candidates()) {
             CacheTokenMatch match = calculateCacheMatch(entry.endpoint(), cacheInputs);
+            long computeTokens = Math.max(0L, cacheInputs.seqLen() - match.computeHitTokens());
             long predictedMs = PrefillPredictionBoundary.predictSingleRequestMs(
-                    entry.endpoint().getPredictor().evaluator(), cacheInputs.seqLen(), match.computeHitTokens());
+                    entry.endpoint().getPredictor().evaluator(), cacheInputs.seqLen(), computeTokens,
+                    match.computeHitTokens());
             candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.effectiveHitTokens(),
                     match.routingHitTokens(), predictedMs));
         }
@@ -659,8 +661,7 @@ public class CostBasedPrefillStrategy {
                 maxGlobalHitBlocks = Math.max(maxGlobalHitBlocks, match.globalMatchBlocks());
             }
         }
-        balanceContext
-                .setGlobalHitTokens(CacheMatchResult.matchedTokens(maxGlobalHitBlocks, blockSize, request.getSeqLen()));
+        balanceContext.setGlobalHitTokens(CacheMatchResult.matchedTokens(maxGlobalHitBlocks, blockSize, request.getSeqLen()));
         balanceContext.recordCacheQuery(observed.source().name(), observed.queryTimeUs());
         return observed;
     }

@@ -28,18 +28,19 @@ final class PrefillTimeVariableBindings {
         return BATCH_SIZE.equals(name) || BATCH_VAR_NAMES.contains(name);
     }
 
-    static EvaluationVariables singleRequestVariables(long totalTokens, long hitCacheTokens) {
+    static EvaluationVariables singleRequestVariables(long inputTokens, long computeTokens, long hitCacheTokens) {
         BindingContext ctx = BINDING_CTX.get();
         ctx.reset();
-        fillRequestVars(ctx.topLevelVars, totalTokens, hitCacheTokens);
+        fillRequestVars(ctx.topLevelVars, inputTokens, computeTokens, hitCacheTokens);
         ctx.topLevelVars[PrefillTimeFormula.IDX_BATCH_SIZE] = 1.0;
-        long inputTokens = (long) ctx.topLevelVars[PrefillTimeFormula.IDX_INPUT_TOKENS];
-        long boundedHitCacheTokens = (long) ctx.topLevelVars[PrefillTimeFormula.IDX_HIT_CACHE_TOKENS];
-        fillBatchVars(ctx.topLevelVars, inputTokens, boundedHitCacheTokens,
-                inputTokens, inputTokens - boundedHitCacheTokens);
+        ctx.topLevelVars[PrefillTimeFormula.IDX_TOTAL_INPUT_TOKENS] = inputTokens;
+        ctx.topLevelVars[PrefillTimeFormula.IDX_TOTAL_HIT_CACHE_TOKENS] = hitCacheTokens;
+        ctx.topLevelVars[PrefillTimeFormula.IDX_TOTAL_COMPUTE_TOKENS] = computeTokens;
+        ctx.topLevelVars[PrefillTimeFormula.IDX_MAX_INPUT_TOKENS] = inputTokens;
+        ctx.topLevelVars[PrefillTimeFormula.IDX_MAX_COMPUTE_TOKENS] = computeTokens;
 
         double[] item = ctx.acquireArray();
-        fillRequestVars(item, totalTokens, hitCacheTokens);
+        fillRequestVars(item, inputTokens, computeTokens, hitCacheTokens);
         ctx.itemVars.add(item);
 
         return ctx.evaluationVariables;
@@ -103,6 +104,13 @@ final class PrefillTimeVariableBindings {
         vars[PrefillTimeFormula.IDX_TOTAL_COMPUTE_TOKENS] = totalInputTokens - totalHitCacheTokens;
         vars[PrefillTimeFormula.IDX_MAX_INPUT_TOKENS] = maxInputTokens;
         vars[PrefillTimeFormula.IDX_MAX_COMPUTE_TOKENS] = maxComputeTokens;
+    }
+
+    private static void fillRequestVars(double[] vars, long inputTokens, long computeTokens, long hitCacheTokens) {
+        vars[PrefillTimeFormula.IDX_INPUT_TOKENS] = inputTokens;
+        vars[PrefillTimeFormula.IDX_HIT_CACHE_TOKENS] = hitCacheTokens;
+        vars[PrefillTimeFormula.IDX_COMPUTE_TOKENS] = computeTokens;
+        vars[PrefillTimeFormula.IDX_HAS_HIT_CACHE] = hitCacheTokens > 0L ? 1.0 : 0.0;
     }
 
     /**

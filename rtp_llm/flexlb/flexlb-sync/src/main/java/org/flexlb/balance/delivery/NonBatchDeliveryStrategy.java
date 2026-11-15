@@ -136,8 +136,9 @@ public final class NonBatchDeliveryStrategy implements DeliveryStrategy {
     private record ClaimedRoute(ScheduledRequest item, DeliveryClaim claim) { }
 
     static long predict(PrefillTimePredictor.Evaluator evaluator, ScheduledRequest item) {
+        long computeTokens = Math.max(0L, item.seqLen() - item.hitCache());
         return PrefillPredictionBoundary.predictSingleRequestMs(
-                evaluator, item.seqLen(), item.hitCache());
+                evaluator, item.seqLen(), computeTokens, item.hitCache());
     }
 
     static Throwable close(AutoCloseable capability) {

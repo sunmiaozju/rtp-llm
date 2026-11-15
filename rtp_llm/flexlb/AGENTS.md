@@ -20,6 +20,7 @@ This file provides guidance to agents when working with code in this repository.
   例如“是否正在等待引擎的 Finished 上报”。相较于 `awaitingTerminal`，
   `waitingForWorkerFinishedReport` 更直接地说明等待谁、等待什么。
   状态字段还应说明何时设置、何时清除，以及对调度、容量统计和请求清理的影响。
+- **简单字段访问优先使用 Lombok `@Data`。** 不为单纯取值或赋值手写 getter/setter
 - **方法名必须与实际效果一致。** 只清除容量记账状态的方法，不能用
   `clearRequestOwnership` 这样的名字暗示整个请求的关联都被清除。
   反过来，名称只表示修改一个字段的方法，也不应隐含删除记录、释放资源或通知调度器等操作。

@@ -596,8 +596,9 @@ final class QueueTimelineEstimator {
                 return cachedSingleMs;
             }
             try {
+                long computeTokens = Math.max(0L, seqLen - hitCache);
                 long predicted = PrefillPredictionBoundary.predictSingleRequestMs(
-                        evaluator, seqLen, hitCache);
+                        evaluator, seqLen, computeTokens, hitCache);
                 cachedSingleSnapshot = snapshot;
                 cachedSeqLen = seqLen;
                 cachedHitCache = hitCache;

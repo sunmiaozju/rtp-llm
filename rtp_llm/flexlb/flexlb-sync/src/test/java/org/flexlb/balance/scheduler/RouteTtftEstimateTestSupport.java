@@ -34,10 +34,8 @@ final class RouteTtftEstimateTestSupport {
     static final PrefillTimePredictor.Evaluator TOKEN_EVALUATOR =
             new PrefillTimePredictor.Evaluator() {
                 @Override
-                public long estimateMs(long totalTokens, long hitTokens) {
-                    long sequence = Math.max(0L, totalTokens);
-                    long hit = Math.max(0L, Math.min(hitTokens, sequence));
-                    return (long) (sequence - hit + 0.3 * hit);
+                public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+                    return (long) (Math.max(0L, computeTokens) + 0.3 * Math.max(0L, hitCacheTokens));
                 }
 
                 @Override
@@ -46,7 +44,7 @@ final class RouteTtftEstimateTestSupport {
                                 features) {
                     return features.items().stream()
                             .mapToLong(item -> estimateMs(
-                                    item.seqLen(), item.hitCache()))
+                                    item.seqLen(), Math.max(0L, item.seqLen() - item.hitCache()), item.hitCache()))
                             .sum();
                 }
             };

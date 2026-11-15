@@ -30,21 +30,21 @@ class LearningPredictorTest {
     @DisplayName("default model produces a non-negative estimate")
     void defaultModelEstimateMs() {
         LearningPredictor p = new LearningPredictor();
-        assertTrue(p.evaluator().estimateMs(1000, 200) >= 0);
+        assertTrue(p.evaluator().estimateMs(1000, 800, 200) >= 0);
     }
 
     @Test
     @DisplayName("estimateMs with zero tokens")
     void estimateMsZeroTokens() {
         LearningPredictor p = new LearningPredictor();
-        assertTrue(p.evaluator().estimateMs(0, 0) >= 0);
+        assertTrue(p.evaluator().estimateMs(0, 0, 0) >= 0);
     }
 
     @Test
-    @DisplayName("estimateMs bounds hitTokens to totalTokens")
-    void estimateMsHitTokensBounded() {
+    @DisplayName("estimateMs uses supplied compute and hit tokens independently of input length")
+    void estimateMsUsesExplicitComputeAndHitTokens() {
         LearningPredictor p = new LearningPredictor();
-        assertEquals(p.evaluator().estimateMs(100, 100), p.evaluator().estimateMs(100, 500));
+        assertEquals(p.evaluator().estimateMs(100, 0, 100), p.evaluator().estimateMs(500, 0, 100));
     }
 
     @Test

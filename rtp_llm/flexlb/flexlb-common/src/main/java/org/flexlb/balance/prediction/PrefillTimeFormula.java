@@ -21,12 +21,12 @@ import java.util.Set;
  *   <tr><th>Symbol</th><th>Meaning</th></tr>
  *   <tr><td>{@code inputTokens}</td><td>request input tokens</td></tr>
  *   <tr><td>{@code hitCacheTokens}</td><td>observed reusable KV-cache tokens</td></tr>
- *   <tr><td>{@code computeTokens}</td><td>{@code inputTokens - hitCacheTokens}</td></tr>
+ *   <tr><td>{@code computeTokens}</td><td>待计算 token 数</td></tr>
  *   <tr><td>{@code hasHitCache}</td><td>1 if {@code hitCacheTokens > 0}, otherwise 0</td></tr>
  *   <tr><td>{@code batchSize}</td><td>number of requests in the batch</td></tr>
  *   <tr><td>{@code totalInputTokens}</td><td>sum of input tokens across the batch</td></tr>
  *   <tr><td>{@code totalHitCacheTokens}</td><td>sum of cache-hit tokens across the batch</td></tr>
- *   <tr><td>{@code totalComputeTokens}</td><td>{@code totalInputTokens - totalHitCacheTokens}</td></tr>
+ *   <tr><td>{@code totalComputeTokens}</td><td>sum of compute tokens across the batch</td></tr>
  *   <tr><td>{@code maxInputTokens}</td><td>maximum request input length in the batch</td></tr>
  *   <tr><td>{@code maxComputeTokens}</td><td>maximum request compute length in the batch</td></tr>
  * </table>

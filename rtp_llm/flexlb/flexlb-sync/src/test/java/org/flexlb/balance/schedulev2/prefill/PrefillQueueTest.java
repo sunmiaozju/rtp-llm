@@ -4,13 +4,20 @@ import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.planner.GroupPlanner;
+import org.flexlb.balance.prediction.FormulaPredictor;
+import org.flexlb.balance.prediction.PrefillTimePredictor;
+import org.flexlb.balance.scheduler.EndpointEventHandler;
+import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
 import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.config.FlexlbConfig;
+import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.Test;
 
@@ -23,9 +30,11 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
+import static org.mockito.Mockito.when;
 
 class PrefillQueueTest {
 
@@ -350,6 +359,493 @@ class PrefillQueueTest {
     }
 
     @Test
+    void validActualCacheHitCorrectsUnderestimatedWorkBeforeNextSelection() {
+        useFormula("200 + 0.069*sum(computeTokens) + 0.0001*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "long-prefill", 50, 610_831L);
+        DispatchedRequest record = new DispatchedRequest(request, 2304L, 279L);
+        V2TestSupport.dispatch(queue, record);
+        var originalChoice = request.selectedPrefill();
+        assertEquals(651L, queue.estimatedWorkMs(372L));
+
+        var task = cacheTask(request.requestId(), true, 2304L, null, TaskPhase.RUNNING);
+        reportTask(task);
+
+        assertEquals(42_188L, record.getCorrectedTotalMs());
+        assertEquals(41_988L, record.predictedMs());
+        assertEquals(42_360L, queue.estimatedWorkMs(372L));
+        assertEquals(1L, queue.inflightCount());
+        assertEquals(2304L, record.kvTokens());
+        assertEquals(originalChoice, request.selectedPrefill());
+        assertEquals(279L, request.selectedPrefill().predictedMs());
+        var order = Comparator.comparingLong(GroupPlanner.Item::enqueueSeq);
+        var constraints = new GroupPlanner.Constraints(1, Long.MAX_VALUE, Long.MAX_VALUE, 0L, 0L);
+        assertEquals(41_988L, queue.loadView(0L, order, constraints).work().requests().getFirst().remainingWorkMs());
+
+        reportTask(task);
+        assertEquals(42_360L, queue.estimatedWorkMs(372L));
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        assertEquals(372L, queue.estimatedWorkMs(372L));
+    }
+
+    @Test
+    void unchangedActualCacheHitSkipsRepeatedPrediction() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(16L, 8L, 8L)).thenReturn(110L);
+        when(evaluator.estimateMs(16L, 0L, 8L)).thenReturn(100L);
+        Request request = request("matching-cache");
+        DispatchedRequest record = new DispatchedRequest(request, 8L, 10L);
+        V2TestSupport.dispatch(queue, record);
+        V2TestSupport.choose(request, endpoint, 8L, 10L);
+
+        reportTask(cacheTask(request.requestId(), true, 8L, null, TaskPhase.RUNNING));
+        reportTask(cacheTask(request.requestId(), true, 8L, null, TaskPhase.RUNNING));
+
+        assertEquals(10L, record.predictedMs());
+        assertEquals(10L, queue.estimatedWorkMs(0L));
+        assertEquals(1L, queue.inflightCount());
+        verify(evaluator).estimateMs(16L, 8L, 8L);
+        verify(evaluator).estimateMs(16L, 0L, 8L);
+        verifyNoMoreInteractions(evaluator);
+    }
+
+    @Test
+    void zeroCacheHitKeepsWorkWhenPredictionMatches() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(16L, 16L, 0L)).thenReturn(110L);
+        when(evaluator.estimateMs(16L, 0L, 0L)).thenReturn(100L);
+        DispatchedRequest record = new DispatchedRequest(request("matching-zero-cache"), 16L, 10L);
+        V2TestSupport.dispatch(queue, record);
+
+        reportTask(cacheTask(record.request().requestId(), true, 0L, null, TaskPhase.RUNNING));
+
+        assertEquals(10L, record.predictedMs());
+        assertEquals(10L, queue.estimatedWorkMs(0L));
+        verify(evaluator).estimateMs(16L, 16L, 0L);
+        verify(evaluator).estimateMs(16L, 0L, 0L);
+        verifyNoMoreInteractions(evaluator);
+    }
+
+    @Test
+    void correctedTotalIsComputedOnceAfterCacheBecomesValid() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(10_000L, 8000L, 2000L)).thenReturn(1553L);
+        when(evaluator.estimateMs(10_000L, 5000L, 2000L)).thenReturn(1346L);
+        when(evaluator.estimateMs(10_000L, 7000L, 2000L)).thenReturn(1484L);
+        Request request = V2TestSupport.request(config, "cached-total", 50, 10_000L);
+        DispatchedRequest record = new DispatchedRequest(request, 8000L, 1144L);
+        V2TestSupport.dispatch(queue, record);
+
+        assertEquals(-1L, record.getCorrectedTotalMs());
+        reportTask(cacheTask(request.requestId(), false, 0L, 0L, TaskPhase.PENDING));
+        assertEquals(-1L, record.getCorrectedTotalMs());
+        assertEquals(1144L, queue.estimatedWorkMs(0L));
+        verifyNoInteractions(predictor, evaluator);
+
+        reportTask(cacheTask(request.requestId(), true, 2000L, 3000L, TaskPhase.RUNNING));
+        assertEquals(1553L, record.getCorrectedTotalMs());
+        assertEquals(207L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 2000L, 1000L, TaskPhase.RUNNING));
+        assertEquals(1553L, record.getCorrectedTotalMs());
+        assertEquals(69L, queue.estimatedWorkMs(0L));
+
+        verify(evaluator).estimateMs(10_000L, 8000L, 2000L);
+        verify(evaluator).estimateMs(10_000L, 5000L, 2000L);
+        verify(evaluator).estimateMs(10_000L, 7000L, 2000L);
+        verifyNoMoreInteractions(evaluator);
+    }
+
+    @Test
+    void confirmedCacheAndCompletedComputeRemovePreprocessingAndLoadingCosts() {
+        useFormula("1000 + 0.069*sum(computeTokens) + 0.0008*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "completed-cost", 50, 10_000L);
+        DispatchedRequest record = new DispatchedRequest(request, 8000L, 1144L);
+        V2TestSupport.dispatch(queue, record);
+
+        reportTask(cacheTask(request.requestId(), true, 2000L, 3000L, TaskPhase.RUNNING));
+        assertEquals(1553L, record.getCorrectedTotalMs());
+        assertEquals(207L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 2000L, 1000L, TaskPhase.RUNNING));
+        assertEquals(69L, queue.estimatedWorkMs(0L));
+
+        assertTrue(queue.removeDispatched(request));
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void actualCacheHitAdjustsWorkInBothDirectionsIncludingZeroHit() {
+        useFormula("100 + sum(computeTokens)");
+        DispatchedRequest record = new DispatchedRequest(request("cache-correction"), 16L, 10L);
+        V2TestSupport.dispatch(queue, record);
+        V2TestSupport.choose(record.request(), endpoint, 8L, 10L);
+
+        reportTask(cacheTask(record.request().requestId(), true, 0L, null, TaskPhase.RUNNING));
+        assertEquals(16L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(record.request().requestId(), false, 0L, null, TaskPhase.PENDING));
+        assertEquals(16L, queue.estimatedWorkMs(0L));
+        assertEquals(WorkView.Phase.ENGINE_QUEUED, record.phase());
+        reportTask(cacheTask(record.request().requestId(), true, 8L, null, TaskPhase.RUNNING));
+        assertEquals(8L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(record.request().requestId(), true, 0L, null, TaskPhase.RUNNING));
+        assertEquals(16L, queue.estimatedWorkMs(0L));
+
+        assertTrue(queue.removeDispatched(record.request()));
+        assertFalse(queue.removeDispatched(record.request()));
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void runningProgressUsesRemainingComputeWithoutCountingCompletedTokensAsCache() {
+        useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "running-progress", 50, 1000L);
+        DispatchedRequest record = new DispatchedRequest(request, 800L, 900L);
+        V2TestSupport.dispatch(queue, record);
+        var firstStep = cacheTask(request.requestId(), true, 200L, 500L, TaskPhase.RUNNING);
+        when(firstStep.completedPrefillTokens()).thenReturn(300L);
+        reportTask(firstStep);
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+        reportTask(firstStep);
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+
+        reportTask(cacheTask(request.requestId(), true, 200L, 200L, TaskPhase.RUNNING));
+        assertEquals(200L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 0L, TaskPhase.RUNNING));
+        assertEquals(200L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 0L, TaskPhase.RUNNING));
+        assertEquals(200L, record.predictedMs());
+        assertEquals(200L, queue.estimatedWorkMs(0L));
+        assertEquals(1, queue.dispatchedCount());
+        assertEquals(1L, queue.inflightCount());
+
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        assertEquals(0, queue.dispatchedCount());
+        assertEquals(0L, queue.inflightCount());
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void initialZeroRemainingTokensFallBackToActualUncachedWork() {
+        useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "initial-zero-progress", 50, 1000L);
+        DispatchedRequest record = new DispatchedRequest(request, 800L, 900L);
+        V2TestSupport.dispatch(queue, record);
+
+        reportTask(cacheTask(request.requestId(), false, 0L, 0L, TaskPhase.PENDING));
+        assertEquals(900L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 0L, TaskPhase.PENDING));
+        assertEquals(800L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 0L, TaskPhase.PENDING));
+        assertEquals(800L, record.predictedMs());
+        assertEquals(800L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void nonPositiveRemainingWorkKeepsPreviousPredictionUntilPositiveUpdateOrFinished() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(16L, 16L, 0L)).thenReturn(100L);
+        when(evaluator.estimateMs(16L, 8L, 0L)).thenReturn(100L);
+        when(evaluator.estimateMs(16L, 12L, 0L)).thenReturn(120L);
+        when(evaluator.estimateMs(16L, 14L, 0L)).thenReturn(98L);
+        Request request = request("non-positive-work");
+        DispatchedRequest record = new DispatchedRequest(request, 16L, 10L);
+        V2TestSupport.dispatch(queue, record);
+
+        reportTask(cacheTask(request.requestId(), true, 0L, 8L, TaskPhase.RUNNING));
+        assertEquals(10L, record.predictedMs());
+        assertEquals(10L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 0L, 4L, TaskPhase.RUNNING));
+        assertEquals(10L, record.predictedMs());
+        assertEquals(10L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 0L, 2L, TaskPhase.RUNNING));
+        assertEquals(2L, record.predictedMs());
+        assertEquals(2L, queue.estimatedWorkMs(0L));
+
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void missingRemainingTokensFallBackToActualUncachedWork() {
+        useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "missing-progress", 50, 1000L);
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 800L, 900L));
+        reportTask(cacheTask(request.requestId(), true, 200L, null, TaskPhase.RUNNING));
+        assertEquals(800L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void remainingTokensAboveActualComputeDoNotInflateWork() {
+        useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "stale-progress", 50, 1000L);
+        DispatchedRequest record = new DispatchedRequest(request, 800L, 900L);
+        V2TestSupport.dispatch(queue, record);
+
+        // 进度仍是旧缓存命中下的整段 prompt，已完成 token 不能为负
+        reportTask(cacheTask(request.requestId(), true, 200L, 1000L, TaskPhase.RUNNING));
+        assertEquals(800L, record.predictedMs());
+        assertEquals(800L, queue.estimatedWorkMs(0L));
+
+        reportTask(cacheTask(request.requestId(), true, 200L, 500L, TaskPhase.RUNNING));
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void workerStatusWirePreservesMissingAndCompletedZeroRemainingTokens() throws Exception {
+        useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "wire-progress", 50, 1000L);
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 800L, 900L));
+        var owner = WorkerStatus.createDiscovered(RoleType.PREFILL, "default", "p1", 8000, 8001, "test");
+        var queues = mock(PrefillQueueRegistry.class);
+        when(queues.find(endpoint)).thenReturn(queue);
+        var events = new EndpointEventHandler(mock(RequestRegistry.class), queues);
+        var task = EngineRpcService.TaskInfoPB.newBuilder()
+                .setRequestIdStr(request.requestId())
+                .setPhase(EngineRpcService.TaskPhase.TASK_PHASE_RUNNING)
+                .setInputLength(1000L)
+                .setPrefixLengthValid(true)
+                .setPrefixLength(200L);
+        var status = EngineRpcService.WorkerStatusPB.newBuilder()
+                .setRole("RoleType.PREFILL")
+                .setAlive(true)
+                .addRunningTaskInfo(task);
+
+        var missing = EngineStatusConverter.convertToStatusObservation(owner,
+                EngineRpcService.WorkerStatusPB.parseFrom(status.build().toByteArray()));
+        assertEquals(null, missing.activeTasks().get(request.requestId()).remainingPrefillTokens());
+        events.onPrefillStatus(endpoint, missing, List.of());
+        assertEquals(800L, queue.estimatedWorkMs(0L));
+
+        status.setRunningTaskInfo(0, task.setRemainingPrefillTokens(500L));
+        var progress = EngineStatusConverter.convertToStatusObservation(owner,
+                EngineRpcService.WorkerStatusPB.parseFrom(status.build().toByteArray()));
+        events.onPrefillStatus(endpoint, progress, List.of());
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+
+        status.setRunningTaskInfo(0, task.setRemainingPrefillTokens(0L));
+        var zeroRemaining = EngineStatusConverter.convertToStatusObservation(owner,
+                EngineRpcService.WorkerStatusPB.parseFrom(status.build().toByteArray()));
+        assertEquals(0L, zeroRemaining.activeTasks().get(request.requestId()).remainingPrefillTokens());
+        events.onPrefillStatus(endpoint, zeroRemaining, List.of());
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+        assertEquals(1L, queue.inflightCount());
+    }
+
+    @Test
+    void invalidCacheHitKeepsCorrectedWorkUntilCacheBecomesValid() {
+        useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "preempted-progress", 50, 1000L);
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 800L, 900L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 500L, TaskPhase.RUNNING));
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+
+        reportTask(cacheTask(request.requestId(), false, 0L, 1000L, TaskPhase.PENDING));
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), false, 0L, 0L, TaskPhase.PENDING));
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 0L, 500L, TaskPhase.RUNNING));
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 500L, TaskPhase.RUNNING));
+        assertEquals(500L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 200L, 200L, TaskPhase.RUNNING));
+        assertEquals(200L, queue.estimatedWorkMs(0L));
+
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of(request.requestId(), TaskPhase.RUNNING));
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+        assertEquals(0L, queue.inflightCount());
+    }
+
+    @Test
+    void unresolvedCacheHitKeepsPredictionAndStillUpdatesTaskStatus() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(16L, 16L, 0L)).thenReturn(116L);
+        when(evaluator.estimateMs(16L, 8L, 0L)).thenReturn(108L);
+        DispatchedRequest record = new DispatchedRequest(request("invalid-cache"), 16L, 10L);
+        V2TestSupport.dispatch(queue, record);
+        V2TestSupport.choose(record.request(), endpoint, 4L, 10L);
+        publish(record.request());
+
+        for (Long remainingTokens : new Long[]{null, 0L, 8L}) {
+            reportTask(cacheTask(record.request().requestId(), false, 8L, remainingTokens, TaskPhase.PENDING));
+            assertEquals(10L, record.predictedMs());
+            assertEquals(10L, queue.estimatedWorkMs(0L));
+            assertTrue(record.seenByEngine());
+            assertFalse(record.statusExpired(System.currentTimeMillis(), 1000L));
+            assertEquals(WorkView.Phase.ENGINE_QUEUED, record.phase());
+            assertEquals(1L, queue.inflightCount());
+        }
+        verifyNoInteractions(predictor, evaluator);
+
+        reportTask(cacheTask(record.request().requestId(), true, 0L, 8L, TaskPhase.RUNNING));
+        assertEquals(8L, record.predictedMs());
+        assertEquals(8L, queue.estimatedWorkMs(0L));
+        assertEquals(WorkView.Phase.ENGINE_RUNNING, record.phase());
+        verify(evaluator).estimateMs(16L, 16L, 0L);
+        verify(evaluator).estimateMs(16L, 8L, 0L);
+        verifyNoMoreInteractions(evaluator);
+    }
+
+    @Test
+    void actualCacheHitChangeReestimatesWorkWithUnchangedRemainingTokens() {
+        useFormula("100 + sum(computeTokens^2) + 2*sum(hitCacheTokens)");
+        Request request = V2TestSupport.request(config, "changed-prefix", 50, 1000L);
+        DispatchedRequest record = new DispatchedRequest(request, 800L, 900L);
+        V2TestSupport.dispatch(queue, record);
+
+        reportTask(cacheTask(request.requestId(), true, 200L, 500L, TaskPhase.RUNNING));
+        assertEquals(640_500L, record.getCorrectedTotalMs());
+        assertEquals(550_000L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 100L, 500L, TaskPhase.RUNNING));
+        assertEquals(810_300L, record.getCorrectedTotalMs());
+        assertEquals(650_000L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 0L, 500L, TaskPhase.RUNNING));
+        assertEquals(1_000_100L, record.getCorrectedTotalMs());
+        assertEquals(750_000L, queue.estimatedWorkMs(0L));
+
+        assertTrue(queue.removeDispatched(request));
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void failedPrefixReestimateDoesNotReusePreviousCorrectedTotal() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(16L, 8L, 8L)).thenReturn(124L);
+        when(evaluator.estimateMs(16L, 4L, 8L)).thenReturn(120L);
+        when(evaluator.estimateMs(16L, 12L, 4L)).thenReturn(-1L, 120L);
+        when(evaluator.estimateMs(16L, 10L, 4L)).thenReturn(118L);
+        DispatchedRequest record = new DispatchedRequest(request("failed-prefix"), 8L, 10L);
+        V2TestSupport.dispatch(queue, record);
+
+        reportTask(cacheTask(record.request().requestId(), true, 8L, 4L, TaskPhase.RUNNING));
+        assertEquals(124L, record.getCorrectedTotalMs());
+        assertEquals(4L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(record.request().requestId(), true, 4L, 4L, TaskPhase.RUNNING));
+        assertEquals(-1L, record.getCorrectedTotalMs());
+        assertEquals(4L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(record.request().requestId(), true, 4L, 2L, TaskPhase.RUNNING));
+        assertEquals(120L, record.getCorrectedTotalMs());
+        assertEquals(2L, queue.estimatedWorkMs(0L));
+
+        verify(evaluator).estimateMs(16L, 8L, 8L);
+        verify(evaluator).estimateMs(16L, 4L, 8L);
+        verify(evaluator, times(2)).estimateMs(16L, 12L, 4L);
+        verify(evaluator).estimateMs(16L, 10L, 4L);
+        verifyNoMoreInteractions(evaluator);
+    }
+
+    @Test
+    void correctionUsesRequestInputLength() {
+        useFormula("sum(computeTokens)");
+        Request request = V2TestSupport.request(config, "engine-input", 50, 1000L);
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 800L, 10L));
+        var task = cacheTask(request.requestId(), true, 200L, null, TaskPhase.RUNNING);
+        when(task.inputLength()).thenReturn(996L);
+        reportTask(task);
+        assertEquals(800L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void actualCacheHitKeepsEngineReportedOneTokenOfCompute() {
+        useFormula("100 + sum(computeTokens)");
+        Request request = request("full-hit");
+        request.ctx().getRequest().setBlockSize(4L);
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 16L, 10L));
+        var task = cacheTask(request.requestId(), true, 15L, null, TaskPhase.RUNNING);
+        reportTask(task);
+        assertEquals(1L, queue.estimatedWorkMs(0L));
+        reportTask(cacheTask(request.requestId(), true, 15L, 0L, TaskPhase.RUNNING));
+        assertEquals(1L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void correctedWorkIsRemovedOnceWhenStatusExpires() {
+        useFormula("100 + sum(computeTokens)");
+        Request request = request("corrected-expiry");
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 16L, 10L));
+        V2TestSupport.choose(request, endpoint, 8L, 10L);
+        publish(request);
+        reportTask(cacheTask(request.requestId(), true, 0L, null, TaskPhase.RUNNING));
+        assertEquals(16L, queue.estimatedWorkMs(0L));
+        queue.removeRequestStatusExpired(System.currentTimeMillis() + 10_000L, 1000L, reporter);
+        queue.removeRequestStatusExpired(System.currentTimeMillis() + 20_000L, 1000L, reporter);
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+        assertEquals(0, queue.dispatchedCount());
+        verify(reporter).reportStatusUpdateTimeout(RoleType.PREFILL, endpoint.ipPort());
+    }
+
+    @Test
+    void failedPredictionKeepsWorkAndDoesNotInterruptStatusUpdates() {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        when(evaluator.estimateMs(16L, 16L, 0L)).thenReturn(-1L);
+        DispatchedRequest record = new DispatchedRequest(request("prediction-failure"), 16L, 10L);
+        V2TestSupport.dispatch(queue, record);
+        V2TestSupport.choose(record.request(), endpoint, 8L, 10L);
+        reportTask(cacheTask(record.request().requestId(), true, 0L, null, TaskPhase.RUNNING));
+        assertEquals(10L, queue.estimatedWorkMs(0L));
+        assertTrue(record.seenByEngine());
+        assertEquals(1L, queue.inflightCount());
+
+        useFormula("100 + sum(computeTokens)");
+        reportTask(cacheTask(record.request().requestId(), true, 0L, 8L, TaskPhase.RUNNING));
+        assertEquals(8L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
+    void cleanupCanRemoveRecordWhilePredictionRunsWithoutRestoringItsWork() throws Exception {
+        PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
+        PrefillTimePredictor.Evaluator evaluator = mock(PrefillTimePredictor.Evaluator.class);
+        when(endpoint.getPredictor()).thenReturn(predictor);
+        when(predictor.evaluator()).thenReturn(evaluator);
+        var predictionStarted = new java.util.concurrent.CountDownLatch(1);
+        var finishPrediction = new java.util.concurrent.CountDownLatch(1);
+        when(evaluator.estimateMs(16L, 16L, 0L)).thenAnswer(call -> {
+            predictionStarted.countDown();
+            assertTrue(finishPrediction.await(2, java.util.concurrent.TimeUnit.SECONDS));
+            return 116L;
+        });
+        DispatchedRequest record = new DispatchedRequest(request("concurrent-correction-cleanup"), 16L, 10L);
+        V2TestSupport.dispatch(queue, record);
+        V2TestSupport.choose(record.request(), endpoint, 8L, 10L);
+        try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
+            var update = executor.submit(
+                    () -> reportTask(cacheTask(record.request().requestId(), true, 0L, null, TaskPhase.RUNNING)));
+            try {
+                assertTrue(predictionStarted.await(2, java.util.concurrent.TimeUnit.SECONDS));
+                assertTrue(queue.removeDispatched(record.request()));
+            } finally {
+                finishPrediction.countDown();
+            }
+            update.get(2, java.util.concurrent.TimeUnit.SECONDS);
+        }
+        assertEquals(0, queue.dispatchedCount());
+        assertEquals(10L, record.predictedMs());
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of());
+        assertEquals(0L, queue.estimatedWorkMs(0L));
+    }
+
+    @Test
     void predictedWorkDoesNotInventDurationForUnknownEngineWork() {
         V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of("other", TaskPhase.RUNNING));
         assertEquals(-1L, queue.estimatedWorkMs(15L));
@@ -516,6 +1012,34 @@ class PrefillQueueTest {
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         queue.addWaiting(request);
         return request;
+    }
+
+    private void useFormula(String expression) {
+        when(endpoint.getPredictor()).thenReturn(new FormulaPredictor(expression));
+    }
+
+    private WorkerStatus.TaskObservation cacheTask(String requestId,
+                                                   boolean valid,
+                                                   long hitTokens,
+                                                   Long remainingTokens,
+                                                   TaskPhase phase) {
+        var task = mock(WorkerStatus.TaskObservation.class);
+        when(task.requestId()).thenReturn(requestId);
+        when(task.phase()).thenReturn(phase);
+        when(task.prefixLength()).thenReturn(hitTokens);
+        when(task.prefixLengthValid()).thenReturn(valid);
+        when(task.remainingPrefillTokens()).thenReturn(remainingTokens);
+        return task;
+    }
+
+    private void reportTask(WorkerStatus.TaskObservation task) {
+        var tasks = Map.of(task.requestId(), task);
+        var engine = new WorkerStatus.EngineObservation(RoleType.PREFILL, null, 1000L, 1000L, tasks, 0.0, 0L, 1L, 1L,
+                0L, 0L, 0L, 0L, 0L);
+        var observation = mock(WorkerStatus.StatusObservation.class);
+        when(observation.engine()).thenReturn(engine);
+        when(observation.finishedTasks()).thenReturn(Map.of());
+        queue.handlePrefillStatus(observation);
     }
 
     private Request request(String requestId) {

@@ -83,7 +83,9 @@ class IncrementalPredictionTest {
         var model = new FormulaPredictor(formula());
         var policy = new BatchTtftEstimator().ttftEstimationRule();
         var full = new PrefillTimePredictor.Evaluator() {
-            public long estimateMs(long t, long h) { return model.estimateMs(t, h); }
+            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+                return model.estimateMs(inputTokens, computeTokens, hitCacheTokens);
+            }
             public double predictBatchMs(PrefillBatchFeatures f) { return model.predictBatchMs(f); }
         };
         var random = new Random(17);
@@ -132,7 +134,9 @@ class IncrementalPredictionTest {
     @Test
     void liveBatchStrategyUsesAppendAndKeepsPreviousPredictionOnOvershoot() {
         var evaluator = new PrefillTimePredictor.Evaluator() {
-            public long estimateMs(long t, long h) { throw new AssertionError("unexpected scalar prediction"); }
+            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
+                throw new AssertionError("unexpected scalar prediction");
+            }
             public double predictBatchMs(PrefillBatchFeatures f) { throw new AssertionError("unexpected full prediction"); }
             public PrefillTimePredictor.BatchPrediction newBatchPrediction() {
                 int[] count = {0};

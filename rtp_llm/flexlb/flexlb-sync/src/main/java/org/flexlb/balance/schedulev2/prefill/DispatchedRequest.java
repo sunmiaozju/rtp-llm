@@ -1,7 +1,11 @@
 package org.flexlb.balance.schedulev2.prefill;
 
+import lombok.Data;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.schedulev2.request.Request;
+import org.flexlb.dao.master.WorkerStatus;
+
+import java.util.Objects;
 
 /**
  * 已从 Prefill 队列交给 Decode 调度、尚未完成 Prefill 的请求跟踪记录。
@@ -11,6 +15,7 @@ import org.flexlb.balance.schedulev2.request.Request;
  * 引擎上报过、后来从活跃列表消失，或上报 Finished 时移除记录。请求失败或取消时也会移除。
  * 请求发布或最近一次引擎上报后超过配置时长，记录和占用也会被清理。
  */
+@Data
 public final class DispatchedRequest {
 
     private final Request request;
@@ -18,7 +23,18 @@ public final class DispatchedRequest {
      * 这个请求在引擎上要新占的 KV token 数（输入 token 数减去命中缓存的部分）。
      */
     private final long kvTokens;
-    private final long predictedMs;
+    /**
+     * 初次预测的 Prefill 工作量；引擎确认缓存命中后，随实际命中或剩余 token 变化更新。
+     */
+    private volatile long predictedMs;
+
+    /**
+     * 按有效实际命中纠正的总耗时；-1 表示尚未计算
+     */
+    private long correctedTotalMs = -1L;
+
+    private volatile WorkerStatus.TaskObservation workerStatus;
+
     /**
      * 最近一次包含该请求的引擎上报时间；未上报时为零。
      */
@@ -43,6 +59,20 @@ public final class DispatchedRequest {
         return predictedMs;
     }
 
+    boolean isWorkLoadChanged(WorkerStatus.TaskObservation newWorkerStatus) {
+        WorkerStatus.TaskObservation oldWorkerStatus = workerStatus;
+        return oldWorkerStatus == null || oldWorkerStatus.prefixLengthValid() != newWorkerStatus.prefixLengthValid()
+                || oldWorkerStatus.prefixLength() != newWorkerStatus.prefixLength()
+                || !Objects.equals(oldWorkerStatus.remainingPrefillTokens(), newWorkerStatus.remainingPrefillTokens());
+    }
+
+    /**
+     * 由 PrefillQueue 在记录锁内更新，与节点累计工作量的差值更新一起完成。
+     */
+    void updatePredictedMs(long predictedMs) {
+        this.predictedMs = predictedMs;
+    }
+
     public WorkView.Phase phase() {
         return phase;
     }
@@ -50,6 +80,10 @@ public final class DispatchedRequest {
     public void updateStatus(WorkView.Phase phase, long nowMs) {
         this.phase = phase;
         lastStatusUpdatedAtMs = nowMs;
+    }
+
+    void updateWorkerStatus(WorkerStatus.TaskObservation workerStatus) {
+        this.workerStatus = workerStatus;
     }
 
     /**

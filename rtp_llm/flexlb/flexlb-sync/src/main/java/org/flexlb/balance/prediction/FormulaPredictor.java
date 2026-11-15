@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Two evaluation modes on its immutable evaluator share the same formula string:
  * <ul>
- *   <li>{@link PrefillTimePredictor.Evaluator#estimateMs(long, long)} — single request:
+ *   <li>{@link PrefillTimePredictor.Evaluator#estimateMs(long, long, long)} — single request:
  *       fills per-request variables and sets {@code batchSize=1}</li>
  *   <li>{@link PrefillTimePredictor.Evaluator#predictBatchMs(PrefillBatchFeatures)}
  *       — batch: aggregates token statistics,
@@ -54,10 +54,9 @@ public class FormulaPredictor
     }
 
     @Override
-    public long estimateMs(long totalTokens, long hitTokens) {
+    public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
         PrefillTimeVariableBindings.EvaluationVariables vars =
-                PrefillTimeVariableBindings.singleRequestVariables(
-                        totalTokens, hitTokens);
+                PrefillTimeVariableBindings.singleRequestVariables(inputTokens, computeTokens, hitCacheTokens);
         return formula.evaluate(vars.topLevelVars(), vars.itemVars());
     }
 
