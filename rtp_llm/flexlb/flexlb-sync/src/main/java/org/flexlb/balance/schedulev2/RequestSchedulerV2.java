@@ -275,7 +275,7 @@ public class RequestSchedulerV2 {
         return requestTable.size();
     }
 
-    @Scheduled(fixedDelay = 1000L)
+    @Scheduled(fixedDelay = 20000L)
     public void reportQueues() {
         List<String> endpoints = prefillRole == null
                 ? List.of()

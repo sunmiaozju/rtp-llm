@@ -168,7 +168,7 @@ public class DefaultBatchDispatcher {
         monitor.register(metricName, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     void reportExecutorMetrics() {
         monitor.report(MetricConstant.DISPATCH_EXECUTOR_ACTIVE_THREADS, dispatchExecutor.getActiveCount());
         monitor.report(MetricConstant.DISPATCH_EXECUTOR_QUEUE_SIZE, dispatchExecutor.getQueue().size());

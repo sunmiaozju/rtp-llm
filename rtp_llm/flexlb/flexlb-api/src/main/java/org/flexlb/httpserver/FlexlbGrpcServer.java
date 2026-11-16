@@ -135,7 +135,7 @@ public class FlexlbGrpcServer {
                 FlexPriorityType.NORMAL);
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     private void reportExecutorMetrics() {
         ThreadPoolExecutor executor = grpcExecutor;
         if (executor == null) {

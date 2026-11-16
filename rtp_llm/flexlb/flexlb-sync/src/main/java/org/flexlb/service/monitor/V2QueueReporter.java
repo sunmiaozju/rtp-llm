@@ -146,7 +146,7 @@ public class V2QueueReporter {
      * 每秒读取一次阶段，过渡中的请求只归属一个队列。已发布请求不计入等待。
      * 空队列继续报零，节点移除后的下一轮补零，避免大盘保留旧值。
      */
-    public synchronized void sample(RequestTable requests, List<String> prefillEndpoints) {
+    public void sample(RequestTable requests, List<String> prefillEndpoints) {
         Map<QueueKey, Long> counts = new HashMap<>();
         Map<QueueKey, Long> oldest = new HashMap<>();
         for (Stage stage : new Stage[]{Stage.MAIN_WAITING, Stage.DECODE_WAITING, Stage.DECODE_RESERVED}) {

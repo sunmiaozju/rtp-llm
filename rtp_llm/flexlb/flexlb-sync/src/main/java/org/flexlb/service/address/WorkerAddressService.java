@@ -74,7 +74,7 @@ public class WorkerAddressService {
         serviceDiscoveryExecutor.shutdown();
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     private void reportExecutorMetrics() {
         try {
             engineHealthReporter.reportThreadPoolInfo(

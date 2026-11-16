@@ -152,7 +152,7 @@ public class RequestSchedulerReporter {
         reportLifecycleFailureCount(stage, 1.0);
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     private void reportLifecycleFailureCounts() {
         reportLifecycleFailureCount("registration", 0.0);
         reportLifecycleFailureCount("terminal_cleanup", 0.0);

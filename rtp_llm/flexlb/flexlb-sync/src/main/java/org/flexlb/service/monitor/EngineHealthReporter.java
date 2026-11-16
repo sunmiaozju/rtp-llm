@@ -271,7 +271,7 @@ public class EngineHealthReporter {
                 role, variance);
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     private void reportEngineMetric() {
         FlexMetricTags tags = FlexMetricTags.of();
         monitor.report(ENGINE_PREFILL_WORKER_NUMBER, tags,
@@ -288,7 +288,7 @@ public class EngineHealthReporter {
         eventLoopGroupMap.forEach(this::reportEventLoopGroup);
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     private void reportWorkerBlockSizes() {
         for (RoleType role : RoleType.values()) {
             reportWorkerBlockSize(role);

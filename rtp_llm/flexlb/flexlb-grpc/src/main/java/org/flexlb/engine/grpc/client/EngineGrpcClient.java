@@ -329,7 +329,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
         return channelFactory.getEventLoopGroup();
     }
 
-    @Scheduled(fixedRate = 2000)
+    @Scheduled(fixedRate = 20000)
     public void reportChannelPoolSize() {
         grpcReporter.reportChannelPoolSize(channelPool.size());
     }

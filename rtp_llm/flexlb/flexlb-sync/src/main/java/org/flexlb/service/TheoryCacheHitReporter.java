@@ -219,7 +219,7 @@ public class TheoryCacheHitReporter {
         return config.getObservability().getCacheHit().getTheoryLog() != null;
     }
 
-    @Scheduled(fixedDelay = 1000L)
+    @Scheduled(fixedDelay = 20000L)
     public void flushTheoryLog() {
         long dropped = droppedReportCount.getAndSet(0L);
         if (dropped > 0L) {

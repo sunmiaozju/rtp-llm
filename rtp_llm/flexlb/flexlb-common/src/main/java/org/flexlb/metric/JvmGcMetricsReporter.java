@@ -101,7 +101,7 @@ public class JvmGcMetricsReporter {
     /**
      * Keeps zero-event collectors visible between pauses; aggregation uses the registered priority.
      */
-    @Scheduled(fixedRate = 1000L)
+    @Scheduled(fixedRate = 20000L)
     public void reportHeartbeat() {
         for (FlexMetricTags tags : collectorTags.values()) {
             monitor.report(JVM_GC_COLLECTION_COUNT, tags, 0.0D);
