@@ -26,6 +26,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -115,6 +116,10 @@ class V2QueueReporterTest {
         reporter.sample(table, List.of());
         depth("decode_waiting", "all", 0);
         depth("decode_reserved", "all", 0);
+        verify(monitor, never()).report(eq(V2QueueReporter.DEPTH),
+                eq(FlexMetricTags.of("queue", "prefill", "endpoint", "p1:8000")), anyDouble());
+        verify(monitor, never()).report(eq(V2QueueReporter.DEPTH),
+                eq(FlexMetricTags.of("queue", "prefill", "endpoint", "p2:8000")), anyDouble());
     }
 
     @Test
@@ -220,6 +225,10 @@ class V2QueueReporterTest {
         reporter.samplePrefillInflight(List.of(), 8);
         verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT, tags, 0.0);
         verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 8.0);
+
+        clearInvocations(monitor);
+        reporter.samplePrefillInflight(List.of(), 8);
+        verify(monitor, never()).report(eq(V2QueueReporter.PREFILL_INFLIGHT), eq(tags), anyDouble());
     }
 
     private Request add(String id) {

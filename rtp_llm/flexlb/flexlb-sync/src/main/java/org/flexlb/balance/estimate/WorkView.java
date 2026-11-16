@@ -30,8 +30,8 @@ public final class WorkView {
 
     public WorkView(long createdAtMs, List<RequestWork> requests, List<BatchWork> batches, long unknownRequestCount) {
         this.createdAtMs = createdAtMs;
-        this.requests = List.copyOf(requests);
-        this.batches = List.copyOf(batches);
+        this.requests = requests;
+        this.batches = batches;
         if (unknownRequestCount < 0L) {
             throw new IllegalArgumentException(
                     "unknownRequestCount must be non-negative");
@@ -133,7 +133,6 @@ public final class WorkView {
                             OptionalLong remainingWorkMs) {
 
         public BatchWork {
-            requestIds = List.copyOf(requestIds);
             if (remainingWorkMs.isPresent()
                     && remainingWorkMs.getAsLong() < 0L) {
                 throw new IllegalArgumentException(

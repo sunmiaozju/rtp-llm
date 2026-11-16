@@ -17,6 +17,7 @@ import org.springframework.stereotype.Component;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -253,7 +254,7 @@ public class EndpointRegistry {
         for (Map.Entry<String, DecodeEndpoint> entry : directory) {
             snapshot.add(entry.getValue().routingViewSnapshot(entry.getKey()));
         }
-        return List.copyOf(snapshot);
+        return snapshot;
     }
 
     /**
@@ -491,10 +492,9 @@ public class EndpointRegistry {
     }
 
     /** Build the exact post-mutation Prefill directory before its CHM write. */
-    private List<PrefillRoutingEntry> prefillDirectoryAfterMutationLocked(
-            List<PrefillRoutingEntry> previous,
-            String address,
-            PrefillEndpoint next) {
+    private List<PrefillRoutingEntry> prefillDirectoryAfterMutationLocked(List<PrefillRoutingEntry> previous,
+                                                                          String address,
+                                                                          PrefillEndpoint next) {
         List<PrefillRoutingEntry> updated = new ArrayList<>(
                 previous.size() + (next == null ? 0 : 1));
         boolean replaced = false;
@@ -511,7 +511,7 @@ public class EndpointRegistry {
         if (!replaced && next != null) {
             updated.add(new PrefillRoutingEntry(address, next));
         }
-        return List.copyOf(updated);
+        return Collections.unmodifiableList(updated);
     }
 
     private List<PrefillRoutingEntry> prefillDirectory(RoleType role) {
@@ -534,10 +534,9 @@ public class EndpointRegistry {
 
     /** Build the exact post-mutation directory before the CHM write. */
     private List<Map.Entry<String, DecodeEndpoint>>
-            decodeDirectoryAfterMutationLocked(
-            List<Map.Entry<String, DecodeEndpoint>> previous,
-            String address,
-            DecodeEndpoint next) {
+            decodeDirectoryAfterMutationLocked(List<Map.Entry<String, DecodeEndpoint>> previous,
+                                               String address,
+                                               DecodeEndpoint next) {
         if (registryPhase != RegistryPhase.OPEN) {
             return List.of();
         }
@@ -551,7 +550,7 @@ public class EndpointRegistry {
         if (next != null) {
             entries.add(Map.entry(address, next));
         }
-        return List.copyOf(entries);
+        return Collections.unmodifiableList(entries);
     }
 
     private static void closeCandidate(

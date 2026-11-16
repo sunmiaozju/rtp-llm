@@ -31,7 +31,7 @@ public final class WaitingQueueView {
                 for (PrefillActiveIndex.Entry entry : entries) {
                     requests.add(entry.request);
                 }
-                items = List.copyOf(requests);
+                items = requests;
             }
             return items;
         }
@@ -48,7 +48,7 @@ public final class WaitingQueueView {
                 for (PrefillActiveIndex.Entry entry : entries) {
                     resultItems.add(entry.plannerItem());
                 }
-                plannerItems = List.copyOf(resultItems);
+                plannerItems = resultItems;
             }
             return plannerItems;
         }

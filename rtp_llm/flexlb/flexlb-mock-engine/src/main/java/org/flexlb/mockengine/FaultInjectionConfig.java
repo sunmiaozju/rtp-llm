@@ -3,7 +3,8 @@ package org.flexlb.mockengine;
 import java.util.List;
 
 /**
- * Immutable fault-injection configuration for the Java mock engine.
+ * Fault-injection configuration for the Java mock engine.
+ * Supplied lists are retained by reference and must not be modified after configuration publication.
  *
  * <p>Controls how the mock gRPC service responds to requests in various failure
  * scenarios. Modeled after {@code MockWorkerBehavior} with a fluent builder.
@@ -430,7 +431,7 @@ public final class FaultInjectionConfig {
         }
 
         public Builder statusSuppressRids(List<Long> rids) {
-            this.statusSuppressRids = rids == null ? List.of() : List.copyOf(rids);
+            this.statusSuppressRids = rids == null ? List.of() : rids;
             return this;
         }
 
@@ -440,7 +441,7 @@ public final class FaultInjectionConfig {
         }
 
         public Builder statusFakeTasks(List<StatusFakeTask> fakeTasks) {
-            this.statusFakeTasks = fakeTasks == null ? List.of() : List.copyOf(fakeTasks);
+            this.statusFakeTasks = fakeTasks == null ? List.of() : fakeTasks;
             return this;
         }
 

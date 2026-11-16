@@ -32,7 +32,7 @@ public final class ArithmeticFormula {
                 COMPILED.remove(COMPILED.keySet().iterator().next());
             }
         }
-        this.referencedVariables = Set.copyOf(referencedVariables);
+        this.referencedVariables = referencedVariables;
     }
 
     /** Parse a scalar expression; batch aggregates are not available. */
@@ -43,11 +43,14 @@ public final class ArithmeticFormula {
     /**
      * Parse with explicit variable bindings and aggregate policy.
      * Variables in {@code aggregateExcludedVariables} may only appear outside {@code sum()}.
+     * Bindings and aggregate policy must not be modified during parsing.
      *
      * @throws IllegalArgumentException for malformed expressions, unknown names, or invalid variable indices.
      */
-    public static ArithmeticFormula parse(String expression, Map<String, Integer> variables,
-                                          Set<String> aggregateExcludedVariables, boolean allowAggregates) {
+    public static ArithmeticFormula parse(String expression,
+                                          Map<String, Integer> variables,
+                                          Set<String> aggregateExcludedVariables,
+                                          boolean allowAggregates) {
         if (expression == null) {
             throw new IllegalArgumentException("Formula expression is required");
         }

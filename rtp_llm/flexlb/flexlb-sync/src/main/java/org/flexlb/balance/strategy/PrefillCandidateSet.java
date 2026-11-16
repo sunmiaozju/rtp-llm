@@ -28,7 +28,7 @@ final class PrefillCandidateSet {
     void reset(int expectedCapacity) {
         Arrays.fill(endpointAddresses, 0, size, null);
         Arrays.fill(endpoints, 0, size, null);
-        ensureCapacity(expectedCapacity);
+        ensureCapacityForReset(expectedCapacity);
         size = 0;
         minimumTtftRank = Long.MAX_VALUE;
         hasKnownTtft = false;
@@ -47,7 +47,6 @@ final class PrefillCandidateSet {
             throw new IllegalStateException("Prefill estimate cannot be scored: "
                     + candidate.state() + " " + candidate.detail());
         }
-        ensureCapacity(size + 1);
         endpointAddresses[size] = address;
         endpoints[size] = endpoint;
         estimatedTtftMs[size] = candidate.estimatedTtftMsValue();
@@ -82,19 +81,19 @@ final class PrefillCandidateSet {
     long ownershipVersion(int index) { return ownershipVersions[index]; }
     int size() { return size; }
 
-    private void ensureCapacity(int expectedCapacity) {
+    private void ensureCapacityForReset(int expectedCapacity) {
         if (endpoints.length >= expectedCapacity) {
             return;
         }
         int capacity = Math.max(expectedCapacity,
                 Math.max(INITIAL_CAPACITY, endpoints.length << 1));
-        endpointAddresses = Arrays.copyOf(endpointAddresses, capacity);
-        endpoints = Arrays.copyOf(endpoints, capacity);
-        estimatedTtftMs = Arrays.copyOf(estimatedTtftMs, capacity);
-        incomingPrefillMs = Arrays.copyOf(incomingPrefillMs, capacity);
-        cacheHitTokens = Arrays.copyOf(cacheHitTokens, capacity);
-        routingCacheMatchTokens = Arrays.copyOf(routingCacheMatchTokens, capacity);
-        ownershipVersions = Arrays.copyOf(ownershipVersions, capacity);
+        endpointAddresses = new String[capacity];
+        endpoints = new PrefillEndpoint[capacity];
+        estimatedTtftMs = new long[capacity];
+        incomingPrefillMs = new long[capacity];
+        cacheHitTokens = new long[capacity];
+        routingCacheMatchTokens = new long[capacity];
+        ownershipVersions = new long[capacity];
     }
 
 }

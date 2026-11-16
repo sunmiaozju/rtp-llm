@@ -53,12 +53,11 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     }
 
     @Override
-    public List<WorkerStatus> getWorkerStatuses(RoleType role, String group) {
+    public Collection<WorkerStatus> getWorkerStatuses(RoleType role, String group) {
         if (role == null) {
             return List.of();
         }
-        List<WorkerStatus> statuses = List.copyOf(
-                getStatusBy(role).values());
+        Collection<WorkerStatus> statuses = getStatusBy(role).values();
         if (group == null) {
             return statuses;
         }
@@ -290,7 +289,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
                 matching.add(entry);
             }
         }
-        return List.copyOf(matching);
+        return matching;
     }
 
     /**
@@ -329,7 +328,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
                 matching.add(snapshot);
             }
         }
-        return List.copyOf(matching);
+        return matching;
     }
 
     /**

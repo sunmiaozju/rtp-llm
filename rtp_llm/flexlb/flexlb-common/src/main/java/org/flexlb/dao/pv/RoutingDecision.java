@@ -26,11 +26,6 @@ public record RoutingDecision(RoleType role,
                               Map<String, Integer> rejections,
                               List<Candidate> candidates,
                               PrefillPolicy prefillPolicy) {
-    public RoutingDecision {
-        rejections = Map.copyOf(rejections);
-        candidates = List.copyOf(candidates);
-    }
-
     @JsonProperty("decisionTime")
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public String getDecisionTime() {

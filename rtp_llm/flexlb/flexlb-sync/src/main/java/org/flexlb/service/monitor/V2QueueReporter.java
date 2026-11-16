@@ -177,7 +177,8 @@ public class V2QueueReporter {
             report(DEPTH, tags, counts.getOrDefault(key, 0L));
             report(OLDEST, tags, oldest.getOrDefault(key, 0L));
         }
-        previousQueues = Set.copyOf(counts.keySet());
+        keys.retainAll(counts.keySet());
+        previousQueues = keys;
     }
 
     /**
@@ -198,7 +199,7 @@ public class V2QueueReporter {
             }
         }
         report(PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), limit);
-        previousPrefillEndpoints = Set.copyOf(endpoints);
+        previousPrefillEndpoints = endpoints;
     }
 
     public static String queueName(Stage stage) {

@@ -209,6 +209,6 @@ public class VitCacheDirectory {
                     snapshot == null ? null : snapshot.instance(),
                     snapshot == null ? Set.of() : snapshot.keys(), hashHits, gpuHits + cpuHits, gpuHits));
         }
-        return Map.copyOf(matches);
+        return matches;
     }
 }

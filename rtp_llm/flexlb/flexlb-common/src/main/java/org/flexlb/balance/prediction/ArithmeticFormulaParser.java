@@ -32,8 +32,8 @@ final class ArithmeticFormulaParser {
                             Set<String> aggregateExcludedVariables,
                             boolean allowAggregates) {
         this.input = input;
-        this.variables = Map.copyOf(variables);
-        this.aggregateExcludedVariables = Set.copyOf(aggregateExcludedVariables);
+        this.variables = variables;
+        this.aggregateExcludedVariables = aggregateExcludedVariables;
         this.allowAggregates = allowAggregates;
         int count = 0;
         for (int index : this.variables.values()) {
@@ -52,7 +52,7 @@ final class ArithmeticFormulaParser {
     }
 
     Set<String> referencedVariables() {
-        return Set.copyOf(referencedVariables);
+        return referencedVariables;
     }
 
     // expression → term (('+' | '-') term)*

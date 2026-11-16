@@ -43,7 +43,7 @@ public class JvmGcMetricsReporter {
 
     JvmGcMetricsReporter(FlexMonitor monitor, List<GarbageCollectorMXBean> collectors) {
         this.monitor = monitor;
-        this.collectors = List.copyOf(collectors);
+        this.collectors = collectors;
     }
 
     @PostConstruct

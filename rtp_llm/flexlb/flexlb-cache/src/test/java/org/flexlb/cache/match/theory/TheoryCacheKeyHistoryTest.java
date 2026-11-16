@@ -11,11 +11,13 @@ import org.mockito.ArgumentCaptor;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -77,6 +79,30 @@ class TheoryCacheKeyHistoryTest {
         assertEquals(0L, window.record(List.of(0L)).getRequestHitOccurrences());
         assertEquals(1L, window.record(List.of(20L)).getRequestHitOccurrences());
         verifyNoInteractions(secondWorker);
+    }
+
+    @Test
+    void should_keep_captured_worker_count_when_live_workers_are_removed() {
+        ConfigService configService = mock(ConfigService.class);
+        when(configService.loadBalanceConfig()).thenReturn(new FlexlbConfig());
+        WorkerStatusProvider provider = mock(WorkerStatusProvider.class);
+        WorkerStatus worker = mock(WorkerStatus.class);
+        WorkerStatus.EngineObservation capacity = mock(WorkerStatus.EngineObservation.class);
+        when(capacity.totalKvCacheTokens()).thenReturn(100L);
+        when(capacity.blockSize()).thenReturn(100L);
+        var liveWorkers = new ConcurrentHashMap<String, WorkerStatus>();
+        liveWorkers.put("10.0.0.1:8080@0", worker);
+        when(provider.getWorkerStatuses(RoleType.PREFILL, null)).thenReturn(liveWorkers.values());
+        when(worker.committedEngineObservation()).thenAnswer(call -> {
+            liveWorkers.clear();
+            return capacity;
+        });
+        TheoryCacheKeyHistory history = new TheoryCacheKeyHistory(configService, provider);
+
+        RecentCacheKeyWindow.Snapshot snapshot = history.record(List.of(11L));
+
+        assertNotNull(snapshot);
+        assertEquals(10L, snapshot.getPoolCapacityKeys());
     }
 
     private static TheoryCacheKeyHistory historyWithWindow(long durationMs, long maxKeys, LongSupplier clock)

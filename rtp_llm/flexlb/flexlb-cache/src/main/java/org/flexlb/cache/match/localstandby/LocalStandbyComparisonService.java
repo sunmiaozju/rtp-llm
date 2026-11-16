@@ -170,7 +170,7 @@ public class LocalStandbyComparisonService {
     private record StandbyPrediction(Map<String, HostCacheMatch> matches, long blockSize) {
 
         private StandbyPrediction {
-            matches = matches == null ? Collections.emptyMap() : Map.copyOf(matches);
+            matches = matches == null ? Collections.emptyMap() : matches;
         }
     }
 }

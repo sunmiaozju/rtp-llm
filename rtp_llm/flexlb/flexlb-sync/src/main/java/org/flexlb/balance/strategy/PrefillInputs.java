@@ -12,10 +12,6 @@ public record PrefillInputs(CacheMatchResult cacheMatch,
         implements
             AutoCloseable {
 
-    public PrefillInputs {
-        candidates = List.copyOf(candidates);
-    }
-
     @Override
     public void close() {
         // 只有计算材料，不需要归还节点资源。

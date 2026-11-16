@@ -260,7 +260,7 @@ public class RequestRegistry {
     public List<RequestSlot> snapshotSlots() {
         List<RequestSlot> result = new ArrayList<>(requestSlots.values());
         result.addAll(encoderRequestSlots.values());
-        return List.copyOf(result);
+        return result;
     }
 
     public boolean removeExactTerminalRecord(
@@ -661,7 +661,7 @@ public class RequestRegistry {
             return createdOrder != 0
                     ? createdOrder : left.requestId().compareTo(right.requestId());
         });
-        return List.copyOf(snapshots);
+        return snapshots;
     }
 
     public RequestState getRequestState(String requestId,

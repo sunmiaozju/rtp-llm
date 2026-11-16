@@ -196,7 +196,7 @@ public final class RequestScheduler {
             List<RequestState> states = new ArrayList<>(requestRegistry.snapshotActiveRequests());
             states.addAll(schedulerV2.snapshotActiveRequests());
             states.sort(Comparator.comparingLong(RequestState::createdAtMs).thenComparing(RequestState::requestId));
-            return List.copyOf(states);
+            return states;
         }
         return requestRegistry.snapshotActiveRequests();
     }

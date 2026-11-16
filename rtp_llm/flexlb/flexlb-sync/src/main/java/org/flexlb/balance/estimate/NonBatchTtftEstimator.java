@@ -147,14 +147,12 @@ public final class NonBatchTtftEstimator implements PrefillTtftEstimator {
             private long[] offsets = new long[0];
             private int computedThrough;
 
-            private void reset(
-                    GroupPlanner.Plan<GroupPlanner.Item> exactPlan,
-                    PrefillTtftEstimate.Predictions exactPredictions) {
+            private void reset(GroupPlanner.Plan<GroupPlanner.Item> exactPlan,
+                               PrefillTtftEstimate.Predictions exactPredictions) {
                 plan = exactPlan;
                 predictions = exactPredictions;
                 if (offsets.length < exactPlan.items().size()) {
-                    offsets = java.util.Arrays.copyOf(
-                            offsets, exactPlan.items().size());
+                    offsets = new long[exactPlan.items().size()];
                 }
                 computedThrough = -1;
             }

@@ -6,6 +6,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +34,19 @@ class ArithmeticFormulaTest {
         assertEquals(0.75, formula.evaluateAsDouble(new double[]{8, 0.5, 4}, null));
         assertTrue(formula.referencesVariable("running_size"));
         assertFalse(formula.referencesVariable("running"));
+    }
+
+    @Test
+    void parsedFormulaDoesNotRetainCallerBindingsOrAggregatePolicy() {
+        Map<String, Integer> variables = new HashMap<>(Map.of("x", 0));
+        Set<String> excludedVariables = new HashSet<>();
+        ArithmeticFormula formula = ArithmeticFormula.parse("sum(x)", variables, excludedVariables, true);
+
+        variables.clear();
+        excludedVariables.add("x");
+
+        assertTrue(formula.referencesVariable("x"));
+        assertEquals(5.0, formula.evaluateAsDouble(new double[]{0}, List.of(new double[]{2}, new double[]{3})));
     }
 
     @Test

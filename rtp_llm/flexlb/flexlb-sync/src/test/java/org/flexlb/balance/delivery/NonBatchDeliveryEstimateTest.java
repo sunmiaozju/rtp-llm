@@ -65,6 +65,24 @@ class NonBatchDeliveryEstimateTest {
         }
 
         @Test
+        void resetRecomputesOffsetsForLargerAndSmallerPlans() {
+            var initial =
+                    rule.service(plan(List.of(item(1L, 1_000L)), OptionalDouble.empty()), new CountingPredictions());
+            assertEquals(1_000L, initial.totalDurationMs());
+
+            var larger =
+                    rule.service(plan(List.of(item(2L, 10L), item(3L, 20L), item(4L, 30L)), OptionalDouble.empty()),
+                            new CountingPredictions());
+            assertEquals(60L, larger.totalDurationMs());
+            assertEquals(10L, larger.completionOffsetMs(0));
+
+            CountingPredictions smallerPredictions = new CountingPredictions();
+            var smaller = rule.service(plan(List.of(item(5L, 7L)), OptionalDouble.empty()), smallerPredictions);
+            assertEquals(7L, smaller.totalDurationMs());
+            assertEquals(1, smallerPredictions.itemCalls(5L));
+        }
+
+        @Test
         void probePrefixDoesNotEvaluateTheSuffix() {
             List<GroupPlanner.Item> items =
                     List.of(item(1L, 100L), item(2L, 200L), item(3L, 50L));
@@ -149,6 +167,26 @@ class NonBatchDeliveryEstimateTest {
             // offset(2) = batchDurationMs([item1,item2,item3]) = 100*3 = 300
             assertEquals(300L, svc.completionOffsetMs(2));
             assertEquals(300L, svc.totalDurationMs());
+        }
+
+        @Test
+        void resetRecomputesOffsetsForLargerAndSmallerPlans() {
+            var initial =
+                    rule.service(plan(List.of(item(1L, 1_000L)), OptionalDouble.empty()), new CountingPredictions());
+            assertEquals(100L, initial.totalDurationMs());
+
+            CountingPredictions largerPredictions = new CountingPredictions();
+            var larger =
+                    rule.service(plan(List.of(item(2L, 10L), item(3L, 20L), item(4L, 30L)), OptionalDouble.empty()),
+                            largerPredictions);
+            assertEquals(300L, larger.totalDurationMs());
+            assertEquals(100L, larger.completionOffsetMs(0));
+            assertEquals(2, largerPredictions.batchDurationCalls());
+
+            CountingPredictions smallerPredictions = new CountingPredictions();
+            var smaller = rule.service(plan(List.of(item(5L, 7L)), OptionalDouble.empty()), smallerPredictions);
+            assertEquals(100L, smaller.totalDurationMs());
+            assertEquals(1, smallerPredictions.batchDurationCalls());
         }
 
         @Test

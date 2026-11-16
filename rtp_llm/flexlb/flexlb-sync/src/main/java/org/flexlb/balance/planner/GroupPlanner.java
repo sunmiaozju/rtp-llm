@@ -138,7 +138,7 @@ public final class GroupPlanner {
             OptionalDouble selectedPredictionMs) {
 
         public Selection {
-            items = items == null ? List.of() : List.copyOf(items);
+            items = items == null ? List.of() : items;
             validateSelectedPrediction(items, selectedPredictionMs);
         }
     }

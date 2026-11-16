@@ -106,8 +106,6 @@ class PrefillActiveIndexTest {
         }
         assertSame(old.plannerItems().getFirst(), current.plannerItems().getFirst());
         verify(first, times(1)).seqLen();
-        assertThrows(UnsupportedOperationException.class, () -> current.items().clear());
-        assertThrows(UnsupportedOperationException.class, () -> current.plannerItems().clear());
     }
 
     @Test

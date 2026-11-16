@@ -447,13 +447,12 @@ public final class BatchDeliveryStrategy implements DeliveryStrategy {
             return failed(rollbackAdmission(failure));
         }
 
-        private synchronized void select(
-                List<ScheduledRequest> exactItems,
-                long exactPredictionMs,
-                PrefillTimePredictor.Evaluator exactEvaluator,
-                BlockedRequest exactBlocked) {
+        private synchronized void select(List<ScheduledRequest> exactItems,
+                                         long exactPredictionMs,
+                                         PrefillTimePredictor.Evaluator exactEvaluator,
+                                         BlockedRequest exactBlocked) {
             requirePrepared("select");
-            items = List.copyOf(exactItems);
+            items = exactItems;
             predictedMs = exactPredictionMs;
             evaluator = exactEvaluator;
             blocked = exactBlocked;

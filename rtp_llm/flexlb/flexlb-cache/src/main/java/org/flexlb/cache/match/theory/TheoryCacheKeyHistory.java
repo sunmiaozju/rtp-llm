@@ -8,7 +8,7 @@ import org.flexlb.dao.master.WorkerStatusProvider;
 import org.flexlb.dao.route.RoleType;
 import org.springframework.stereotype.Component;
 
-import java.util.Collection;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.OptionalLong;
 
@@ -54,11 +54,12 @@ public class TheoryCacheKeyHistory {
     }
 
     private OptionalLong estimateHistoryCapacity(WindowSettings settings) {
-        Collection<WorkerStatus> prefillWorkers = workerStatusProvider.getWorkerStatuses(RoleType.PREFILL, null);
+        List<WorkerStatus> prefillWorkers =
+                new ArrayList<>(workerStatusProvider.getWorkerStatuses(RoleType.PREFILL, null));
         if (prefillWorkers.isEmpty()) {
             return OptionalLong.empty();
         }
-        WorkerStatus representativePrefillWorker = prefillWorkers.iterator().next();
+        WorkerStatus representativePrefillWorker = prefillWorkers.getFirst();
         WorkerStatus.EngineObservation prefillCapacitySnapshot = representativePrefillWorker.committedEngineObservation();
         if (prefillCapacitySnapshot.totalKvCacheTokens() <= 0L || prefillCapacitySnapshot.blockSize() <= 0L) {
             return OptionalLong.empty();

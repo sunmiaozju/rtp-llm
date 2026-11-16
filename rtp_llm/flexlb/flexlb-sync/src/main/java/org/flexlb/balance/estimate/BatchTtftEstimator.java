@@ -201,18 +201,16 @@ public final class BatchTtftEstimator implements PrefillTtftEstimator {
             private long[] completionOffsets = new long[0];
             private boolean[] computed = new boolean[0];
 
-            private void reset(
-                    GroupPlanner.Plan<GroupPlanner.Item> exactPlan,
-                    PrefillTtftEstimate.Predictions exactPredictions,
-                    PrefillTtftEstimate.GroupPlanning exactPlanning) {
+            private void reset(GroupPlanner.Plan<GroupPlanner.Item> exactPlan,
+                               PrefillTtftEstimate.Predictions exactPredictions,
+                               PrefillTtftEstimate.GroupPlanning exactPlanning) {
                 plan = exactPlan;
                 predictions = exactPredictions;
                 planning = exactPlanning;
                 int size = exactPlan.items().size();
                 if (completionOffsets.length < size) {
-                    completionOffsets = java.util.Arrays.copyOf(
-                            completionOffsets, size);
-                    computed = java.util.Arrays.copyOf(computed, size);
+                    completionOffsets = new long[size];
+                    computed = new boolean[size];
                 }
                 java.util.Arrays.fill(computed, 0, size, false);
             }

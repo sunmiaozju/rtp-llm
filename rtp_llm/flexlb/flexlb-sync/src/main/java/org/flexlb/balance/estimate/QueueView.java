@@ -20,7 +20,6 @@ public record QueueView(long createdAtMs,
                         AdmissionBlock admissionBlock) {
 
     public QueueView {
-        activeItems = List.copyOf(activeItems);
         if (admissionBlock != null) {
             if (activeItems.isEmpty()) {
                 throw new IllegalArgumentException(

@@ -25,10 +25,9 @@ public final class PrefillActiveTasks {
         for (WorkerStatus.TaskObservation task : workerStatus.runningTaskList().values()) {
             workerActiveRequestIds.add(task.requestId());
         }
-        Set<String> immutableWorkerActiveRequestIds = Set.copyOf(workerActiveRequestIds);
         long nowMs = System.currentTimeMillis();
         capacitySnapshot.updateAndGet(old -> new PrefillCapacitySnapshot(workerStatus, old.localPublishReservations(),
-                immutableWorkerActiveRequestIds, nowMs));
+                workerActiveRequestIds, nowMs));
     }
 
     public long inflightCount() {
@@ -52,9 +51,8 @@ public final class PrefillActiveTasks {
             }
             Map<String, DispatchedRequest> localPublishReservations = new HashMap<>(old.localPublishReservations());
             localPublishReservations.put(id, record);
-            if (capacitySnapshot.compareAndSet(old,
-                    new PrefillCapacitySnapshot(old.workerStatus(), Map.copyOf(localPublishReservations),
-                            old.workerActiveRequestIds(), old.workerStatusUpdatedAtMs()))) {
+            if (capacitySnapshot.compareAndSet(old, new PrefillCapacitySnapshot(old.workerStatus(),
+                    localPublishReservations, old.workerActiveRequestIds(), old.workerStatusUpdatedAtMs()))) {
                 return null;
             }
         }
@@ -89,11 +87,9 @@ public final class PrefillActiveTasks {
             if (expired && nowMs - old.workerStatusUpdatedAtMs() >= statusTimeoutMs) {
                 workerActiveRequestIds = new HashSet<>(workerActiveRequestIds);
                 workerActiveRequestIds.remove(requestId);
-                workerActiveRequestIds = Set.copyOf(workerActiveRequestIds);
             }
-            if (capacitySnapshot.compareAndSet(old,
-                    new PrefillCapacitySnapshot(old.workerStatus(), Map.copyOf(localPublishReservations),
-                            workerActiveRequestIds, old.workerStatusUpdatedAtMs()))) {
+            if (capacitySnapshot.compareAndSet(old, new PrefillCapacitySnapshot(old.workerStatus(),
+                    localPublishReservations, workerActiveRequestIds, old.workerStatusUpdatedAtMs()))) {
                 return;
             }
         }

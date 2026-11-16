@@ -107,7 +107,7 @@ public class LocalStandbyCacheMatchProvider implements CacheMatchProvider {
                 || selectedWorkers == null || selectedWorkers.isEmpty()) {
             return;
         }
-        List<Long> blockCacheKeys = List.copyOf(request.getBlockCacheKeys());
+        List<Long> blockCacheKeys = request.getBlockCacheKeys();
         List<ServerStatus> workers = new ArrayList<>(selectedWorkers);
         try {
             CompletableFuture.runAsync(

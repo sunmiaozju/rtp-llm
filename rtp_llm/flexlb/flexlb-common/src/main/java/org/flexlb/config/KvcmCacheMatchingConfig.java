@@ -6,6 +6,9 @@ import lombok.Setter;
 
 import java.util.List;
 
+/**
+ * Supplied lists are retained by reference and must not be modified after configuration publication.
+ */
 @Getter
 @Setter
 public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permits LocalStandbyCacheMatchingConfig {
@@ -60,10 +63,10 @@ public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permi
     }
 
     public void setMedium(List<String> medium) {
-        this.medium = medium == null ? List.of() : List.copyOf(medium);
+        this.medium = medium == null ? List.of() : medium;
     }
 
     public void setBackendTypes(List<BackendType> backendTypes) {
-        this.backendTypes = backendTypes == null ? List.of() : List.copyOf(backendTypes);
+        this.backendTypes = backendTypes == null ? List.of() : backendTypes;
     }
 }

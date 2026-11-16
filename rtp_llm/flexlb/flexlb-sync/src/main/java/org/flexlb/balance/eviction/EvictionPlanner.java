@@ -209,7 +209,7 @@ public final class EvictionPlanner {
             return DecodeVictimSet.fail("insufficient_lower_priority_candidates");
         }
         candidates.sort(DECODE_SLOT_ORDER);
-        List<DecodeRequestView> victims = candidates.subList(0, (int) deficit);
+        List<DecodeRequestView> victims = new ArrayList<>(candidates.subList(0, (int) deficit));
         long cost = 0L;
         CapacityRelease release = CapacityRelease.NONE;
         PriorityHarmProfile.Builder harmProfile = PriorityHarmProfile.builder();

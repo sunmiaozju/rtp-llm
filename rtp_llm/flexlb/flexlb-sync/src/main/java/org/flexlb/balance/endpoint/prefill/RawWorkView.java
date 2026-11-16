@@ -22,8 +22,8 @@ public final class RawWorkView {
                        List<WorkView.BatchWork> batches,
                        long unknownRequestCount) {
         this.createdAtMs = createdAtMs;
-        this.requests = List.copyOf(requests);
-        this.batches = List.copyOf(batches);
+        this.requests = requests;
+        this.batches = batches;
         this.unknownRequestCount = unknownRequestCount;
     }
 

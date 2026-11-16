@@ -2,8 +2,12 @@ package org.flexlb.mockengine;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FaultInjectionConfigTest {
@@ -21,6 +25,29 @@ class FaultInjectionConfigTest {
         assertEquals(0, config.getKvPressureTokens());
         assertEquals(0, config.getQueueDepthLimit());
         assertEquals(0, config.getCrashAfterNRequests());
+    }
+
+    @Test
+    void retainsSuppliedStatusListsThroughToBuilder() {
+        List<Long> requestIds = new ArrayList<>(List.of(1L));
+        List<FaultInjectionConfig.StatusFakeTask> tasks = new ArrayList<>();
+        FaultInjectionConfig config =
+                FaultInjectionConfig.builder().statusSuppressRids(requestIds).statusFakeTasks(tasks).build();
+
+        assertSame(requestIds, config.getStatusSuppressRids());
+        assertSame(tasks, config.getStatusFakeTasks());
+        FaultInjectionConfig rebuilt = config.toBuilder().build();
+        assertSame(requestIds, rebuilt.getStatusSuppressRids());
+        assertSame(tasks, rebuilt.getStatusFakeTasks());
+    }
+
+    @Test
+    void normalizesNullStatusLists() {
+        FaultInjectionConfig config =
+                FaultInjectionConfig.builder().statusSuppressRids(null).statusFakeTasks(null).build();
+
+        assertEquals(List.of(), config.getStatusSuppressRids());
+        assertEquals(List.of(), config.getStatusFakeTasks());
     }
 
     @Test

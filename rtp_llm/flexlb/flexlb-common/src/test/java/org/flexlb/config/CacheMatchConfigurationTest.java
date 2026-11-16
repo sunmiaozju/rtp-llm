@@ -5,6 +5,7 @@ import org.flexlb.dao.route.ServiceRoute;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -74,6 +75,24 @@ class CacheMatchConfigurationTest {
 
         assertTrue(configuration.isLocalStandbyEnabled());
         assertTrue(configuration.isAutoSwitchEnabled());
+    }
+
+    @Test
+    void retainsSuppliedKvcmListsAndNormalizesNullLists() {
+        KvcmCacheMatchingConfig config = new KvcmCacheMatchingConfig();
+        List<String> medium = new ArrayList<>(List.of("kvs"));
+        List<KvcmCacheMatchingConfig.BackendType> backendTypes =
+                new ArrayList<>(List.of(KvcmCacheMatchingConfig.BackendType.ST_EVENT_REPORT_L2));
+        config.setMedium(medium);
+        config.setBackendTypes(backendTypes);
+
+        assertSame(medium, config.getMedium());
+        assertSame(backendTypes, config.getBackendTypes());
+
+        config.setMedium(null);
+        config.setBackendTypes(null);
+        assertEquals(List.of(), config.getMedium());
+        assertEquals(List.of(), config.getBackendTypes());
     }
 
     @Test

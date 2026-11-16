@@ -40,14 +40,8 @@ public record DecodeEndpointSnapshot(DecodeEndpoint endpoint,
                 running.add(task);
             }
         }
-        return new DecodeEndpointSnapshot(
-                endpoint,
-                endpoint.ipPort(),
-                policy,
-                routing.placementUsage(),
-                List.copyOf(reserved),
-                List.copyOf(accepted),
-                List.copyOf(running));
+        return new DecodeEndpointSnapshot(endpoint, endpoint.ipPort(), policy, routing.placementUsage(), reserved,
+                accepted, running);
     }
 
 }

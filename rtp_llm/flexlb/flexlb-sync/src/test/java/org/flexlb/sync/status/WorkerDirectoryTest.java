@@ -419,6 +419,18 @@ class WorkerDirectoryTest {
     }
 
     @Test
+    void worker_status_provider_without_group_returns_live_view() {
+        var statuses = workerDirectory.getWorkerStatuses(RoleType.VIT, null);
+        assertTrue(statuses.isEmpty());
+
+        WorkerStatus status = status(RoleType.VIT, "group", 8080);
+        discover(status);
+
+        assertEquals(1, statuses.size());
+        assertTrue(statuses.contains(status));
+    }
+
+    @Test
     void worker_status_provider_returns_discovered_statuses_by_role_and_group() {
         WorkerStatus matching = status(RoleType.PREFILL, "group1", 8301);
         WorkerStatus filtered = status(RoleType.PREFILL, "group2", 8302);

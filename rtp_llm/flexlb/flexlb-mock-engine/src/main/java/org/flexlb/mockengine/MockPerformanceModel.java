@@ -329,12 +329,9 @@ final class MockPerformanceModel {
                     + "': decode.reserve_step must be >= 0 (got " + decodeReserveStep + ")");
         }
         double jitterPct = performance.path("jitter_pct").asDouble(0.0);
-        return new MockPerformanceModel(blockSize, sleepScale, prefillScale,
-                prefillMinMs, prefillFixedMs, maxWaitingPrefillBatches, directBatchSizeMax,
-                maxBatchTokens, maxBatchRequests, formula,
-                List.copyOf(points), stepBaseMs, stepPerRunningMs, tokensPerStep,
-                decodeReserveStep,
-                decode.path("scale").asDouble(1.0),
+        return new MockPerformanceModel(blockSize, sleepScale, prefillScale, prefillMinMs, prefillFixedMs,
+                maxWaitingPrefillBatches, directBatchSizeMax, maxBatchTokens, maxBatchRequests, formula, points,
+                stepBaseMs, stepPerRunningMs, tokensPerStep, decodeReserveStep, decode.path("scale").asDouble(1.0),
                 reportQueuedAsKvAllocated, jitterPct);
     }
 
@@ -409,8 +406,7 @@ final class MockPerformanceModel {
         int hitBlocks = cache.prefixHitBlocks(blockKeys);
         long hitTokens = (long) hitBlocks * blockSize;
         hitTokens = Math.min(hitTokens, inputLen);
-        return new RequestShape(input, inputLen, Math.max(1, outputLen), List.copyOf(blockKeys),
-                hitTokens, hitBlocks);
+        return new RequestShape(input, inputLen, Math.max(1, outputLen), blockKeys, hitTokens, hitBlocks);
     }
 
     long prefillMs(List<RequestShape> requests) {

@@ -1046,8 +1046,7 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
      * Returns null when all configured roles are requested, otherwise the distinct roles.
      * Encoder is normally requested before a separate Generation Schedule call.
      */
-    private static Set<RoleType> requestedRoles(
-            FlexlbScheduleProtocol.FlexlbScheduleRequestPB request) {
+    private static Set<RoleType> requestedRoles(FlexlbScheduleProtocol.FlexlbScheduleRequestPB request) {
         if (request.getScheduleRolesCount() == 0) {
             return null;
         }
@@ -1067,7 +1066,7 @@ public class FlexlbServiceImpl extends FlexlbServiceGrpc.FlexlbServiceImplBase {
                         "invalid schedule_roles value: " + role);
             });
         }
-        return Set.copyOf(roles);
+        return roles;
     }
 
     private static final class InvalidScheduleRequestException extends IllegalArgumentException {

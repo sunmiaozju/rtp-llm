@@ -20,10 +20,6 @@ public record DecodeChoice(DecodeEndpoint endpoint,
                            ServerStatus serverStatus,
                            DecodeRequirement requirement,
                            List<DecodeEndpoint.DecodeRequestView> preemptedRequests) {
-    public DecodeChoice {
-        preemptedRequests = List.copyOf(preemptedRequests);
-    }
-
     public DecodeChoice(DecodeEndpoint endpoint,
                         DecodeEndpoint.ReservationHandle reservation,
                         ServerStatus serverStatus,

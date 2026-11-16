@@ -1362,7 +1362,7 @@ final class DecodeState {
             DecodeRoutingView before = routingViewLocked();
             List<WorkerStatusFact> facts = doCalibrate(observation.engine(), observation.finishedTasks());
             status.publishPreparedStatus(prepared);
-            return new CalibrationResult(List.copyOf(facts), placementCapacityImproved(before, routingViewLocked()));
+            return new CalibrationResult(facts, placementCapacityImproved(before, routingViewLocked()));
         } finally {
             lock.unlock();
         }
@@ -1403,7 +1403,7 @@ final class DecodeState {
         } finally {
             lock.unlock();
         }
-        return List.copyOf(facts);
+        return facts;
     }
 
     private List<WorkerStatusFact> doCalibrate(WorkerStatus.EngineObservation engine,
@@ -1650,11 +1650,10 @@ final class DecodeState {
             }
         }
 
-        List<ReservationHandle> ordered = new ArrayList<>(owners);
-        ordered.sort(RETIREMENT_ORDER);
-        List<ReservationHandle> retiredReservations = List.copyOf(ordered);
+        List<ReservationHandle> retiredReservations = new ArrayList<>(owners);
+        retiredReservations.sort(RETIREMENT_ORDER);
 
-        // Canonical retirement commit. The immutable owner list and every
+        // Canonical retirement commit. The complete owner list and every
         // exact ReservationHandle have been validated above this line.
         decodeRequests.values().forEach(DecodeRequestState::clearDispatchPermit);
         activeEngineDispatchPermitCount = 0;
@@ -1855,9 +1854,8 @@ final class DecodeState {
                             protectedRequest));
                 }
             });
-            return new LayeredAdmissionView(routingViewLocked(),
-                    Map.copyOf(reserved), List.copyOf(confirmed),
-                    queuedPhaseCount.get(), activeEngineDispatchPermitCount);
+            return new LayeredAdmissionView(routingViewLocked(), reserved, confirmed, queuedPhaseCount.get(),
+                    activeEngineDispatchPermitCount);
         } finally {
             lock.unlock();
         }

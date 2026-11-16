@@ -196,7 +196,7 @@ public final class RouteAdmission implements AutoCloseable {
     /** Attach client-executed Decode cancellation instructions before publication. */
     public void setDecodePreemptRequestIds(List<String> requestIds) {
         requireProvisional();
-        decodeStatus().setPreemptRequestIds(List.copyOf(requestIds));
+        decodeStatus().setPreemptRequestIds(requestIds);
     }
 
     /**

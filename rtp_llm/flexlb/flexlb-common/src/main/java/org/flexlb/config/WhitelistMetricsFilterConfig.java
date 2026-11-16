@@ -177,7 +177,7 @@ public class WhitelistMetricsFilterConfig {
         private final ConcurrentMap<String, Boolean> matchesByName = new ConcurrentHashMap<>();
 
         PrefixAllowSet(List<String> entries) {
-            this.entries = List.copyOf(entries);
+            this.entries = entries;
         }
 
         @Override
