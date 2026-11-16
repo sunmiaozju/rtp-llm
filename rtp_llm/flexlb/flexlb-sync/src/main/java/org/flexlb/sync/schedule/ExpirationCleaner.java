@@ -68,7 +68,7 @@ public class ExpirationCleaner {
         List<PendingRetirement> retirements = new ArrayList<>();
         for (RoleType role : RoleType.values()) {
             retirements.addAll(beginExpiredRetirements(
-                    workerDirectory.statusSnapshot(role), role));
+                    workerDirectory.getStatusBy(role), role));
         }
         completeRetirements(retirements);
     }

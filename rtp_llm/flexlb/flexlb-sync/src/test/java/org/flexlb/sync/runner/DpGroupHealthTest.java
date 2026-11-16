@@ -47,7 +47,7 @@ class DpGroupHealthTest {
         for (WorkerStatus rank : ranks) {
             assertFalse(rank.isActiveGeneration());
             assertNull(directory.exactEndpoint(role, rank.getLogicalIpPort(), rank));
-            assertNull(directory.statusSnapshot(role).get(rank.getLogicalIpPort()));
+            assertNull(directory.getStatusBy(role).get(rank.getLogicalIpPort()));
             assertNull(rank.tryBeginStatusPoll());
         }
         assertTrue(other.isActiveGeneration());
@@ -82,7 +82,7 @@ class DpGroupHealthTest {
         assertEquals(List.of(other.getLogicalIpPort()), candidates(directory, role));
         for (WorkerStatus rank : ranks) {
             assertFalse(rank.isActiveGeneration());
-            assertNull(directory.statusSnapshot(role).get(rank.getLogicalIpPort()));
+            assertNull(directory.getStatusBy(role).get(rank.getLogicalIpPort()));
         }
     }
 

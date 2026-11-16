@@ -132,13 +132,13 @@ public class HttpLoadBalanceServer {
     private Map<String, Response.WorkerRoleSummary> buildWorkerSummary() {
         Map<String, Response.WorkerRoleSummary> summary = new LinkedHashMap<>();
         for (RoleType role : RoleType.values()) {
-            Map<String, WorkerStatus> statusMap = workerDirectory.statusSnapshot(role);
+            Map<String, WorkerStatus> statusMap = workerDirectory.getStatusBy(role);
             if (statusMap.isEmpty()) {
                 continue;
             }
             Response.WorkerRoleSummary rs = new Response.WorkerRoleSummary();
-            rs.setDiscovered(statusMap.size());
             for (WorkerStatus ws : statusMap.values()) {
+                rs.setDiscovered(rs.getDiscovered() + 1);
                 if (ws.pollHealth().reportedAlive()) {
                     rs.setAlive(rs.getAlive() + 1);
                 }

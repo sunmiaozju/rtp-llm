@@ -6,7 +6,6 @@ import org.flexlb.enums.KvCacheGroupMode;
 import org.flexlb.enums.PriorityPreemptionProgress;
 import org.flexlb.enums.TaskPhase;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
@@ -119,42 +118,6 @@ public class WorkerStatus {
             // 等待阶段携带任一取消状态时，将其识别为抢占取消进度上报。
             return pending && (canceling || canceled);
         }
-
-        private static TaskObservation copyOf(TaskInfo task) {
-            return new TaskObservation(
-                    task.getRequestId(),
-                    task.getPrefixLength(),
-                    task.getPrefillTime(),
-                    task.getInputLength(),
-                    task.getWaitingTime(),
-                    task.getIterateCount(),
-                    task.getEndTimeMs(),
-                    task.getDpRank(),
-                    task.getErrorCode(),
-                    task.getErrorMessage(),
-                    task.getBatchId(),
-                    task.getPhase(),
-                    task.getExecutionTimeMs(),
-                    task.getPriorityPreemptionProgress(),
-                    task.isPrefixLengthValid(),
-                    task.getRequestReceivedTimeMs(),
-                    task.getInputQueueEnqueueTimeMs(),
-                    task.getInputQueueDrainTimeMs(),
-                    task.getWaitingEnteredTimeMs(),
-                    task.getRunningEnteredTimeMs(),
-                    task.getRemoteKvWaitMs(),
-                    task.getFirstTokenTimeMs(),
-                    task.getHbmLocalMatchTokens(),
-                    task.getRemoteKvAddedMatchTokens(),
-                    task.getFirstPrefillStepId(),
-                    task.getLastPrefillStepId(),
-                    task.getPrefillStepCount(),
-                    task.getPrefillNonfinalChunkTokensMin(),
-                    task.getPrefillNonfinalChunkTokensMax(),
-                    task.getCompletedPrefillTokens(),
-                    task.getRemainingPrefillTokens() < 0 ? null : task.getRemainingPrefillTokens(),
-                    task.getLastCompletedPrefillStepId());
-        }
     }
 
     public record StepMetrics(long stepId, long completedTimeMs, long totalScheduledTokens,
@@ -162,9 +125,9 @@ public class WorkerStatus {
     }
 
     /**
-     * Immutable view of one atomically published Engine status observation.
-     * {@code runningTaskList} is the exact immutable map carried by the
-     * transaction observation that produced this value.
+     * Value of one atomically published Engine status observation.
+     * {@code runningTaskList} is stored by reference without copying; producers
+     * hand over ownership of the map and no one may mutate it afterwards.
      */
     public record EngineObservation(
             RoleType role,
@@ -189,9 +152,7 @@ public class WorkerStatus {
             StepMetrics lastStepMetrics) {
 
         public EngineObservation {
-
             kvCacheGroupMode = kvCacheGroupMode == null ? KvCacheGroupMode.UNSPECIFIED : kvCacheGroupMode;
-            runningTaskList = Map.copyOf(runningTaskList);
         }
 
         public EngineObservation(RoleType role,
@@ -273,7 +234,10 @@ public class WorkerStatus {
             long indexedVersion) {
     }
 
-    /** One deeply frozen RPC observation shared by every status reducer. */
+    /**
+     * One RPC observation shared by every status reducer. Task maps are
+     * shared by reference and must be treated as read-only.
+     */
     public static final class StatusObservation {
         private final WorkerStatus owner;
         private final EngineObservation engine;
@@ -513,45 +477,11 @@ public class WorkerStatus {
     }
 
     /**
-     * Deep-freeze one RPC response. Finished tasks remain response-local and
-     * are never copied into the committed Engine observation.
+     * Bind an already converted protocol observation to this exact generation.
+     * {@code finishedTasks} is taken by reference without copying. Finished
+     * tasks remain response-local and are never carried into the committed
+     * Engine observation.
      */
-    public StatusObservation freezeStatusResponse(WorkerStatusResponse response) {
-        Map<String, TaskObservation> runningTasks = freezeTaskMap(
-                response.getRunningTaskInfo());
-        Map<String, TaskObservation> finishedTasks = freezeTaskMap(
-                response.getFinishedTaskInfo());
-        EngineObservation engine = new EngineObservation(
-                response.getRole(),
-                response.getAvailableConcurrency(),
-                response.getAvailableKvCacheTokens(),
-                response.getTotalKvCacheTokens(),
-                runningTasks,
-                response.getStepLatencyMs(),
-                response.getIterateCount(),
-                response.getDpSize(),
-                response.getTpSize(),
-                response.getDpRank(),
-                response.getDpMasterAddress(),
-                response.getCacheStatus() == null ? 0L : response.getCacheStatus().getBlockSize(),
-                response.getBlockHashLookaheadTokens(),
-                response.getCacheMatchRollbackBlocks(),
-                response.getKvCacheGroupMode(),
-                response.getMaxSeqLen(),
-                response.getMaxBatchTokensSize(),
-                response.getRunningQueryLen(),
-                response.getWaitingQueryLen(),
-                response.getLastStepMetrics());
-        return new StatusObservation(
-                this,
-                engine,
-                response.isAlive(),
-                response.getStatusVersion(),
-                response.getLatestFinishedVersion(),
-                finishedTasks);
-    }
-
-    /** Bind an already immutable protocol conversion to this exact generation. */
     public StatusObservation bindStatusObservation(
             EngineObservation engine,
             boolean reportedAlive,
@@ -564,11 +494,10 @@ public class WorkerStatus {
                 reportedAlive,
                 statusVersion,
                 latestFinishedVersion,
-                finishedTasks == null || finishedTasks.isEmpty()
-                        ? Map.of() : Map.copyOf(finishedTasks));
+                finishedTasks == null || finishedTasks.isEmpty() ? Map.of() : finishedTasks);
     }
 
-    /** Bind a strictly newer frozen observation to the current commit holder. */
+    /** Bind a strictly newer status observation to the current commit holder. */
     public PreparedStatus prepareNewStatus(StatusObservation observation) {
         requireGenerationLock();
         requireActiveGeneration();
@@ -939,21 +868,6 @@ public class WorkerStatus {
 
     public int getMultiEngineNum() {
         return topology.get().multiEngineNum();
-    }
-
-    private static Map<String, TaskObservation> freezeTaskMap(
-            Map<String, TaskInfo> tasks) {
-        if (tasks == null || tasks.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, TaskObservation> frozen = new HashMap<>(tasks.size());
-        for (Map.Entry<String, TaskInfo> entry : tasks.entrySet()) {
-            if (entry.getKey() != null && entry.getValue() != null) {
-                frozen.put(entry.getKey(), TaskObservation.copyOf(
-                        entry.getValue()));
-            }
-        }
-        return Map.copyOf(frozen);
     }
 
     @Override

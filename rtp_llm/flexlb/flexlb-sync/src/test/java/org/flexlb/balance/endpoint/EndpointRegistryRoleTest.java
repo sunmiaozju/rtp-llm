@@ -20,6 +20,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mockito;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -140,6 +141,21 @@ class EndpointRegistryRoleTest {
                 RoleType.PREFILL, RoleType.DECODE, RoleType.PDFUSION, RoleType.VIT}) {
             assertEquals(1, registry.getEndpointCount(roleType));
         }
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = RoleType.class, names = {"DECODE", "ENCODER", "VIT"})
+    void endpoint_address_view_tracks_publication_and_retirement(RoleType role) {
+        Collection<String> addresses = registry.endpointAddressView(role);
+        assertTrue(addresses.isEmpty());
+        String address = "127.0.0.1:8050";
+        WorkerStatus status = status(role, 8050);
+
+        EndpointTestSupport.publishEndpoint(registry, role, address, status);
+        assertTrue(addresses.contains(address));
+
+        retire(role, address, status);
+        assertTrue(addresses.isEmpty());
     }
 
     @Test

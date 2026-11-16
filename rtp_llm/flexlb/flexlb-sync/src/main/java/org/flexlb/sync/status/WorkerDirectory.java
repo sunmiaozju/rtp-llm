@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
@@ -41,12 +42,14 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         }
     }
 
-    /** Immutable point-in-time view of discovered generations for one role. */
-    public Map<String, WorkerStatus> statusSnapshot(RoleType role) {
+    /**
+     * Live view of discovered generations for one role; callers must not modify it.
+     */
+    public Map<String, WorkerStatus> getStatusBy(RoleType role) {
         if (role == null) {
             return Map.of();
         }
-        return Map.copyOf(statusesByRole.get(role));
+        return statusesByRole.get(role);
     }
 
     @Override
@@ -55,7 +58,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
             return List.of();
         }
         List<WorkerStatus> statuses = List.copyOf(
-                statusSnapshot(role).values());
+                getStatusBy(role).values());
         if (group == null) {
             return statuses;
         }
@@ -164,7 +167,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         Map<WorkerStatus, EndpointRegistry.DetachedGeneration> dpGroupMap = new HashMap<>();
         String masterAddress = status.committedEngineObservation().dpMasterAddress();
         if (masterAddress != null) {
-            for (WorkerStatus member : statusSnapshot(role).values()) {
+            for (WorkerStatus member : getStatusBy(role).values()) {
                 member.lock.lock();
                 try {
                     if (member.isActiveGeneration()
@@ -251,9 +254,11 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         }
     }
 
-    /** Immutable, non-owning address snapshot for lazy selection. */
-    public List<String> endpointAddressSnapshot(RoleType role) {
-        return endpointRegistry.endpointAddressSnapshot(role);
+    /**
+     * Non-owning address view for selection; callers must not modify it.
+     */
+    public Collection<String> endpointAddressView(RoleType role) {
+        return endpointRegistry.endpointAddressView(role);
     }
 
     /**
@@ -332,54 +337,6 @@ public final class WorkerDirectory implements WorkerStatusProvider {
      */
     public WorkerEndpoint.EndpointHold holdDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
         return endpointRegistry.holdDecodeEndpoint(expected);
-    }
-
-    /**
-     * Hold exact endpoint generations for one routing decision.
-     */
-    public List<WorkerEndpoint.EndpointHold> holdEndpoints(RoleType role, String group) {
-        List<WorkerEndpoint.EndpointHold> held = endpointRegistry.hold(role);
-        List<WorkerEndpoint.EndpointHold> matching = new ArrayList<>(held.size());
-        try {
-            for (int index = 0; index < held.size(); index++) {
-                WorkerEndpoint.EndpointHold hold = held.get(index);
-                WorkerStatus.TopologySnapshot topology = hold.endpoint().getStatus().topologySnapshot();
-                if (group != null && !group.equals(topology.group())) {
-                    hold.close();
-                    held.set(index, null);
-                    continue;
-                }
-                matching.add(hold);
-                held.set(index, null);
-            }
-            return matching;
-        } catch (Throwable failure) {
-            closeHolds(held);
-            closeHolds(matching);
-            throw failure;
-        }
-    }
-
-    /** Non-owning monitoring view; no live endpoint map escapes. */
-    public List<String> endpointAddresses(RoleType role, String group) {
-        List<WorkerEndpoint.EndpointHold> held = holdEndpoints(role, group);
-        try {
-            List<String> addresses = new ArrayList<>(held.size());
-            for (WorkerEndpoint.EndpointHold hold : held) {
-                addresses.add(hold.endpoint().ipPort());
-            }
-            return addresses;
-        } finally {
-            closeHolds(held);
-        }
-    }
-
-    private static void closeHolds(List<WorkerEndpoint.EndpointHold> holds) {
-        for (WorkerEndpoint.EndpointHold hold : holds) {
-            if (hold != null) {
-                hold.close();
-            }
-        }
     }
 
 }

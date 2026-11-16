@@ -103,7 +103,7 @@ class ExpirationCleanerTest {
                     "the second routing gate must close before the first drain waits");
             releaseFirstAwait.countDown();
             cleaning.get(5, TimeUnit.SECONDS);
-            assertTrue(directory.statusSnapshot(RoleType.PREFILL).isEmpty());
+            assertTrue(directory.getStatusBy(RoleType.PREFILL).isEmpty());
             verify(cache).removeEngineBlockCache(first.getLogicalIpPort());
             verify(cache).removeEngineBlockCache(second.getLogicalIpPort());
         } finally {

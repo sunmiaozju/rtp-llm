@@ -64,8 +64,8 @@ class VitCacheDirectoryTest {
         live.put(a.getIpPort(), a);
         live.put(b.getIpPort(), b);
         var workers = mock(WorkerDirectory.class);
-        when(workers.statusSnapshot(RoleType.VIT)).thenAnswer(call -> Map.copyOf(live));
-        when(workers.endpointAddressSnapshot(RoleType.VIT)).thenAnswer(call -> new java.util.ArrayList<>(live.keySet()));
+        when(workers.getStatusBy(RoleType.VIT)).thenReturn(live);
+        when(workers.endpointAddressView(RoleType.VIT)).thenReturn(live.keySet());
         when(workers.holdEndpoint(eq(RoleType.VIT), any())).thenAnswer(call -> {
             WorkerStatus status = live.get(call.getArgument(1));
             return status == null ? null : new WorkerEndpoint(status).tryHold();

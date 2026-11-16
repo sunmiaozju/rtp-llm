@@ -14,7 +14,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -85,7 +87,7 @@ class RandomStrategyTest {
         StrategyTestSupport.publishEndpoint(endpoints,
                 RoleType.VIT, second.getLogicalIpPort(), second);
         WorkerDirectory directory = new WorkerDirectory(endpoints);
-        for (String address : endpoints.endpointAddressSnapshot(RoleType.VIT)) {
+        for (String address : endpoints.endpointAddressView(RoleType.VIT)) {
             WorkerStatus endpointStatus = endpoints.get(
                     RoleType.VIT, address).getStatus();
             directory.currentOrDiscover(
@@ -108,6 +110,22 @@ class RandomStrategyTest {
         registerVit("127.0.0.4", 8080, "group-a");
         assertNull(strategy.select(
                 context(4L), RoleType.VIT, "group-b"));
+    }
+
+    @Test
+    void continuesTryingCapturedAddressesWhenLiveViewIsCleared() {
+        var liveAddresses = new HashSet<>(Set.of("first", "second"));
+        WorkerDirectory directory = Mockito.mock(WorkerDirectory.class);
+        Mockito.when(directory.endpointAddressView(RoleType.VIT)).thenReturn(liveAddresses);
+        Mockito.when(directory.holdEndpoint(Mockito.eq(RoleType.VIT), Mockito.anyString())).thenAnswer(call -> {
+            liveAddresses.clear();
+            return null;
+        });
+        RandomStrategy localStrategy = new RandomStrategy(directory);
+
+        assertNull(localStrategy.select(context(5L), RoleType.VIT, null));
+
+        Mockito.verify(directory, Mockito.times(2)).holdEndpoint(Mockito.eq(RoleType.VIT), Mockito.anyString());
     }
 
     @Test

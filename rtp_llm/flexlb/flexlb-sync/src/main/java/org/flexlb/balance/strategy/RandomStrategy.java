@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -32,15 +33,15 @@ public final class RandomStrategy {
             throw new IllegalArgumentException(
                     "RANDOM endpoint selection is supported only for VIT");
         }
-        List<String> addresses =
-                workerDirectory.endpointAddressSnapshot(RoleType.VIT);
-        if (addresses.isEmpty()) {
+        List<String> addresses = new ArrayList<>(workerDirectory.endpointAddressView(RoleType.VIT));
+        int addressCount = addresses.size();
+        if (addressCount == 0) {
             return null;
         }
 
-        int start = ThreadLocalRandom.current().nextInt(addresses.size());
-        for (int offset = 0; offset < addresses.size(); offset++) {
-            String address = addresses.get((start + offset) % addresses.size());
+        int start = ThreadLocalRandom.current().nextInt(addressCount);
+        for (int offset = 0; offset < addressCount; offset++) {
+            String address = addresses.get((start + offset) % addressCount);
             WorkerEndpoint.EndpointHold hold = workerDirectory.holdEndpoint(RoleType.VIT, address);
             if (hold == null) {
                 continue;
@@ -66,7 +67,7 @@ public final class RandomStrategy {
         }
         LOGGER.warn(
                 "No VIT worker available out of {} registered workers",
-                addresses.size());
+                addressCount);
         return null;
     }
 

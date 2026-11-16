@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.EnumMap;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -195,42 +196,14 @@ public class EndpointRegistry {
     }
 
     /**
-     * Hold the currently addressable generations without exposing a live
-     * registry map. Addresses are snapshotted first; every exact hold is then
-     * acquired through {@link #hold(RoleType, String)}.
-     */
-    public List<WorkerEndpoint.EndpointHold> hold(RoleType roleType) {
-        List<String> addresses = endpointAddressSnapshot(roleType);
-        List<WorkerEndpoint.EndpointHold> holds = new ArrayList<>(addresses.size());
-        try {
-            for (String address : addresses) {
-                WorkerEndpoint.EndpointHold hold = hold(roleType, address);
-                if (hold != null) {
-                    holds.add(hold);
-                }
-            }
-            return holds;
-        } catch (RuntimeException | Error holdFailure) {
-            for (WorkerEndpoint.EndpointHold hold : holds) {
-                try {
-                    hold.close();
-                } catch (Throwable closeFailure) {
-                    holdFailure.addSuppressed(closeFailure);
-                }
-            }
-            throw holdFailure;
-        }
-    }
-
-    /**
-     * Return an immutable point-in-time address snapshot for one role.
+     * Return addresses from the captured Prefill directory or the live role map.
      *
-     * <p>No endpoint object or live registry map escapes.  A caller which needs
-     * generation ownership must still pass an address back through
+     * <p>Callers must not modify the collection. A caller which needs
+     * generation ownership must pass an address back through
      * {@link #hold(RoleType, String)}; same-address replacement therefore
      * remains linearized by the address key's remapping critical section.</p>
      */
-    public List<String> endpointAddressSnapshot(RoleType roleType) {
+    public Collection<String> endpointAddressView(RoleType roleType) {
         if (roleType != null && roleType.supportsPrefill()) {
             List<PrefillRoutingEntry> directory = prefillRoutingSnapshot(roleType);
             return new AbstractList<>() {
@@ -246,8 +219,7 @@ public class EndpointRegistry {
             };
         }
         Map<String, WorkerEndpoint> endpoints = endpoints(roleType);
-        return endpoints == null
-                ? List.of() : List.copyOf(endpoints.keySet());
+        return endpoints == null ? List.of() : endpoints.keySet();
     }
 
     /**

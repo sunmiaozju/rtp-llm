@@ -24,7 +24,7 @@ import java.util.Set;
 public class EngineStatusConverter {
 
     /**
-     * Convert one protobuf response into an immutable observation, retaining all
+     * Convert one protobuf response into a status observation, retaining all
      * active task phases from {@code running_task_info}.
      */
     public static StatusObservation convertToStatusObservation(WorkerStatus owner,
@@ -102,7 +102,8 @@ public class EngineStatusConverter {
     }
 
     /**
-     * Convert protobuf task values directly into immutable observations.
+     * Convert protobuf task values directly into immutable observations. The
+     * returned map is handed over without copying and must not be mutated.
      */
     private static Map<String, TaskObservation> convertTasks(List<EngineRpcService.TaskInfoPB> taskInfoPBList) {
         if (taskInfoPBList == null || taskInfoPBList.isEmpty()) {
@@ -158,7 +159,7 @@ public class EngineStatusConverter {
                     task.hasLastCompletedPrefillStepId() ? task.getLastCompletedPrefillStepId() : null);
             tasks.put(observation.requestId(), observation);
         }
-        return Map.copyOf(tasks);
+        return tasks;
     }
     private static TaskPhase resolvePhase(EngineRpcService.TaskInfoPB task) {
         if (task.getPhase() != EngineRpcService.TaskPhase.TASK_PHASE_PENDING) {

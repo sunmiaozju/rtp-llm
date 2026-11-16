@@ -66,14 +66,14 @@ class GrpcWorkerStatusRunnerTest {
             new GrpcWorkerStatusRunner(status.getLogicalIpPort(), "test-site", role, null, status, lease, directory,
                     mock(EngineHealthReporter.class), grpc, 5_000L, cache, Runnable::run).run();
             if (failure < 3) {
-                assertSame(status, directory.statusSnapshot(role).get(status.getLogicalIpPort()));
+                assertSame(status, directory.getStatusBy(role).get(status.getLogicalIpPort()));
                 assertSame(endpoint, registry.get(role, status.getLogicalIpPort()));
                 verifyNoInteractions(cache);
             }
         }
 
         assertNull(registry.get(role, status.getLogicalIpPort()));
-        assertTrue(directory.statusSnapshot(role).isEmpty());
+        assertTrue(directory.getStatusBy(role).isEmpty());
         assertNull(status.tryBeginStatusPoll(), "retired generation cannot poll again");
         if (needsCacheKeys) {
             verify(cache).removeEngineBlockCache(status.getLogicalIpPort());

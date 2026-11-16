@@ -125,7 +125,7 @@ public class EngineSyncRunner implements Runnable {
                         System.nanoTime() / 1000 - startTimeInUs, roleType);
             }
             Map<String, WorkerStatus> cachedWorkerStatuses =
-                    workerDirectory.statusSnapshot(roleType);
+                    workerDirectory.getStatusBy(roleType);
             // Log if latest worker count differs from cached worker count
             if (cachedWorkerStatuses.size() != latestEngineWorkerList.size()) {
                 logger.info("[update] engine ip changes, role={}, before={}, after={}", roleType,
@@ -229,7 +229,7 @@ public class EngineSyncRunner implements Runnable {
         } finally {
             logger.debug("Collecting worker status metrics for role: {}", roleType);
             Map<String, WorkerStatus> currentStatuses =
-                    workerDirectory.statusSnapshot(roleType);
+                    workerDirectory.getStatusBy(roleType);
             logger.debug("Worker status map size: {}", currentStatuses.size());
 
             Map<String, WorkerStatus.EngineObservation> statusSnapshots =

@@ -22,11 +22,9 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkerDirectoryTest {
@@ -50,100 +48,6 @@ class WorkerDirectoryTest {
     }
 
     @Test
-    void should_capture_only_endpoint_generation_matching_group() {
-        WorkerStatus matching = status(RoleType.DECODE, "group1", 8080);
-        WorkerStatus filtered = status(RoleType.DECODE, "group2", 8081);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.DECODE, matching.getLogicalIpPort(), matching);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.DECODE, filtered.getLogicalIpPort(), filtered);
-
-        List<WorkerEndpoint.EndpointHold> result = workerDirectory.holdEndpoints(RoleType.DECODE, "group1");
-        try {
-            assertEquals(1, result.size());
-            assertSame(matching, result.getFirst().endpoint().getStatus());
-            assertEquals(matching.getLogicalIpPort(),
-                    result.getFirst().endpoint().ipPort());
-        } finally {
-            closeHolds(result);
-        }
-    }
-
-    @Test
-    void should_capture_all_endpoint_generations_without_group_filter() {
-        WorkerStatus first = status(RoleType.PREFILL, "group1", 8080);
-        WorkerStatus second = status(RoleType.PREFILL, "group2", 8081);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.PREFILL, first.getLogicalIpPort(), first);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.PREFILL, second.getLogicalIpPort(), second);
-
-        List<WorkerEndpoint.EndpointHold> result = workerDirectory.holdEndpoints(RoleType.PREFILL, null);
-        try {
-            assertEquals(2, result.size());
-            assertTrue(result.stream().anyMatch(hold -> hold.endpoint().getStatus() == first));
-            assertTrue(result.stream().anyMatch(hold -> hold.endpoint().getStatus() == second));
-        } finally {
-            closeHolds(result);
-        }
-    }
-
-    @Test
-    void should_return_empty_capture_when_role_registry_is_empty() {
-        List<WorkerEndpoint.EndpointHold> result = workerDirectory.holdEndpoints(RoleType.PDFUSION, null);
-
-        assertNotNull(result);
-        assertTrue(result.isEmpty());
-    }
-
-    @Test
-    void should_close_filtered_pins_when_no_group_matches() {
-        WorkerStatus status = status(RoleType.VIT, "group1", 8080);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.VIT, status.getLogicalIpPort(), status);
-
-        List<WorkerEndpoint.EndpointHold> result = workerDirectory.holdEndpoints(RoleType.VIT, "nonExistentGroup");
-
-        assertTrue(result.isEmpty());
-        assertEquals(List.of(status.getLogicalIpPort()),
-                workerDirectory.endpointAddresses(
-                        RoleType.VIT, null));
-    }
-
-    @Test
-    void should_exclude_null_group_endpoint_when_group_is_specified() {
-        WorkerStatus matching = status(RoleType.DECODE, "groupA", 8080);
-        WorkerStatus ungrouped = status(RoleType.DECODE, null, 8081);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.DECODE, matching.getLogicalIpPort(), matching);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.DECODE, ungrouped.getLogicalIpPort(), ungrouped);
-
-        List<String> result = workerDirectory.endpointAddresses(
-                RoleType.DECODE, "groupA");
-
-        assertEquals(List.of(matching.getLogicalIpPort()), result);
-        assertFalse(result.contains(ungrouped.getLogicalIpPort()));
-    }
-
-    @Test
-    void should_include_grouped_and_ungrouped_endpoints_without_filter() {
-        WorkerStatus grouped = status(RoleType.DECODE, "groupA", 8080);
-        WorkerStatus ungrouped = status(RoleType.DECODE, null, 8081);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.DECODE, grouped.getLogicalIpPort(), grouped);
-        RunnerTestSupport.publishEndpoint(registry,
-                RoleType.DECODE, ungrouped.getLogicalIpPort(), ungrouped);
-
-        List<String> result = workerDirectory.endpointAddresses(
-                RoleType.DECODE, null);
-
-        assertEquals(2, result.size());
-        assertTrue(result.contains(grouped.getLogicalIpPort()));
-        assertTrue(result.contains(ungrouped.getLogicalIpPort()));
-    }
-
-    @Test
     void routing_capacity_comes_only_from_published_endpoints() {
         WorkerStatus matching = status(RoleType.DECODE, "group1", 8080);
         WorkerStatus filtered = status(RoleType.DECODE, "group2", 8081);
@@ -154,15 +58,12 @@ class WorkerDirectoryTest {
         RunnerTestSupport.publishEndpoint(registry,
                 RoleType.DECODE, filtered.getLogicalIpPort(), filtered);
 
-        assertEquals(List.of(matching.getLogicalIpPort()),
-                workerDirectory.endpointAddresses(
-                        RoleType.DECODE, "group1"));
         assertEquals(2,
                 workerDirectory.routingCapacity(RoleType.DECODE));
     }
 
     @Test
-    void should_capture_pd_fusion_and_vit_from_role_specific_registries() {
+    void should_hold_pd_fusion_and_vit_from_role_specific_registries() {
         assertRoleEndpoint(RoleType.PDFUSION, 8101);
         assertRoleEndpoint(RoleType.VIT, 8102);
     }
@@ -182,7 +83,7 @@ class WorkerDirectoryTest {
                 RoleType.PREFILL, second.getLogicalIpPort(), () -> second);
 
         Map<String, WorkerStatus> statuses =
-                workerDirectory.statusSnapshot(RoleType.PREFILL);
+                workerDirectory.getStatusBy(RoleType.PREFILL);
         assertEquals(2, statuses.size());
         assertSame(first, statuses.get("127.0.0.1:8080@0"));
         assertSame(second, statuses.get("127.0.0.1:8080@1"));
@@ -245,7 +146,7 @@ class WorkerDirectoryTest {
         assertEquals(List.of(independent.status().getLogicalIpPort()),
                 workerDirectory.decodeRoutingSnapshot("routing-a").stream().map(view -> view.address()).toList());
         assertEquals(3, workerDirectory.getWorkerStatuses(RoleType.DECODE, "routing-a").size());
-        assertSame(rankOne.status(), workerDirectory.statusSnapshot(RoleType.DECODE)
+        assertSame(rankOne.status(), workerDirectory.getStatusBy(RoleType.DECODE)
                 .get(rankOne.status().getLogicalIpPort()));
     }
 
@@ -362,7 +263,7 @@ class WorkerDirectoryTest {
                     .stream()
                     .allMatch(member -> !member.isActiveGeneration()
                             && workerDirectory.exactEndpoint(role, member.getLogicalIpPort(), member) == null
-                            && workerDirectory.statusSnapshot(role).get(member.getLogicalIpPort()) == member
+                            && workerDirectory.getStatusBy(role).get(member.getLogicalIpPort()) == member
                             && !member.lock.isHeldByCurrentThread()));
             return invocation.callRealMethod();
         }).when(detached).retireAndAwait();
@@ -375,7 +276,7 @@ class WorkerDirectoryTest {
             assertNull(workerDirectory.holdEndpoint(role, member.getLogicalIpPort()));
         }
         assertEquals(Map.of(otherGroup.getLogicalIpPort(), otherGroup, independent.getLogicalIpPort(), independent),
-                workerDirectory.statusSnapshot(role));
+                workerDirectory.getStatusBy(role));
         assertEquals(2, workerDirectory.routingCapacity(role));
         assertTrue(otherRole.isActiveGeneration());
         assertNotNull(workerDirectory.exactEndpoint(otherRole.getRole(), otherRole.getLogicalIpPort(), otherRole));
@@ -479,12 +380,9 @@ class WorkerDirectoryTest {
         WorkerEndpoint registered = RunnerTestSupport.publishEndpoint(registry,
                 role, status.getLogicalIpPort(), status);
 
-        List<WorkerEndpoint.EndpointHold> selected = workerDirectory.holdEndpoints(role, null);
-        try {
-            assertEquals(1, selected.size());
-            assertSame(registered, selected.getFirst().endpoint());
-        } finally {
-            closeHolds(selected);
+        try (WorkerEndpoint.EndpointHold selected = workerDirectory.holdEndpoint(role, status.getLogicalIpPort())) {
+            assertNotNull(selected);
+            assertSame(registered, selected.endpoint());
         }
     }
 
@@ -494,12 +392,6 @@ class WorkerDirectoryTest {
                 role, group, "127.0.0.1", port, port + 1, "test-site");
     }
 
-    private static void closeHolds(List<WorkerEndpoint.EndpointHold> holds) {
-        for (WorkerEndpoint.EndpointHold hold : holds) {
-            hold.close();
-        }
-    }
-
     @Test
     void role_status_maps_are_independent_and_counted_once() {
         WorkerStatus prefill = status(RoleType.PREFILL, "group1", 8201);
@@ -507,23 +399,23 @@ class WorkerDirectoryTest {
         discover(prefill);
         discover(decode);
 
-        assertSame(prefill, workerDirectory.statusSnapshot(RoleType.PREFILL)
+        assertSame(prefill, workerDirectory.getStatusBy(RoleType.PREFILL)
                 .get(prefill.getLogicalIpPort()));
-        assertSame(decode, workerDirectory.statusSnapshot(RoleType.DECODE)
+        assertSame(decode, workerDirectory.getStatusBy(RoleType.DECODE)
                 .get(decode.getLogicalIpPort()));
         assertEquals(2, workerDirectory.discoveredCount());
         assertEquals(1, workerDirectory.discoveredCount(RoleType.PREFILL));
     }
 
     @Test
-    void status_snapshot_is_immutable() {
+    void status_view_reflects_newly_discovered_workers() {
+        Map<String, WorkerStatus> statuses = workerDirectory.getStatusBy(RoleType.VIT);
+        assertTrue(statuses.isEmpty());
+
         WorkerStatus status = status(RoleType.VIT, "group", 8080);
         discover(status);
 
-        assertEquals(Map.of(status.getLogicalIpPort(), status),
-                workerDirectory.statusSnapshot(RoleType.VIT));
-        assertThrows(UnsupportedOperationException.class,
-                () -> workerDirectory.statusSnapshot(RoleType.VIT).clear());
+        assertEquals(Map.of(status.getLogicalIpPort(), status), statuses);
     }
 
     @Test

@@ -236,7 +236,7 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
         awaitUntil(3_000, () -> mockPrefillWorker.getWorkerStatusCallCount() > 0
                         && workerB.getWorkerStatusCallCount() > 0
                         && mockDecodeWorker.getWorkerStatusCallCount() > 0
-                        && endpointRegistry.endpointAddressSnapshot(RoleType.DECODE)
+                        && endpointRegistry.endpointAddressView(RoleType.DECODE)
                                 .contains(logicalWorkerIpPort(decodeIpPort))
                         && prefillAddressesRoutable(prefillIpPort, workerIpPort(workerB)),
                 "discovery loop should poll both initial workers and publish "
@@ -342,7 +342,7 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
         when(roundRobin.select(any(BalanceContext.class), any())).thenAnswer(inv -> {
             BalanceContext ctx = inv.getArgument(0);
             List<String> candidates = new ArrayList<>(
-                    endpointRegistry.endpointAddressSnapshot(RoleType.PREFILL));
+                    endpointRegistry.endpointAddressView(RoleType.PREFILL));
             if (candidates.isEmpty()) {
                 Response empty = new Response();
                 empty.setSuccess(false);
@@ -434,8 +434,7 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
      * come from a discovery-driven publication.
      */
     private boolean prefillAddressesRoutable(String... ipPorts) {
-        List<String> routable =
-                endpointRegistry.endpointAddressSnapshot(RoleType.PREFILL);
+        var routable = endpointRegistry.endpointAddressView(RoleType.PREFILL);
         for (String ipPort : ipPorts) {
             if (!routable.contains(logicalWorkerIpPort(ipPort))) {
                 return false;

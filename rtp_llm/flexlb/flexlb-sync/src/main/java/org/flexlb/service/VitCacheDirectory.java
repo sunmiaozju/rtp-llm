@@ -161,9 +161,9 @@ public class VitCacheDirectory {
     }
 
     private Map<String, WorkerStatus> liveWorkers() {
-        var statuses = workers.statusSnapshot(RoleType.VIT);
+        var statuses = workers.getStatusBy(RoleType.VIT);
         Map<String, WorkerStatus> live = new HashMap<>();
-        for (String address : workers.endpointAddressSnapshot(RoleType.VIT)) {
+        for (String address : workers.endpointAddressView(RoleType.VIT)) {
             WorkerStatus status = statuses.get(address);
             if (status != null) {
                 live.put(address, status);

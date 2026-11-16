@@ -150,7 +150,7 @@ class EngineSyncRunnerTest {
 
         runner.run();
 
-        assertTrue(workerDirectory.statusSnapshot(RoleType.VIT).get(ipPort)
+        assertTrue(workerDirectory.getStatusBy(RoleType.VIT).get(ipPort)
                 .pollHealth().lastSuccessfulPollUs() > 0);
     }
 
@@ -167,7 +167,7 @@ class EngineSyncRunnerTest {
 
         runner.run();
 
-        WorkerStatus status = workerDirectory.statusSnapshot(
+        WorkerStatus status = workerDirectory.getStatusBy(
                 RoleType.PREFILL).get(ipPort);
         WorkerStatus.PollLease statusLease = status.tryBeginStatusPoll();
         WorkerStatus.PollLease cacheLease = status.tryBeginCachePoll();
@@ -201,7 +201,7 @@ class EngineSyncRunnerTest {
         runner.run();
 
         assertFalse(status.isActiveGeneration());
-        assertFalse(directory.statusSnapshot(RoleType.PREFILL)
+        assertFalse(directory.getStatusBy(RoleType.PREFILL)
                 .containsKey(ipPort));
         assertNull(registry.get(RoleType.PREFILL, ipPort));
         registry.close();
@@ -251,7 +251,7 @@ class EngineSyncRunnerTest {
             runner.run();
 
             assertTrue(status.isActiveGeneration());
-            assertEquals(status, directory.statusSnapshot(RoleType.PREFILL).get(ipPort));
+            assertEquals(status, directory.getStatusBy(RoleType.PREFILL).get(ipPort));
             assertEquals(originalEndpoint, registry.get(RoleType.PREFILL, ipPort));
             ArgumentCaptor<Runnable> tasks = ArgumentCaptor.forClass(Runnable.class);
             verify(statusCheckExecutor, times(2)).submit(tasks.capture());
@@ -293,7 +293,7 @@ class EngineSyncRunnerTest {
         try {
             runner.run();
 
-            WorkerStatus discovered = directory.statusSnapshot(RoleType.PREFILL)
+            WorkerStatus discovered = directory.getStatusBy(RoleType.PREFILL)
                     .get("127.0.0.1:61000@0");
             assertEquals(RoleType.PREFILL, discovered.getRole());
             assertFalse(discovered.pollHealth().reportedAlive(),
@@ -422,7 +422,7 @@ class EngineSyncRunnerTest {
             // the RETIRING holder, so no routable identity exists yet.
             runner.run();
 
-            assertFalse(directory.statusSnapshot(RoleType.PREFILL)
+            assertFalse(directory.getStatusBy(RoleType.PREFILL)
                             .containsKey(ipPort),
                     "old generation is retired and removed; replacement is deferred");
             assertNull(registry.get(RoleType.PREFILL, ipPort),
@@ -431,7 +431,7 @@ class EngineSyncRunnerTest {
             // for the same address under the new topology group.
             runner.run();
 
-            WorkerStatus current = directory.statusSnapshot(
+            WorkerStatus current = directory.getStatusBy(
                     RoleType.PREFILL).get(ipPort);
             assertTrue(current != oldStatus);
             assertTrue(current.getGenerationId()
@@ -479,7 +479,7 @@ class EngineSyncRunnerTest {
         submittedTasks.getAllValues().get(0).run();
         verify(engineGrpcService).getWorkerStatusAsync(
                 "127.0.0.1", 18081, -1L, syncRequestTimeoutMs, RoleType.PREFILL);
-        assertEquals(8081, workerDirectory.statusSnapshot(RoleType.PREFILL)
+        assertEquals(8081, workerDirectory.getStatusBy(RoleType.PREFILL)
                 .get("127.0.0.1:8080@0").getGrpcPort());
     }
 
@@ -497,7 +497,7 @@ class EngineSyncRunnerTest {
         submittedTasks.getAllValues().get(0).run();
         verify(engineGrpcService).getWorkerStatusAsync(
                 "127.0.0.1", 8081, -1L, syncRequestTimeoutMs, RoleType.PREFILL);
-        WorkerStatus status = workerDirectory.statusSnapshot(RoleType.PREFILL)
+        WorkerStatus status = workerDirectory.getStatusBy(RoleType.PREFILL)
                 .get("127.0.0.1:8080@0");
         assertNotNull(status);
         assertEquals(0, status.getEngineIndex());
@@ -514,7 +514,7 @@ class EngineSyncRunnerTest {
 
         engineSyncRunner.run();
 
-        WorkerStatus status = workerDirectory.statusSnapshot(RoleType.PREFILL)
+        WorkerStatus status = workerDirectory.getStatusBy(RoleType.PREFILL)
                 .get("127.0.0.1:8080@1");
         assertNotNull(status);
         assertEquals(1, status.getEngineIndex());

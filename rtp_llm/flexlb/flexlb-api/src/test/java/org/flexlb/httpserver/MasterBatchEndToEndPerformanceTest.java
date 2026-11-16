@@ -1148,13 +1148,13 @@ class MasterBatchEndToEndPerformanceTest extends FlexLBMockTestBase {
         assertTrue(acceptedRequests.isEmpty(), "accepted batches must all match a published route");
         assertTrue(simulatedCompletions.isEmpty(), "terminal completion queue must be drained");
         assertEquals(0, scheduler.getTrackedRequestCount(), "request lifecycle registry must be drained");
-        for (String address : endpointRegistry.endpointAddressSnapshot(RoleType.PREFILL)) {
+        for (String address : endpointRegistry.endpointAddressView(RoleType.PREFILL)) {
             PrefillEndpoint endpoint = (PrefillEndpoint) endpointRegistry.get(RoleType.PREFILL, address);
             assertEquals(0, endpoint.getInflightBatchCount(), address + " retained batch credits");
             assertEquals(0, endpoint.getCommittedRequestCount(), address + " retained Prefill ownership");
             assertEquals(0L, endpoint.observedRequestCount(), address + " retained Prefill requests");
         }
-        for (String address : endpointRegistry.endpointAddressSnapshot(RoleType.DECODE)) {
+        for (String address : endpointRegistry.endpointAddressView(RoleType.DECODE)) {
             DecodeEndpoint endpoint = (DecodeEndpoint) endpointRegistry.get(RoleType.DECODE, address);
             DecodeEndpoint.LayeredAdmissionView view = endpoint.resourceSnapshot();
             assertTrue(view.reserved().isEmpty(), address + " retained Decode reservations");

@@ -40,7 +40,7 @@ public final class EncoderStrategy {
         long leastUncachedTokens = Long.MAX_VALUE;
         long fewestRequests = Long.MAX_VALUE;
         try {
-            for (String address : workerDirectory.endpointAddressSnapshot(RoleType.ENCODER)) {
+            for (String address : workerDirectory.endpointAddressView(RoleType.ENCODER)) {
                 WorkerEndpoint.EndpointHold candidate = workerDirectory.holdEndpoint(RoleType.ENCODER, address);
                 if (candidate == null) {
                     continue;

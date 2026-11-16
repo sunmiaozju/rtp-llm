@@ -109,7 +109,7 @@ Encoder 使用常规 `GetWorkerStatus`，角色字符串为 `ENCODER`，`RoleTyp
 `running_task_info` 和 `finished_task_list` 投影到 Encoder 阶段的请求记录；运行中的
 任务使本地待观察并发与引擎并发对账，完成任务中的错误码决定完成或失败。当前
 PAI-vLLM 端的 Encoder 状态上报不属于 FlexLB 实现范围。
-`WorkerStatusPB` 由 `EngineStatusConverter.convertToStatusObservation` 转成不可变的
+`WorkerStatusPB` 由 `EngineStatusConverter.convertToStatusObservation` 转成
 `WorkerStatus.StatusObservation`。其中 `activeTasks` 对应引擎的 `running_task_info`，
 保存所有尚未完成的任务，包括 `PENDING`、`RECEIVED`、`KV_ALLOCATED` 和 `RUNNING` 阶段；
 `finishedTasks` 单独保存完成上报。任务按字符串 request ID 索引，并保留各自的 `phase`。

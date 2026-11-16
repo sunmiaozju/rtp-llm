@@ -26,7 +26,7 @@ class EncoderStrategyTest {
         endpoint("zero-kv", 8004, true, 0, 1, 1, 0);
         endpoint("small-kv", 8002, true, 10, 1, 1, 0);
         endpoint("winner", 8003, true, 30, 1, 1, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("busy", "zero-kv", "small-kv", "winner"));
 
         try (SelectedRole selected = strategy.select(context(), "group")) {
@@ -41,7 +41,7 @@ class EncoderStrategyTest {
         endpoint("negative", 8002, true, -1, 2, 0, 0);
         endpoint("pending", 8003, true, 100, 0, 0, 3);
         endpoint("winner", 8004, true, 1, 1, 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("dead", "negative", "pending", "winner"));
 
         try (SelectedRole selected = strategy.select(context(), "group")) {
@@ -52,7 +52,7 @@ class EncoderStrategyTest {
     @Test
     void returnsNoSelectionWhenNoLiveWorkerExists() {
         endpoint("dead", 8001, false, -1, 0, 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("dead"));
 
         assertNull(strategy.select(context(), "group"));
@@ -62,7 +62,7 @@ class EncoderStrategyTest {
     void selectsZeroKvWorkerWhenItHasLessConcurrentWork() {
         endpoint("positive", 8001, true, 100, 1, 0, 0);
         endpoint("zero", 8002, true, 0, 0, 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("positive", "zero"));
 
         try (SelectedRole selected = strategy.select(context(), "group")) {
@@ -76,7 +76,7 @@ class EncoderStrategyTest {
         EncoderEndpoint shortJobs = endpoint("short-jobs", 8002, true, -1, 4, 0, 0);
         when(longJob.inflightUncachedTokenEstimate()).thenReturn(1000L);
         when(shortJobs.inflightUncachedTokenEstimate()).thenReturn(40L);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("long-job", "short-jobs"));
 
         try (SelectedRole selected = strategy.select(context(1000L, 200L), "group")) {
@@ -88,7 +88,7 @@ class EncoderStrategyTest {
     void queueModeSkipsWorkersAtEncoderInflightLimit() {
         endpoint("at-cap", 8001, true, 0, 1, 1, 0);
         endpoint("winner", 8002, true, 0, 1, 0, 0);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("at-cap", "winner"));
 
         BalanceContext context = context();
@@ -103,7 +103,7 @@ class EncoderStrategyTest {
     void queueModeReturnsNullWhenEveryWorkerIsAtEncoderInflightLimit() {
         endpoint("running", 8001, true, 0, 1, 0, 0);
         endpoint("pending", 8002, true, 0, 0, 0, 1);
-        when(directory.endpointAddressSnapshot(RoleType.ENCODER))
+        when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("running", "pending"));
 
         BalanceContext context = context();

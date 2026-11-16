@@ -4,12 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.ToLongFunction;
 
-/** Immutable, payload-free features retained for prediction and learning. */
+/**
+ * Payload-free features retained for prediction and learning; retained item lists must not be modified.
+ */
 public record PrefillBatchFeatures(List<Item> items) {
-
-    public PrefillBatchFeatures {
-        items = List.copyOf(items);
-    }
 
     /**
      * Materialize predictor features without depending on a scheduling item
