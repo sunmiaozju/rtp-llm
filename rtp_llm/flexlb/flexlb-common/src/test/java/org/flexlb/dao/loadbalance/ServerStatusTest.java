@@ -16,12 +16,11 @@ class ServerStatusTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
-    void deserializesNullPreemptionIdsAsEmptyListAndCopiesThem() throws Exception {
+    void deserializesNullPreemptionIdsAsEmptyList() throws Exception {
         ServerStatus status = objectMapper.readValue(
                 "{\"preempt_request_ids\":null}", ServerStatus.class);
 
         assertEquals(List.of(), status.getPreemptRequestIds());
-        assertEquals(List.of(), ServerStatus.copyOf(status).getPreemptRequestIds());
         assertEquals(0, objectMapper.valueToTree(status).get("preempt_request_ids").size());
     }
 

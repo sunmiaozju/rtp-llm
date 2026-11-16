@@ -18,7 +18,9 @@ import java.util.List;
 @JsonIgnoreProperties(ignoreUnknown = true)
 @Data
 public class ServerStatus {
-    /** Exact ViT endpoint generation retained across routing and status copies. */
+    /**
+     * Exact ViT endpoint generation retained in the selected route.
+     */
     @JsonProperty("worker_generation")
     @JsonInclude(JsonInclude.Include.NON_DEFAULT)
     private long workerGeneration;
@@ -93,36 +95,6 @@ public class ServerStatus {
 
     @JsonProperty("message")
     private String message;
-
-    /**
-     * Returns an independent copy, or null when the source is null.
-     * The ViT generation remains part of the copied selection identity.
-     */
-    public static ServerStatus copyOf(ServerStatus source) {
-        if (source == null) {
-            return null;
-        }
-        ServerStatus copy = new ServerStatus();
-        copy.role = source.role;
-        copy.serverIp = source.serverIp;
-        copy.httpPort = source.httpPort;
-        copy.grpcPort = source.grpcPort;
-        copy.preemptRequestIds = List.copyOf(source.preemptRequestIds);
-        copy.dpRank = source.dpRank;
-        copy.engineIndex = source.engineIndex;
-        copy.routingEngineIndex = source.routingEngineIndex;
-        copy.routingMultiEngineNum = source.routingMultiEngineNum;
-        copy.workerIdentity = source.workerIdentity;
-        copy.prefillTime = source.prefillTime;
-        copy.group = source.group;
-        copy.workerGeneration = source.workerGeneration;
-        copy.debugInfo = DebugInfo.copyOf(source.debugInfo);
-        copy.requestId = source.requestId;
-        copy.success = source.success;
-        copy.code = source.code;
-        copy.message = source.message;
-        return copy;
-    }
 
     /**
      * Sets the selected engine identity for internal routing and the schedule wire response.

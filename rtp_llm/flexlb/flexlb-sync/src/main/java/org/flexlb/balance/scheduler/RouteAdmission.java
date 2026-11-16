@@ -256,9 +256,8 @@ public final class RouteAdmission implements AutoCloseable {
         if (!Objects.equals(context.getRequestId(), requestId)) {
             throw new IllegalArgumentException("admission cannot build another request");
         }
-        return new ScheduledRequest(context, future, response, ServerStatus.copyOf(prefillStatus()),
-                ServerStatus.copyOf(decodeStatus()), prefillEndpoint(), decodeEndpoint(),
-                decodeDecideInfo.reservation(), enqueuedAtMs, decodeDecideInfo);
+        return new ScheduledRequest(context, future, response, prefillStatus(), decodeStatus(), prefillEndpoint(),
+                decodeEndpoint(), decodeDecideInfo.reservation(), enqueuedAtMs, decodeDecideInfo);
     }
 
     private PlacementKey decodePlacementKey() {

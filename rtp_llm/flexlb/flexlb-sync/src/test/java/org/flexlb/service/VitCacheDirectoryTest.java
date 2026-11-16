@@ -358,21 +358,20 @@ class VitCacheDirectoryTest {
         verify(grpc, times(4)).getMultimodalCacheStatusAsync(any(), eq(8001), any(), eq(2000L));
     }
     @Test
-    void selectionKeepsGenerationThroughCopyAndHold() throws Exception {
+    void selectionKeepsGenerationThroughSerializationAndHold() throws Exception {
         snapshot(a, "epoch-a", "image");
         var ctx = context("image");
         var selected = selector.select(ctx, "one");
-        var copied = org.flexlb.dao.loadbalance.ServerStatus.copyOf(selected);
         var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
         assertFalse(mapper.writeValueAsString(new org.flexlb.dao.loadbalance.ServerStatus())
                 .contains("worker_generation"));
-        copied = mapper.readValue(mapper.writeValueAsBytes(copied),
-                org.flexlb.dao.loadbalance.ServerStatus.class);
-        assertEquals(a.getGenerationId(), copied.getWorkerGeneration());
-        ctx.getRequest().setSelectedVit(copied);
-        copied.setWorkerGeneration(0);
+        var roundTripped =
+                mapper.readValue(mapper.writeValueAsBytes(selected), org.flexlb.dao.loadbalance.ServerStatus.class);
+        assertEquals(a.getGenerationId(), roundTripped.getWorkerGeneration());
+        ctx.getRequest().setSelectedVit(roundTripped);
+        roundTripped.setWorkerGeneration(0);
         assertFalse(selector.validate(ctx, "one").isSuccess());
-        copied.setWorkerGeneration(a.getGenerationId());
+        roundTripped.setWorkerGeneration(a.getGenerationId());
         try (var held = selector.selectHeld(ctx, "one")) {
             org.junit.jupiter.api.Assertions.assertNotNull(held);
             assertEquals(a.getGenerationId(), held.serverStatus().getWorkerGeneration());

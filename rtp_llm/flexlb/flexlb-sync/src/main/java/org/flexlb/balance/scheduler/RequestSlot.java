@@ -701,8 +701,7 @@ public final class RequestSlot {
                     : failure.getErrorMessage() == null ? "eviction admission failed" : failure.getErrorMessage();
             TerminalOutcome outcome = pendingCancellation == null ? TerminalOutcome.fail(message)
                     : TerminalOutcome.cancellation(pendingCancellation, message);
-            Response response = pendingCancellation == null ? failure
-                    : Response.copyOf(cancellationResponse);
+            Response response = pendingCancellation == null ? failure : cancellationResponse;
             effect = RequestEffect.terminal(claimTerminalActionLocked(null, outcome, response, true), null);
         }
         if (effect.terminal() != null || pendingCancellation == null || !ownsActiveGenerationLocked()) { return effect; }
@@ -962,15 +961,18 @@ public final class RequestSlot {
     // ── 派发失败清理：选定响应 → 两侧结算 → 单调合并进度 ──
 
     /** Select the failure now; endpoint cleanup and protocol completion may follow later. */
-    private SelectedPublication selectDeliveryFailureLocked(ScheduledRequest exact, DeliveryResult.Status source, String detail) {
+    private SelectedPublication selectDeliveryFailureLocked(ScheduledRequest exact,
+                                                            DeliveryResult.Status source,
+                                                            String detail) {
         requireSlotLock("request failure");
         if (!ownsActiveItem(exact) || cleanupProgress != null) { return null; }
         CancelReason cancellation = cancellationReason != null ? cancellationReason : pendingAdmissionCancelReason;
         String message = cancellation == null ? detail : cancellation.getMessage() + "; " + detail;
         TerminalOutcome outcome = cancellation == null ? TerminalOutcome.fail(message)
                 : TerminalOutcome.cancellation(cancellation, message);
-        Response response = cancellation == null ? buildErrorResponse(StrategyErrorType.DISPATCH_FAILED, message)
-                : Response.copyOf(cancellationResponse);
+        Response response = cancellation == null
+                ? buildErrorResponse(StrategyErrorType.DISPATCH_FAILED, message)
+                : cancellationResponse;
         PublicationPermit permit = publicationWinner == null && !future.isDone()
                 ? requirePublicationPermitLocked(PublicationKind.TERMINAL) : null;
         cleanupProgress = new CleanupProgress(exact, source);
@@ -1364,7 +1366,7 @@ public final class RequestSlot {
         if (active != null && !canClaimLocalTerminalLocked()) { return null; }
         String message = cancellationReason.getMessage();
         return claimTerminalActionLocked(null, TerminalOutcome.cancellation(cancellationReason, message),
-                Response.copyOf(cancellationResponse), true);
+                cancellationResponse, true);
     }
 
     private boolean hasCancellationFirstCauseLocked() {
@@ -2065,7 +2067,8 @@ public final class RequestSlot {
             default -> throw new IllegalStateException("unsupported request end: " + event.kind());
         }
         Response response = hasCancellationFirstCauseLocked() && cancellationResponse != null
-                ? Response.copyOf(cancellationResponse) : buildErrorResponse(error, message);
+                ? cancellationResponse
+                : buildErrorResponse(error, message);
         return claimTerminalActionLocked(event, outcome, response, true);
     }
 

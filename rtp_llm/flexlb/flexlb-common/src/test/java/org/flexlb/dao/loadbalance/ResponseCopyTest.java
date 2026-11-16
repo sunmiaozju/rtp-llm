@@ -7,13 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ResponseCopyTest {
     private final ObjectMapper mapper = new ObjectMapper();
 
     @Test
-    void copiesAllResponseDataWithoutSharingMutableObjects() throws Exception {
+    void buildsSuccessResponseSharingSelectedWorkerDataAndPreservingOtherFields() throws Exception {
         Response source = mapper.readValue("""
                 {
                   "server_status": [{
@@ -38,26 +39,25 @@ class ResponseCopyTest {
                 }
                 """, Response.class);
 
-        Response copy = Response.copyOf(source);
-        assertEquals(mapper.valueToTree(source), mapper.valueToTree(copy));
-        assertNotSame(source, copy);
-        assertNotSame(source.getServerStatus(), copy.getServerStatus());
-        assertNotSame(source.getServerStatus().get(0), copy.getServerStatus().get(0));
-        assertNotSame(source.getServerStatus().get(0).getDebugInfo(),
-                copy.getServerStatus().get(0).getDebugInfo());
-        assertNotSame(source.getWorkerSummary(), copy.getWorkerSummary());
-        assertNotSame(source.getWorkerSummary().get("PREFILL"), copy.getWorkerSummary().get("PREFILL"));
+        var originalJson = mapper.valueToTree(source);
+        Response response = Response.buildSuccessResponse(source, false);
 
-        copy.getServerStatus().get(0).getDebugInfo().setQueueSize(99);
-        copy.getServerStatus().get(0).setServerIp("changed");
-        copy.getServerStatus().clear();
-        copy.getWorkerSummary().get("PREFILL").setAlive(99);
-        copy.getWorkerSummary().clear();
-        assertEquals(5, source.getServerStatus().get(0).getDebugInfo().getQueueSize());
-        assertEquals("127.0.0.1", source.getServerStatus().get(0).getServerIp());
-        assertEquals(2, source.getServerStatus().size());
-        assertEquals(13, source.getWorkerSummary().get("PREFILL").getAlive());
-        assertEquals(2, source.getWorkerSummary().size());
+        assertNotSame(source, response);
+        assertSame(source.getServerStatus(), response.getServerStatus());
+        assertSame(source.getServerStatus().getFirst(), response.getServerStatus().getFirst());
+        assertSame(source.getServerStatus().getFirst().getDebugInfo(),
+                response.getServerStatus().getFirst().getDebugInfo());
+        assertSame(source.getWorkerSummary(), response.getWorkerSummary());
+        assertSame(source.getWorkerSummary().get("PREFILL"), response.getWorkerSummary().get("PREFILL"));
+        assertTrue(response.isSuccess());
+        assertEquals(200, response.getCode());
+        assertFalse(response.isEnqueuedByMaster());
+        assertEquals(source.getErrorMessage(), response.getErrorMessage());
+        assertEquals(source.getRealMasterHost(), response.getRealMasterHost());
+        assertEquals(source.getQueueLength(), response.getQueueLength());
+        assertEquals(source.isReady(), response.isReady());
+        assertEquals(source.getAdmissionRejectReason(), response.getAdmissionRejectReason());
+        assertEquals(originalJson, mapper.valueToTree(source));
     }
 
     @Test
@@ -86,7 +86,7 @@ class ResponseCopyTest {
     }
 
     @Test
-    void copiesSelectedLogicalEngineIdentity() {
+    void preservesSelectedLogicalEngineIdentity() {
         ServerStatus sourceStatus = new ServerStatus();
         sourceStatus.setServerIp("10.0.0.8");
         sourceStatus.setHttpPort(8080);
@@ -94,23 +94,20 @@ class ResponseCopyTest {
         Response source = new Response();
         source.setServerStatus(java.util.List.of(sourceStatus));
 
-        ServerStatus copy = Response.copyOf(source).getServerStatus().getFirst();
+        ServerStatus selected = Response.buildSuccessResponse(source, false).getServerStatus().getFirst();
 
-        assertEquals(1, copy.getEngineIndex());
-        assertEquals(2, copy.getRoutingMultiEngineNum());
-        assertEquals("10.0.0.8:8080@1", copy.getLogicalIpPort());
+        assertSame(sourceStatus, selected);
+        assertEquals(1, selected.getEngineIndex());
+        assertEquals(2, selected.getRoutingMultiEngineNum());
+        assertEquals("10.0.0.8:8080@1", selected.getLogicalIpPort());
     }
 
     @Test
-    void preservesNullSourcesAndNestedValues() {
-        assertNull(Response.copyOf(null));
-        assertNull(ServerStatus.copyOf(null));
-        assertNull(DebugInfo.copyOf(null));
-        assertNull(Response.WorkerRoleSummary.copyOf(null));
-        Response copy = Response.copyOf(new Response());
-        assertNull(copy.getServerStatus());
-        assertNull(copy.getWorkerSummary());
-        assertNull(ServerStatus.copyOf(new ServerStatus()).getDebugInfo());
-        assertTrue(copy.isReady());
+    void preservesNullCollectionsAndDefaultReadiness() {
+        Response response = Response.buildSuccessResponse(new Response(), false);
+
+        assertNull(response.getServerStatus());
+        assertNull(response.getWorkerSummary());
+        assertTrue(response.isReady());
     }
 }

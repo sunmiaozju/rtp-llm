@@ -232,6 +232,8 @@ class DefaultRouterTest {
                 List.of(prefill.selection(), selectedDecode.selection()), new Response(), frozen)) {
             assertTrue(route.reserveDecode());
             var item = route.createScheduledRequest(context, new CompletableFuture<>(), System.currentTimeMillis());
+            assertSame(prefill.selection().serverStatus(), item.prefill());
+            assertSame(selectedDecode.selection().serverStatus(), item.decode());
             assertSame(frozen.requirement().capacity(), route.decodeDecideInfo().requirement().capacity());
             assertSame(frozen.requirement().capacity(), item.decodeDecideInfo().requirement().capacity());
             assertSame(frozen.requirement().costFormula(), route.decodeDecideInfo().requirement().costFormula());
