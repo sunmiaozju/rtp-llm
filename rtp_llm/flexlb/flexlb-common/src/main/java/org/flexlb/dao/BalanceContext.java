@@ -288,12 +288,6 @@ public class BalanceContext {
             Map<RoleType, String> selectionReasons,
             Map<RoleType, RoutingDecision> routingDecisions,
             Map<RoleType, Integer> routingAttempts) {
-        public RoutingTelemetry {
-            cacheSelections = Map.copyOf(cacheSelections);
-            selectionReasons = Map.copyOf(selectionReasons);
-            routingDecisions = Map.copyOf(routingDecisions);
-            routingAttempts = Map.copyOf(routingAttempts);
-        }
     }
 
     public record CacheMatchSelection(
