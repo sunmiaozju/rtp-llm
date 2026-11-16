@@ -16,6 +16,5 @@ public record QueuedRequestsSnapshot(
             throw new IllegalArgumentException(
                     "queueVersion must be non-negative");
         }
-        items = List.copyOf(items);
     }
 }

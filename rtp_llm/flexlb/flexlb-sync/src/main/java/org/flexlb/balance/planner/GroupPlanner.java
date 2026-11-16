@@ -154,7 +154,7 @@ public final class GroupPlanner {
             String reason) {
 
         public Plan {
-            items = items == null ? List.of() : List.copyOf(items);
+            items = items == null ? List.of() : items;
             validateSelectedPrediction(items, selectedPredictionMs);
         }
 

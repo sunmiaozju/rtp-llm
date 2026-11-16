@@ -310,15 +310,14 @@ public class DefaultBatchDispatcher {
                                              long predictedMs,
                                              String decisionReason,
                                              BiConsumer<ScheduledRequest, DeliveryResult> observer) {
-        List<ScheduledRequest> frozenItems = List.copyOf(exactItems);
-        if (frozenItems.isEmpty()) {
+        if (exactItems.isEmpty()) {
             throw new IllegalArgumentException("batch cannot be empty");
         }
         if (batchId <= 0L || predictedMs < 0L) {
             throw new IllegalArgumentException(
                     "batchId must be positive and predictedMs non-negative");
         }
-        return new DispatchTask(frozenItems, frozenItems.getFirst().prefillEp(), batchId, predictedMs, decisionReason,
+        return new DispatchTask(exactItems, exactItems.getFirst().prefillEp(), batchId, predictedMs, decisionReason,
                 observer);
     }
 

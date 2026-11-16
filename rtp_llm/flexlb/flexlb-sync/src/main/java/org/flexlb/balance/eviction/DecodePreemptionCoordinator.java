@@ -59,7 +59,6 @@ public final class DecodePreemptionCoordinator {
             if (endpoint == null || victims == null || victims.isEmpty()) {
                 throw new IllegalArgumentException("endpoint and victims are required");
             }
-            victims = List.copyOf(victims);
             if (incomingRequestId == null || incomingRequestId.isBlank()) {
                 throw new IllegalArgumentException(
                         "incoming request id must not be blank");

@@ -15,7 +15,6 @@ public record PlacementResult<V, B>(
 
     public PlacementResult {
         Objects.requireNonNull(status, "status");
-        diagnostics = diagnostics == null ? null : Map.copyOf(diagnostics);
         boolean success = status == Status.SUCCESS;
         boolean rejected = status == Status.REJECTED;
         boolean blocked = status == Status.BLOCKED;

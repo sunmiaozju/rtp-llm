@@ -402,10 +402,12 @@ public class CostBasedPrefillStrategy {
         return blockedWithDiagnostics(failure, role, workerCount, Map.of("observedRequests", observedRequestCount));
     }
 
-    private static PlacementResult<SelectedRole, RoleType> blockedWithDiagnostics(
-            Response failure, RoleType role, int workerCount, Map<String, ?> details) {
+    private static PlacementResult<SelectedRole, RoleType> blockedWithDiagnostics(Response failure,
+                                                                                  RoleType role,
+                                                                                  int workerCount,
+                                                                                  Map<String, ?> details) {
         return PlacementResult.blocked(role, failure, Map.of("role", role.name(), "workers", workerCount,
-                "observedAtMs", System.currentTimeMillis(), "details", Map.copyOf(details)));
+                "observedAtMs", System.currentTimeMillis(), "details", details));
     }
 
     /**
