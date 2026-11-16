@@ -24,13 +24,15 @@ import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.DebugInfo;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.ServerStatus;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.PriorityPreemptionProgress;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.metric.MicrometerFlexMonitor;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
@@ -105,9 +107,8 @@ class PrefillEndpointTest {
         V2TestSupport.dispatch(queue, new DispatchedRequest(request, 10L, 5L));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertEquals(1L, queue.inflightCount());
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(Map.of("901", taskInfo(901L, 0L, null, 0, 10)));
-        response.setRunningTaskInfo(Map.of());
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setFinishedTasks(response, Map.of("901", taskInfo(901L, 0L, null, 0, 10)));
         Runnable notification = EndpointTestSupport.applyStatus(endpoint, response);
         assertEquals(1, queue.dispatchedCount());
         notification.run();
@@ -125,14 +126,14 @@ class PrefillEndpointTest {
         V2TestSupport.dispatch(queue, record);
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(record.statusExpired(System.currentTimeMillis(), 1000L));
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
         response.setAlive(true);
-        response.setRunningTaskInfo(Map.of("902", taskInfo(902L, 0L, TaskPhase.RUNNING, 0, 10)));
-        response.setFinishedTaskInfo(Map.of());
+        WorkerStatusPBs.setRunningTasks(response, Map.of("902", taskInfo(902L, 0L, TaskPhase.RUNNING, 0, 10)));
         var status = endpoint.getStatus();
         response.setStatusVersion(status.appliedStatusCursor().statusVersion());
-        endpoint.observeStatusHeartbeat(status, status.freezeStatusResponse(response)).run();
+        endpoint.observeStatusHeartbeat(status,
+                EngineStatusConverter.convertToStatusObservation(status, response.build())).run();
         queue.removeRequestStatusExpired(System.currentTimeMillis(), 1000L, mock(RequestSchedulerReporter.class));
         assertEquals(1, queue.dispatchedCount());
         assertEquals(1L, queue.inflightCount());
@@ -368,11 +369,10 @@ class PrefillEndpointTest {
         ScheduledRequest item = createScheduledRequest(1L, 500, 200);
         registerBatch(endpoint, 1L, 100, List.of(item));
 
-        Map<String, TaskInfo> finished = new HashMap<>();
-        TaskInfo successTask = new TaskInfo();
-        successTask.setRequestId("1");
+        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
+        TaskInfoPB.Builder successTask = TaskInfoPB.newBuilder();
+        successTask.setRequestIdStr("1");
         successTask.setBatchId(1L);
-        successTask.setErrorCode(0);
         finished.put("1", successTask);
 
         calibrate(finished, Map.of());
@@ -387,7 +387,7 @@ class PrefillEndpointTest {
                 .when(endpointReporter)
                 .reportBatchPredictedTimeMs("PREFILL", "127.0.0.1:8080", 100);
 
-        TaskInfo finished = taskInfo(9L, 9L, null, 0, 125);
+        TaskInfoPB.Builder finished = taskInfo(9L, 9L, null, 0, 125);
         assertDoesNotThrow(() -> calibrate(Map.of("9", finished), Map.of()));
 
         assertEquals(0, endpoint.getInflightBatchCount());
@@ -402,12 +402,12 @@ class PrefillEndpointTest {
         ScheduledRequest item2 = createScheduledRequest(2L, 300, 100);
         registerBatch(endpoint, 1L, 100, List.of(item1, item2));
 
-        Map<String, TaskInfo> finished = new HashMap<>();
-        TaskInfo failedTask = new TaskInfo();
-        failedTask.setRequestId("2");
+        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
+        TaskInfoPB.Builder failedTask = TaskInfoPB.newBuilder();
+        failedTask.setRequestIdStr("2");
         failedTask.setBatchId(1L);
-        failedTask.setErrorCode(500);
-        failedTask.setErrorMessage("engine error");
+        failedTask.getErrorInfoBuilder().setErrorCode(500);
+        failedTask.getErrorInfoBuilder().setErrorMessage("engine error");
         finished.put("2", failedTask);
 
         calibrate(finished, Map.of());
@@ -422,8 +422,8 @@ class PrefillEndpointTest {
         ScheduledRequest longItem = createScheduledRequest(2L, 10_000, 0);
         registerBatch(endpoint, 1L, 2_000, List.of(shortItem, longItem));
 
-        TaskInfo finishedShort = taskInfo(1L, 1L, null, 0, 40);
-        TaskInfo runningLong = taskInfo(2L, 1L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder finishedShort = taskInfo(1L, 1L, null, 0, 40);
+        TaskInfoPB.Builder runningLong = taskInfo(2L, 1L, TaskPhase.RUNNING, 0, 0);
         calibrate(Map.of("1", finishedShort), Map.of("2", runningLong));
 
         assertEquals(1, endpoint.getInflightBatchCount(),
@@ -431,7 +431,7 @@ class PrefillEndpointTest {
         assertEquals(1, endpoint.observedRequestCount(),
                 "the still-running long member must remain in Master accounting");
 
-        TaskInfo finishedLong = taskInfo(2L, 1L, null, 0, 1_900);
+        TaskInfoPB.Builder finishedLong = taskInfo(2L, 1L, null, 0, 1_900);
         calibrate(Map.of("2", finishedLong), Map.of());
 
         assertEquals(0, endpoint.getInflightBatchCount());
@@ -445,9 +445,9 @@ class PrefillEndpointTest {
         ScheduledRequest running = createScheduledRequest(3L, 10_000, 0);
         registerBatch(endpoint, 1L, 2_000, List.of(succeeded, failed, running));
 
-        TaskInfo success = taskInfo(1L, 1L, null, 0, 40);
-        TaskInfo failure = taskInfo(2L, 1L, null, 500, 50);
-        TaskInfo runningTask = taskInfo(3L, 1L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder success = taskInfo(1L, 1L, null, 0, 40);
+        TaskInfoPB.Builder failure = taskInfo(2L, 1L, null, 500, 50);
+        TaskInfoPB.Builder runningTask = taskInfo(3L, 1L, TaskPhase.RUNNING, 0, 0);
         calibrate(Map.of("1", success, "2", failure), Map.of("3", runningTask));
 
         assertEquals(1, endpoint.getInflightBatchCount());
@@ -466,8 +466,8 @@ class PrefillEndpointTest {
                 createScheduledRequest(1L, 500, 200),
                 createScheduledRequest(2L, 10_000, 0)));
 
-        TaskInfo firstFailure = taskInfo(1L, 1L, null, 500, 40);
-        TaskInfo secondFailure = taskInfo(2L, 1L, null, 501, 50);
+        TaskInfoPB.Builder firstFailure = taskInfo(1L, 1L, null, 500, 40);
+        TaskInfoPB.Builder secondFailure = taskInfo(2L, 1L, null, 501, 50);
         calibrate(Map.of("1", firstFailure, "2", secondFailure), Map.of());
 
         assertEquals(0, endpoint.getInflightBatchCount());
@@ -484,7 +484,7 @@ class PrefillEndpointTest {
     @Test
     void repeatedSuccessfulTerminalReportsCompletionExactlyOnce() {
         registerBatch(endpoint, 1L, 100, List.of(createScheduledRequest(1L, 500, 200)));
-        TaskInfo success = taskInfo(1L, 1L, null, 0, 40);
+        TaskInfoPB.Builder success = taskInfo(1L, 1L, null, 0, 40);
 
         calibrate(Map.of("1", success), Map.of());
         calibrate(Map.of("1", success), Map.of());
@@ -566,7 +566,7 @@ class PrefillEndpointTest {
         registerBatch(endpoint, 1L, 2_000, List.of(longItem));
 
         Thread.sleep(150);
-        TaskInfo running = taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder running = taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0);
         calibrate(Map.of(), Map.of("1", running));
 
         assertEquals(0, endpoint.evictExpiredBatches(100),
@@ -575,12 +575,11 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void foreignRunningObservationDoesNotRefreshBatchInactivityTtl()
-            throws InterruptedException {
+    void foreignRunningObservationDoesNotRefreshBatchInactivityTtl() throws InterruptedException {
         registerBatch(endpoint, 1L, 2_000, List.of(createScheduledRequest(1L, 10_000, 0)));
         Thread.sleep(10);
 
-        TaskInfo foreign = taskInfo(999L, 1L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder foreign = taskInfo(999L, 1L, TaskPhase.RUNNING, 0, 0);
         calibrate(Map.of(), Map.of("999", foreign));
 
         assertEquals(1, endpoint.evictExpiredBatches(1));
@@ -617,11 +616,10 @@ class PrefillEndpointTest {
         ScheduledRequest item = createScheduledRequest(1L, 500, 200);
         registerBatch(endpoint, 1L, 100, List.of(item));
 
-        Map<String, TaskInfo> finished = new HashMap<>();
-        TaskInfo badTask = new TaskInfo();
-        badTask.setRequestId("999"); // non-colliding: won't match batchId=1
+        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
+        TaskInfoPB.Builder badTask = TaskInfoPB.newBuilder();
+        badTask.setRequestIdStr("999"); // non-colliding: won't match batchId=1
         badTask.setBatchId(-1);
-        badTask.setErrorCode(0);
         finished.put("1", badTask);
 
         // should not throw, just log a warning for missing non-batch inflight
@@ -645,10 +643,9 @@ class PrefillEndpointTest {
         assertEquals(0, endpoint.getInflightBatchCount());
         assertEquals(1, endpoint.getSingleRequestCount());
 
-        TaskInfo finished = new TaskInfo();
-        finished.setRequestId("101");
+        TaskInfoPB.Builder finished = TaskInfoPB.newBuilder();
+        finished.setRequestIdStr("101");
         finished.setBatchId(-1L);
-        finished.setErrorCode(0);
         calibrate(Map.of("101", finished), Map.of());
 
         assertEquals(0, endpoint.getSingleRequestCount());
@@ -669,10 +666,9 @@ class PrefillEndpointTest {
         assertEquals(2, endpoint.observedRequestCount(),
                 "a terminal without a valid batch id retires no batch member");
 
-        TaskInfo survivingSuccess = new TaskInfo();
-        survivingSuccess.setRequestId("102");
+        TaskInfoPB.Builder survivingSuccess = TaskInfoPB.newBuilder();
+        survivingSuccess.setRequestIdStr("102");
         survivingSuccess.setBatchId(700L);
-        survivingSuccess.setErrorCode(0);
         calibrate(Map.of("102", survivingSuccess), Map.of());
         // The exact-batch terminal retires only its own member; member 101,
         // whose only terminal named no batch id, stays with the original batch.
@@ -700,10 +696,9 @@ class PrefillEndpointTest {
         assertEquals(0, endpoint.getSingleRequestCount());
         assertEquals(1, endpoint.observedRequestCount());
 
-        TaskInfo foreignBatchMemberSuccess = new TaskInfo();
-        foreignBatchMemberSuccess.setRequestId("201");
+        TaskInfoPB.Builder foreignBatchMemberSuccess = TaskInfoPB.newBuilder();
+        foreignBatchMemberSuccess.setRequestIdStr("201");
         foreignBatchMemberSuccess.setBatchId(101L);
-        foreignBatchMemberSuccess.setErrorCode(0);
         calibrate(Map.of("201", foreignBatchMemberSuccess), Map.of());
         assertEquals(0, endpoint.getInflightBatchCount(),
                 "the matching QUEUE batch id must survive until its own member finishes");
@@ -736,7 +731,7 @@ class PrefillEndpointTest {
         assertEquals(1, endpoint.getInflightBatchCount());
         assertEquals(2, endpoint.observedRequestCount());
 
-        TaskInfo canceled = priorityCanceledTask(101L, -1L);
+        TaskInfoPB.Builder canceled = priorityCanceledTask(101L, -1L);
         calibrate(Map.of("101", canceled), Map.of());
         assertEquals(1, endpoint.getInflightBatchCount(),
                 "generic endpoint calibration must not bypass the exact-batch reducer");
@@ -891,11 +886,10 @@ class PrefillEndpointTest {
         assertEquals(1, endpoint.getInflightBatchCount());
 
         // Engine reports success for batchId=1 but with requestId=999 (foreign)
-        Map<String, TaskInfo> finished = new HashMap<>();
-        TaskInfo foreignTask = new TaskInfo();
+        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
+        TaskInfoPB.Builder foreignTask = TaskInfoPB.newBuilder();
         foreignTask.setBatchId(1L);
-        foreignTask.setRequestId("999");
-        foreignTask.setErrorCode(0);
+        foreignTask.setRequestIdStr("999");
         finished.put("999", foreignTask);
 
         calibrate(finished, new HashMap<>());
@@ -908,11 +902,10 @@ class PrefillEndpointTest {
         ScheduledRequest item = createScheduledRequest(100L, 500, 200);
         registerBatch(endpoint, 1L, 100, List.of(item));
 
-        Map<String, TaskInfo> finished = new HashMap<>();
-        TaskInfo task = new TaskInfo();
+        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
         task.setBatchId(1L);
-        task.setRequestId("100");
-        task.setErrorCode(0);
+        task.setRequestIdStr("100");
         finished.put("100", task);
 
         calibrate(finished, new HashMap<>());
@@ -925,20 +918,18 @@ class PrefillEndpointTest {
         ScheduledRequest sibling = createScheduledRequest(102L, 300, 100);
         registerBatch(endpoint, 7L, 100, List.of(reconciling, sibling));
 
-        TaskInfo siblingSuccess = new TaskInfo();
+        TaskInfoPB.Builder siblingSuccess = TaskInfoPB.newBuilder();
         siblingSuccess.setBatchId(7L);
-        siblingSuccess.setRequestId("102");
-        siblingSuccess.setErrorCode(0);
+        siblingSuccess.setRequestIdStr("102");
         calibrate(Map.of("102", siblingSuccess), Map.of());
 
         assertEquals(1, endpoint.getInflightBatchCount(),
                 "sibling success must not erase the reconciling batch member");
         assertEquals(1, endpoint.observedRequestCount());
 
-        TaskInfo ambiguousMemberSuccess = new TaskInfo();
+        TaskInfoPB.Builder ambiguousMemberSuccess = TaskInfoPB.newBuilder();
         ambiguousMemberSuccess.setBatchId(7L);
-        ambiguousMemberSuccess.setRequestId("101");
-        ambiguousMemberSuccess.setErrorCode(0);
+        ambiguousMemberSuccess.setRequestIdStr("101");
         calibrate(Map.of("101", ambiguousMemberSuccess), Map.of());
         assertEquals(0, endpoint.getInflightBatchCount(),
                 "an exact-batch terminal settles the remaining member");
@@ -955,8 +946,8 @@ class PrefillEndpointTest {
         registerBatch(endpoint, 7L, 100,
                 List.of(firstItem, sibling));
 
-        TaskInfo firstFailure = taskInfo(101L, 7L, null, 500, 40);
-        TaskInfo siblingFailure = taskInfo(102L, 7L, null, 501, 50);
+        TaskInfoPB.Builder firstFailure = taskInfo(101L, 7L, null, 500, 40);
+        TaskInfoPB.Builder siblingFailure = taskInfo(102L, 7L, null, 501, 50);
         calibrate(Map.of("101", firstFailure, "102", siblingFailure), Map.of());
 
         assertEquals(0, endpoint.getInflightBatchCount());
@@ -990,19 +981,18 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void runningCommittedWorkMetricDecreasesWithElapsedTime()
-            throws InterruptedException {
+    void runningCommittedWorkMetricDecreasesWithElapsedTime() throws InterruptedException {
         ScheduledRequest item = createScheduledRequest(1L, 500, 200);
         registerBatch(endpoint, 1L, 5000, List.of(item));
 
         long remainingBefore = endpoint.getLoadMetric().orElseThrow();
 
         // Mark the batch as running so elapsed time counts
-        Map<String, TaskInfo> running = new HashMap<>();
-        TaskInfo runningTask = new TaskInfo();
-        runningTask.setRequestId("1");
+        Map<String, TaskInfoPB.Builder> running = new HashMap<>();
+        TaskInfoPB.Builder runningTask = TaskInfoPB.newBuilder();
+        runningTask.setRequestIdStr("1");
         runningTask.setBatchId(1L);
-        runningTask.setPhase(TaskPhase.RUNNING);
+        WorkerStatusPBs.phase(runningTask, TaskPhase.RUNNING);
         running.put("1", runningTask);
         calibrate(Map.of(), running);
 
@@ -1059,27 +1049,22 @@ class PrefillEndpointTest {
                 createScheduledRequest(101L, 500, 0),
                 createScheduledRequest(102L, 500, 0)));
 
-        TaskInfo overlapping = taskInfo(102L, 1L, TaskPhase.RUNNING, 0, 0);
-        TaskInfo untrackedOne = taskInfo(900L, 90L, TaskPhase.RUNNING, 0, 0);
-        TaskInfo untrackedTwo = taskInfo(901L, 91L, TaskPhase.RECEIVED, 0, 0);
-        TaskInfo duplicateUntracked = taskInfo(900L, 92L, TaskPhase.RUNNING, 0, 0);
-        TaskInfo overlayOnly = taskInfo(999L, 99L, TaskPhase.PENDING, 0, 0);
-        overlayOnly.setPriorityPreemptionProgress(PriorityPreemptionProgress.CANCELING);
+        TaskInfoPB.Builder overlapping = taskInfo(102L, 1L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder untrackedOne = taskInfo(900L, 90L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder untrackedTwo = taskInfo(901L, 91L, TaskPhase.RECEIVED, 0, 0);
+        TaskInfoPB.Builder duplicateUntracked = taskInfo(900L, 92L, TaskPhase.RUNNING, 0, 0);
+        TaskInfoPB.Builder overlayOnly = taskInfo(999L, 99L, TaskPhase.PENDING, 0, 0);
+        overlayOnly.setPriorityPreemptionProgress(WorkerStatusPBs.progress(PriorityPreemptionProgress.CANCELING));
 
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(Map.of());
-        response.setRunningTaskInfo(Map.of(
-                "102", overlapping,
-                "900a", untrackedOne,
-                "901", untrackedTwo,
-                "900b", duplicateUntracked,
-                "999", overlayOnly));
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, Map.of("102", overlapping, "900a", untrackedOne, "901", untrackedTwo,
+                "900b", duplicateUntracked, "999", overlayOnly));
         EndpointTestSupport.applyStatus(endpoint, response);
 
         assertEquals(4, endpoint.observedRequestCount(),
                 "two local requests plus two unique Engine-only tasks");
 
-        response.setRunningTaskInfo(Map.of());
+        response.clearRunningTaskInfo();
         EndpointTestSupport.applyStatus(endpoint, response);
         assertEquals(2, endpoint.observedRequestCount());
     }
@@ -1088,9 +1073,7 @@ class PrefillEndpointTest {
     void observedRequestCountFallsBackToEngineQueryLengthScalars() {
         registerBatch(endpoint, 1L, 100, List.of(createScheduledRequest(101L, 500, 0)));
 
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(Map.of());
-        response.setRunningTaskInfo(Map.of());
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
         response.setWaitingQueryLen(3);
         response.setRunningQueryLen(2);
         EndpointTestSupport.applyStatus(endpoint, response);
@@ -1105,10 +1088,9 @@ class PrefillEndpointTest {
     void observedRequestCountUsesConservativeScalarBoundForPartialTaskDetails() {
         registerBatch(endpoint, 1L, 100, List.of(createScheduledRequest(101L, 500, 0)));
 
-        TaskInfo overlapping = taskInfo(101L, 1L, TaskPhase.RUNNING, 0, 0);
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(Map.of());
-        response.setRunningTaskInfo(Map.of("101", overlapping));
+        TaskInfoPB.Builder overlapping = taskInfo(101L, 1L, TaskPhase.RUNNING, 0, 0);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, Map.of("101", overlapping));
         response.setWaitingQueryLen(3);
         response.setRunningQueryLen(2);
         EndpointTestSupport.applyStatus(endpoint, response);
@@ -1186,7 +1168,7 @@ class PrefillEndpointTest {
         try {
             BatchSchedulerReporter reporter = new BatchSchedulerReporter(new MicrometerFlexMonitor(registry));
             reporter.init();
-            Map<String, TaskInfo> running = new HashMap<>();
+            Map<String, TaskInfoPB.Builder> running = new HashMap<>();
             for (long requestId = 1; requestId <= 4; requestId++) {
                 ScheduledRequest item = createScheduledRequest(metricsEndpoint, requestConfig, requestId, 500, 0);
                 try (var reservation = EndpointTestSupport.offerAndTakeSingleReservation(metricsEndpoint, item, 100L);
@@ -1199,8 +1181,8 @@ class PrefillEndpointTest {
             assertEquals(4.0, registry.get("flexlb.app.flexlb.inflight.request.count")
                     .tags("role", "PREFILL", "engineIp", "127.0.0.4:8080").gauge().value());
 
-            WorkerStatusResponse response = new WorkerStatusResponse();
-            response.setRunningTaskInfo(running);
+            WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(response, running);
             EndpointTestSupport.applyStatus(metricsEndpoint, response);
             metricsEndpoint.reportBatchMetrics(reporter);
 
@@ -1232,8 +1214,8 @@ class PrefillEndpointTest {
             assertEquals(1.0, registry.get("flexlb.app.flexlb.worker.status.unconfirmed.request.count")
                     .tags("role", "PREFILL", "engineIp", "127.0.0.4:8080").gauge().value());
 
-            WorkerStatusResponse running = new WorkerStatusResponse();
-            running.setRunningTaskInfo(Map.of("1", taskInfo(1L, 0L, phase, 0, 0)));
+            WorkerStatusPB.Builder running = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(running, Map.of("1", taskInfo(1L, 0L, phase, 0, 0)));
             EndpointTestSupport.applyStatus(metricsEndpoint, running);
             metricsEndpoint.reportBatchMetrics(reporter);
             assertEquals(0.0, registry.get("flexlb.app.flexlb.worker.status.unconfirmed.request.count")
@@ -1241,8 +1223,8 @@ class PrefillEndpointTest {
             assertEquals(1.0, registry.get("flexlb.app.flexlb.inflight.request.count")
                     .tags("role", "PREFILL", "engineIp", "127.0.0.4:8080").gauge().value());
 
-            WorkerStatusResponse finished = new WorkerStatusResponse();
-            finished.setFinishedTaskInfo(Map.of("1", taskInfo(1L, 0L, TaskPhase.RUNNING, 0, 100L)));
+            WorkerStatusPB.Builder finished = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setFinishedTasks(finished, Map.of("1", taskInfo(1L, 0L, TaskPhase.RUNNING, 0, 100L)));
             EndpointTestSupport.applyStatus(metricsEndpoint, finished);
             metricsEndpoint.reportBatchMetrics(reporter);
             assertEquals(0.0, registry.get("flexlb.app.flexlb.inflight.request.count")
@@ -1267,8 +1249,8 @@ class PrefillEndpointTest {
             endpoint.reportBatchMetrics(reporter);
             assertEquals(2.0, registry.get("flexlb.app.flexlb.inflight.request.count")
                     .tags("role", "PREFILL", "engineIp", "127.0.0.1:8080").gauge().value());
-            WorkerStatusResponse response = new WorkerStatusResponse();
-            response.setRunningTaskInfo(Map.of("101", taskInfo(101L, 1L, TaskPhase.RECEIVED, 0, 0)));
+            WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(response, Map.of("101", taskInfo(101L, 1L, TaskPhase.RECEIVED, 0, 0)));
             EndpointTestSupport.applyStatus(endpoint, response);
             endpoint.reportBatchMetrics(reporter);
 
@@ -1293,8 +1275,8 @@ class PrefillEndpointTest {
             reporter.init();
             ScheduledRequest item = createScheduledRequest(metricsEndpoint, requestConfig, 1L, 500, 0);
             assertTrue(EndpointTestSupport.offer(metricsEndpoint, item));
-            WorkerStatusResponse response = new WorkerStatusResponse();
-            response.setRunningTaskInfo(Map.of("900", taskInfo(900L, 0L, TaskPhase.RECEIVED, 0, 0)));
+            WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(response, Map.of("900", taskInfo(900L, 0L, TaskPhase.RECEIVED, 0, 0)));
             EndpointTestSupport.applyStatus(metricsEndpoint, response);
             metricsEndpoint.reportBatchMetrics(reporter);
 
@@ -1339,8 +1321,8 @@ class PrefillEndpointTest {
                     target.reportBatchMetrics(reporter);
                 }
             }
-            WorkerStatusResponse response = new WorkerStatusResponse();
-            response.setRunningTaskInfo(Map.of("1", taskInfo(1L, 0L, TaskPhase.RUNNING, 0, 0)));
+            WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(response, Map.of("1", taskInfo(1L, 0L, TaskPhase.RUNNING, 0, 0)));
             EndpointTestSupport.applyStatus(first, response);
             first.reportBatchMetrics(reporter);
 
@@ -1417,8 +1399,8 @@ class PrefillEndpointTest {
 
     @Test
     void applyWorkerStatusResponseUpdatesAliveStatusOnSameGeneration() {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
         response.setAlive(true);
 
         EndpointTestSupport.applyStatus(endpoint, response);
@@ -1622,11 +1604,11 @@ class PrefillEndpointTest {
                 routeConfig, strategy, runtime.events(), endpointReporter);
         routeEndpoint.startGeneration();
         try {
-            TaskInfo unknown = taskInfo(8_402L, -1L, TaskPhase.RUNNING, 0, -1L);
+            TaskInfoPB.Builder unknown = taskInfo(8_402L, -1L, TaskPhase.RUNNING, 0, -1L);
             unknown.setInputLength(128L);
-            WorkerStatusResponse status = new WorkerStatusResponse();
-            status.setRunningTaskInfo(Map.of("8402", unknown));
-            status.setRunningQueryLen(1L);
+            WorkerStatusPB.Builder status = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(status, Map.of("8402", unknown));
+            status.setRunningQueryLen(1);
             EndpointTestSupport.applyStatus(routeEndpoint, status).run();
             ScheduledRequest waiting = createScheduledRequest(routeEndpoint, routeConfig, 8_401L, 128, 0);
             assertTrue(EndpointTestSupport.offer(routeEndpoint, waiting));
@@ -1647,13 +1629,14 @@ class PrefillEndpointTest {
         }
     }
 
-    private static void applyHeartbeat(PrefillEndpoint endpoint, WorkerStatusResponse response) {
+    private static void applyHeartbeat(PrefillEndpoint endpoint, WorkerStatusPB.Builder response) {
         WorkerStatus status = endpoint.getStatus();
         Runnable statusNotifier;
         status.lock.lock();
         try {
             response.setStatusVersion(status.appliedStatusCursor().statusVersion());
-            statusNotifier = endpoint.observeStatusHeartbeat(status, status.freezeStatusResponse(response));
+            statusNotifier = endpoint.observeStatusHeartbeat(status,
+                    EngineStatusConverter.convertToStatusObservation(status, response.build()));
         } finally {
             status.lock.unlock();
         }
@@ -1774,31 +1757,27 @@ class PrefillEndpointTest {
                 ctx, null, null, null, null, owner, null, null, now);
     }
 
-    private void calibrate(Map<String, TaskInfo> finished, Map<String, TaskInfo> running) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(finished);
-        response.setRunningTaskInfo(running);
+    private void calibrate(Map<String, TaskInfoPB.Builder> finished, Map<String, TaskInfoPB.Builder> running) {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        WorkerStatusPBs.setRunningTasks(response, running);
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
     private static void reportRejectedBatchMember(PrefillEndpoint target, long batchId, long requestId) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(Map.of(Long.toString(requestId),
-                taskInfo(requestId, batchId, null, 500, 0)));
-        response.setRunningTaskInfo(Map.of());
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setFinishedTasks(response,
+                Map.of(Long.toString(requestId), taskInfo(requestId, batchId, null, 500, 0)));
         EndpointTestSupport.applyStatus(target, response);
     }
 
-    private static void reportSuccessfulBatchMember(
-            PrefillEndpoint target,
-            long batchId,
-            long requestId,
-            long executionTimeMs) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(Map.of(
-                Long.toString(requestId),
-                taskInfo(requestId, batchId, null, 0, executionTimeMs)));
-        response.setRunningTaskInfo(Map.of());
+    private static void reportSuccessfulBatchMember(PrefillEndpoint target,
+                                                    long batchId,
+                                                    long requestId,
+                                                    long executionTimeMs) {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setFinishedTasks(response,
+                Map.of(Long.toString(requestId), taskInfo(requestId, batchId, null, 0, executionTimeMs)));
         EndpointTestSupport.applyStatus(target, response);
     }
 
@@ -1916,26 +1895,26 @@ class PrefillEndpointTest {
                 .setExpression(expression);
     }
 
-    private static TaskInfo priorityCanceledTask(long requestId, long batchId) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
+    private static TaskInfoPB.Builder priorityCanceledTask(long requestId, long batchId) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
         task.setBatchId(batchId);
-        task.setErrorCode(8429);
-        task.setErrorMessage("priority preempted");
-        task.setPriorityPreemptionProgress(PriorityPreemptionProgress.CANCELED);
+        task.getErrorInfoBuilder().setErrorCode(8429);
+        task.getErrorInfoBuilder().setErrorMessage("priority preempted");
+        task.setPriorityPreemptionProgress(WorkerStatusPBs.progress(PriorityPreemptionProgress.CANCELED));
         return task;
     }
 
-    private static TaskInfo taskInfo(long requestId,
-                                     long batchId,
-                                     TaskPhase phase,
-                                     int errorCode,
-                                     long executionTimeMs) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
+    private static TaskInfoPB.Builder taskInfo(long requestId,
+                                               long batchId,
+                                               TaskPhase phase,
+                                               int errorCode,
+                                               long executionTimeMs) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
         task.setBatchId(batchId);
-        task.setPhase(phase);
-        task.setErrorCode(errorCode);
+        WorkerStatusPBs.phase(task, phase);
+        task.getErrorInfoBuilder().setErrorCode(errorCode);
         task.setExecutionTimeMs(executionTimeMs);
         return task;
     }

@@ -23,11 +23,13 @@ import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.CacheStatus;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.pv.PvLogData;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.flexlb.util.JsonUtils;
@@ -979,15 +981,17 @@ class CostBasedPrefillSelectionMetricTest {
         var status = endpoint.getStatus();
         var response = StrategyTestSupport.response(RoleType.PREFILL, true,
                 1_000_000L, 1_000_000L, status.appliedStatusCursor().statusVersion() + 1L);
-        var task = new TaskInfo();
-        task.setRequestId("1");
-        task.setPhase(TaskPhase.RUNNING);
+        var task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr("1");
+        WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
         task.setInputLength(missingTokenDemand ? 0L : 100L);
-        response.setRunningQueryLen(1L);
-        response.setRunningTaskInfo(Map.of("1", task));
+        response.setRunningQueryLen(1);
+        WorkerStatusPBs.setRunningTasks(response, Map.of("1", task));
         status.lock.lock();
         try {
-            endpoint.applyPreparedStatus(status, status.prepareNewStatus(status.freezeStatusResponse(response))).run();
+            endpoint.applyPreparedStatus(status,
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build())))
+                    .run();
         } finally {
             status.lock.unlock();
         }
@@ -1010,14 +1014,16 @@ class CostBasedPrefillSelectionMetricTest {
         var status = endpoint.getStatus();
         var response = StrategyTestSupport.response(RoleType.PREFILL, true,
                 1_000_000L, 1_000_000L, status.appliedStatusCursor().statusVersion() + 1L);
-        var task = new TaskInfo();
-        task.setRequestId("4");
-        task.setPhase(TaskPhase.RUNNING);
+        var task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr("4");
+        WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
         task.setInputLength(100L);
-        response.setRunningTaskInfo(Map.of("4", task));
+        WorkerStatusPBs.setRunningTasks(response, Map.of("4", task));
         status.lock.lock();
         try {
-            endpoint.applyPreparedStatus(status, status.prepareNewStatus(status.freezeStatusResponse(response))).run();
+            endpoint.applyPreparedStatus(status,
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build())))
+                    .run();
         } finally {
             status.lock.unlock();
         }

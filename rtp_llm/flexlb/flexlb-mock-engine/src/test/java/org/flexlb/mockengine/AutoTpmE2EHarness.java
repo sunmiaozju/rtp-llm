@@ -34,16 +34,12 @@ import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService;
-import org.flexlb.engine.grpc.RequestId;
 import org.flexlb.engine.grpc.client.EngineGrpcClient;
-import org.flexlb.enums.PriorityPreemptionProgress;
-import org.flexlb.enums.TaskPhase;
 import org.flexlb.metric.NoOpFlexMonitor;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
@@ -55,7 +51,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -336,48 +331,22 @@ final class AutoTpmE2EHarness implements AutoCloseable {
         return grpcPort + 2000;
     }
 
-    private WorkerStatus publishEndpoint(
-            RoleType role, JavaMockEngineCluster.FastRpcService svc) {
+    private WorkerStatus publishEndpoint(RoleType role, JavaMockEngineCluster.FastRpcService svc) {
         WorkerStatus status = WorkerStatus.createDiscovered(
                 role, "g1", "127.0.0.1", httpPort(svc.getGrpcPort()), svc.getGrpcPort(), null);
         // Discovery and polling share the Engine's version sequence. A synthetic
         // version can collide with the first real response and hide completions.
-        WorkerStatusResponse initial = statusResponse(role, workerStatus(svc, 0L));
+        EngineRpcService.WorkerStatusPB initial = workerStatus(svc, 0L);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(initial));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, initial));
             endpointRegistry.publishPreparedEndpoint(
                     status.getIpPort(), status, prepared);
         } finally {
             status.lock.unlock();
         }
         return status;
-    }
-
-    private static WorkerStatusResponse statusResponse(RoleType role, EngineRpcService.WorkerStatusPB snapshot) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(role);
-        response.setAlive(snapshot.getAlive());
-        response.setAvailableKvCacheTokens(snapshot.getAvailableKvCache());
-        response.setTotalKvCacheTokens(snapshot.getTotalKvCache());
-        response.setMaxBatchTokensSize(snapshot.getMaxBatchTokensSize());
-        response.setMaxSeqLen(snapshot.getMaxSeqLen());
-        response.setRunningQueryLen(snapshot.getRunningQueryLen());
-        response.setWaitingQueryLen(snapshot.getWaitingQueryLen());
-        response.setStatusVersion(snapshot.getStatusVersion());
-        response.setLatestFinishedVersion(snapshot.getLatestFinishedVersion());
-        Map<String, TaskInfo> running = new HashMap<>();
-        for (EngineRpcService.TaskInfoPB task : snapshot.getRunningTaskInfoList()) {
-            running.put(String.valueOf(task.getRequestId()), toTaskInfo(task));
-        }
-        response.setRunningTaskInfo(running);
-        Map<String, TaskInfo> finished = new HashMap<>();
-        for (EngineRpcService.TaskInfoPB task : snapshot.getFinishedTaskListList()) {
-            finished.put(String.valueOf(task.getRequestId()), toTaskInfo(task));
-        }
-        response.setFinishedTaskInfo(finished);
-        return response;
     }
 
     PrefillEndpoint prefillEndpoint(int index) {
@@ -396,10 +365,11 @@ final class AutoTpmE2EHarness implements AutoCloseable {
         synchronized (pumpLock) {
             JavaMockEngineCluster.FastRpcService service = decodeEngines.get(index);
             WorkerStatus status = statusByPort.get(service.getGrpcPort());
-            WorkerStatusResponse response = statusResponse(RoleType.DECODE,
-                    workerStatus(service, status.appliedStatusCursor().latestFinishedTaskVersion()));
-            response.setAvailableKvCacheTokens(available);
-            response.setTotalKvCacheTokens(total);
+            EngineRpcService.WorkerStatusPB response =
+                    workerStatus(service, status.appliedStatusCursor().latestFinishedTaskVersion()).toBuilder()
+                            .setAvailableKvCache(available)
+                            .setTotalKvCache(total)
+                            .build();
             schedulerRuntime.applyStatus(status, response);
         }
     }
@@ -578,31 +548,7 @@ final class AutoTpmE2EHarness implements AutoCloseable {
         // or same-version snapshots leave records available for the next poll.
         EngineRpcService.WorkerStatusPB snapshot = workerStatus(
                 svc, status.appliedStatusCursor().latestFinishedTaskVersion());
-        RoleType role = decodeEngines.contains(svc) ? RoleType.DECODE : RoleType.PREFILL;
-        schedulerRuntime.applyStatus(status, statusResponse(role, snapshot));
-    }
-
-    static TaskInfo toTaskInfo(EngineRpcService.TaskInfoPB task) {
-        TaskInfo info = new TaskInfo();
-        info.setRequestId(RequestId.parse(task));
-        info.setInputLength(task.getInputLength());
-        info.setBatchId(task.getBatchId());
-        info.setErrorCode(task.getErrorInfo().getErrorCode());
-        info.setErrorMessage(task.getErrorInfo().getErrorMessage());
-        info.setEndTimeMs(task.getEndTimeMs());
-        if (task.getPriorityPreemptionProgress()
-                == EngineRpcService.PriorityPreemptionProgressPB.PRIORITY_PREEMPTION_CANCELING) {
-            info.setPriorityPreemptionProgress(PriorityPreemptionProgress.CANCELING);
-        } else if (task.getPriorityPreemptionProgress()
-                == EngineRpcService.PriorityPreemptionProgressPB.PRIORITY_PREEMPTION_CANCELED) {
-            info.setPriorityPreemptionProgress(PriorityPreemptionProgress.CANCELED);
-        }
-        if (task.getPhase() == EngineRpcService.TaskPhase.TASK_PHASE_RUNNING) {
-            info.setPhase(TaskPhase.RUNNING);
-        } else if (task.getPhase() == EngineRpcService.TaskPhase.TASK_PHASE_RECEIVED) {
-            info.setPhase(TaskPhase.RECEIVED);
-        }
-        return info;
+        schedulerRuntime.applyStatus(status, snapshot);
     }
 
     static EngineRpcService.WorkerStatusPB workerStatus(

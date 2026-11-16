@@ -6,8 +6,8 @@ import org.flexlb.balance.eviction.EngineCancelChannel;
 import org.flexlb.balance.eviction.EvictionPlanner;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -117,9 +117,7 @@ class DecodeCapacityPreemptionTest {
     }
 
     private static void updateCapacity(DecodeEndpoint endpoint, long availableKv) {
-        WorkerStatusResponse status = new WorkerStatusResponse();
-        status.setTotalKvCacheTokens(1000L);
-        status.setAvailableKvCacheTokens(availableKv);
+        var status = WorkerStatusPB.newBuilder().setTotalKvCache(1000L).setAvailableKvCache(availableKv);
         EndpointTestSupport.applyStatus(endpoint, status).run();
     }
 }

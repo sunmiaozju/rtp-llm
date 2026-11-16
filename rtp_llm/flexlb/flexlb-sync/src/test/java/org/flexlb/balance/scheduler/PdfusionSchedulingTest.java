@@ -24,12 +24,14 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
@@ -94,19 +96,18 @@ class PdfusionSchedulingTest {
                 delivery, batch ? new BatchTtftEstimator() : new NonBatchTtftEstimator(), availability, queueCapacity,
                 new PrefillQueueRegistry());
         WorkerStatus worker = WorkerStatus.createDiscovered(RoleType.PDFUSION, "g1", "127.0.0.1", 8080, 8081, "test");
-        WorkerStatusResponse status = new WorkerStatusResponse();
-        status.setRole(RoleType.PDFUSION);
+        WorkerStatusPB.Builder status = WorkerStatusPB.newBuilder();
+        status.setRoleType(WorkerStatusPBs.role(RoleType.PDFUSION));
         status.setAlive(true);
         status.setStatusVersion(1L);
-        status.setLatestFinishedVersion(0L);
-        status.setTotalKvCacheTokens(100000L);
-        status.setAvailableKvCacheTokens(100000L);
+        status.setTotalKvCache(100000L);
+        status.setAvailableKvCache(100000L);
         status.setMaxSeqLen(10000L);
         status.setMaxBatchTokensSize(10000L);
         worker.lock.lock();
         try {
             endpoints.publishPreparedEndpoint(worker.getLogicalIpPort(), worker,
-                    worker.prepareNewStatus(worker.freezeStatusResponse(status)));
+                    worker.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker, status.build())));
             worker.recordSuccessfulPoll(true);
         } finally {
             worker.lock.unlock();
@@ -135,19 +136,18 @@ class PdfusionSchedulingTest {
             assertEquals(1, endpoint.observedRequestCount());
             var committedWork = endpoint.captureLoadView().work();
             assertTrue(committedWork.containsRequest(Long.toString(requestId)));
-            TaskInfo finished = new TaskInfo();
-            finished.setRequestId(Long.toString(requestId));
+            TaskInfoPB.Builder finished = TaskInfoPB.newBuilder();
+            finished.setRequestIdStr(Long.toString(requestId));
             finished.setBatchId(lifecycle.getRequestState(Long.toString(requestId), 0L).batchId());
-            finished.setPhase(TaskPhase.RUNNING);
-            finished.setErrorCode(0L);
+            WorkerStatusPBs.phase(finished, TaskPhase.RUNNING);
             status.setStatusVersion(2L);
             status.setLatestFinishedVersion(1L);
-            status.setFinishedTaskInfo(Map.of(Long.toString(requestId), finished));
+            WorkerStatusPBs.setFinishedTasks(status, Map.of(Long.toString(requestId), finished));
             Runnable statusNotifier;
             worker.lock.lock();
             try {
-                statusNotifier = endpoint.applyPreparedStatus(worker,
-                        worker.prepareNewStatus(worker.freezeStatusResponse(status)));
+                statusNotifier = endpoint.applyPreparedStatus(worker, worker
+                        .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker, status.build())));
             } finally {
                 worker.lock.unlock();
             }

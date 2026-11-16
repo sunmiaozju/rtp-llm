@@ -27,7 +27,6 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
-import java.util.Map;
 import java.util.OptionalLong;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -447,13 +446,10 @@ class EngineSyncRunnerTest {
         }
     }
 
-    private static WorkerStatus varianceStatus(
-            String ip, int port, double stepLatencyMs) {
+    private static WorkerStatus varianceStatus(String ip, int port, double stepLatencyMs) {
         WorkerStatus status = RunnerTestSupport.discovered(
                 RoleType.PREFILL, "", ip, port, port + 1, "");
-        RunnerTestSupport.publish(status, RunnerTestSupport.response(
-                status, true, 1L, 0L, 0L,
-                stepLatencyMs, Map.of()));
+        RunnerTestSupport.publish(status, RunnerTestSupport.response(status, true, 1L, 0L, 0L, stepLatencyMs));
         assertNotNull(status.tryBeginStatusPoll());
         assertNotNull(status.tryBeginCachePoll());
         return status;

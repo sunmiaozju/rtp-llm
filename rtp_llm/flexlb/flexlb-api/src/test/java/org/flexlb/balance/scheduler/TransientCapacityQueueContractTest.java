@@ -29,12 +29,13 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
-import org.flexlb.enums.TaskPhase;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.TaskPhase;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.metric.NoOpFlexMonitor;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
@@ -49,7 +50,6 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.EnumSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -588,11 +588,11 @@ class TransientCapacityQueueContractTest {
         config.getDispatcher().setType(DispatcherConfig.Type.NON_BATCH);
 
         try (Fixture fixture = new Fixture(RoleType.PREFILL, config)) {
-            WorkerStatusResponse limited = statusResponse(RoleType.PREFILL, 3L, false);
-            limited.setAvailableKvCacheTokens(1_000L);
-            limited.setTotalKvCacheTokens(1_000L);
+            WorkerStatusPB.Builder limited = statusResponse(RoleType.PREFILL, 3L, false);
+            limited.setAvailableKvCache(1_000L);
+            limited.setTotalKvCache(1_000L);
             // An idle engine is admitted despite insufficient KV, so keep it busy.
-            limited.setRunningQueryLen(1L);
+            limited.setRunningQueryLen(1);
             fixture.runtime.applyStatus(fixture.prefillStatus, limited);
 
             CompletableFuture<Response> waiting = fixture.runtime.scheduler().submit(
@@ -1440,17 +1440,16 @@ class TransientCapacityQueueContractTest {
                 role, "capacity-contract", ip, port, port + 1, null);
     }
 
-    private static WorkerEndpoint publishEndpoint(
-            EndpointRegistry registry,
-            RoleType role,
-            String physicalAddress,
-            WorkerStatus status) {
+    private static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+                                                  RoleType role,
+                                                  String physicalAddress,
+                                                  WorkerStatus status) {
         assertEquals(physicalAddress, status.getPhysicalIpPort());
-        WorkerStatusResponse response = statusResponse(role, 1L, false);
+        WorkerStatusPB.Builder response = statusResponse(role, 1L, false);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
             WorkerEndpoint endpoint = registry
                     .publishPreparedEndpoint(
                             status.getLogicalIpPort(), status, prepared)
@@ -1462,97 +1461,81 @@ class TransientCapacityQueueContractTest {
         }
     }
 
-    private static WorkerStatusResponse statusResponse(
-            RoleType role, long version, boolean saturated) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(role);
-        response.setAlive(true);
-        response.setStatusVersion(version);
-        response.setLatestFinishedVersion(0L);
-        response.setAvailableKvCacheTokens(1_000_000L);
-        response.setTotalKvCacheTokens(2_000_000L);
-        response.setMaxSeqLen(1_000_000L);
-        response.setMaxBatchTokensSize(1_000_000L);
+    private static WorkerStatusPB.Builder statusResponse(RoleType role, long version, boolean saturated) {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder()
+                .setRole(role.getCode())
+                .setAlive(true)
+                .setStatusVersion(version)
+                .setLatestFinishedVersion(0L)
+                .setAvailableKvCache(1_000_000L)
+                .setTotalKvCache(2_000_000L)
+                .setMaxSeqLen(1_000_000L)
+                .setMaxBatchTokensSize(1_000_000L);
         if (saturated) {
-            TaskInfo task = new TaskInfo();
-            task.setRequestId(Long.toString(Fixture.EXTERNAL_REQUEST_ID));
-            task.setPhase(role == RoleType.PREFILL
-                    ? TaskPhase.PENDING : TaskPhase.RUNNING);
-            task.setInputLength(128L);
-            response.setRunningTaskInfo(Map.of(
-                    Long.toString(Fixture.EXTERNAL_REQUEST_ID), task));
-            response.setRunningQueryLen(role == RoleType.DECODE ? 1L : 0L);
-            response.setWaitingQueryLen(role == RoleType.PREFILL ? 1L : 0L);
-        } else {
-            response.setRunningTaskInfo(Map.of());
+            boolean waiting = role == RoleType.PREFILL;
+            response.addRunningTaskInfo(TaskInfoPB.newBuilder()
+                    .setRequestIdStr(Long.toString(Fixture.EXTERNAL_REQUEST_ID))
+                    .setBatchId(-1L)
+                    .setExecutionTimeMs(-1L)
+                    .setPhase(waiting ? TaskPhase.TASK_PHASE_PENDING : TaskPhase.TASK_PHASE_RUNNING)
+                    .setIsWaiting(waiting)
+                    .setInputLength(128));
+            response.setRunningQueryLen(role == RoleType.DECODE ? 1 : 0);
+            response.setWaitingQueryLen(waiting ? 1 : 0);
         }
-        response.setFinishedTaskInfo(Map.of());
         return response;
     }
 
-    private static WorkerStatusResponse decodeRunningStatus(
-            long version, int runningCount) {
-        WorkerStatusResponse response =
-                statusResponse(RoleType.DECODE, version, false);
-        Map<String, TaskInfo> running = new LinkedHashMap<>();
+    private static WorkerStatusPB.Builder decodeRunningStatus(long version, int runningCount) {
+        WorkerStatusPB.Builder response = statusResponse(RoleType.DECODE, version, false);
         for (int index = 0; index < runningCount; index++) {
             long requestId = Fixture.EXTERNAL_REQUEST_ID + index;
-            TaskInfo task = new TaskInfo();
-            task.setRequestId(Long.toString(requestId));
-            task.setPhase(TaskPhase.RUNNING);
-            task.setInputLength(128L);
-            running.put(Long.toString(requestId), task);
+            response.addRunningTaskInfo(TaskInfoPB.newBuilder()
+                    .setRequestIdStr(Long.toString(requestId))
+                    .setBatchId(-1L)
+                    .setExecutionTimeMs(-1L)
+                    .setPhase(TaskPhase.TASK_PHASE_RUNNING)
+                    .setInputLength(128));
         }
-        response.setRunningTaskInfo(running);
-        response.setRunningQueryLen((long) runningCount);
-        return response;
+        return response.setRunningQueryLen(runningCount);
     }
 
-    private static WorkerStatusResponse prefillRunningStatus(
-            long version, List<Long> requestIds) {
-        WorkerStatusResponse response =
-                statusResponse(RoleType.PREFILL, version, false);
-        Map<String, TaskInfo> running = new LinkedHashMap<>();
+    private static WorkerStatusPB.Builder prefillRunningStatus(long version, List<Long> requestIds) {
+        WorkerStatusPB.Builder response = statusResponse(RoleType.PREFILL, version, false);
         for (long requestId : requestIds) {
-            TaskInfo task = new TaskInfo();
-            task.setRequestId(Long.toString(requestId));
-            task.setPhase(TaskPhase.PENDING);
-            task.setInputLength(128_000L);
-            running.put(Long.toString(requestId), task);
+            response.addRunningTaskInfo(TaskInfoPB.newBuilder()
+                    .setRequestIdStr(Long.toString(requestId))
+                    .setBatchId(-1L)
+                    .setExecutionTimeMs(-1L)
+                    .setPhase(TaskPhase.TASK_PHASE_PENDING)
+                    .setIsWaiting(true)
+                    .setInputLength(128_000));
         }
-        response.setRunningTaskInfo(running);
-        response.setWaitingQueryLen((long) requestIds.size());
-        return response;
+        return response.setWaitingQueryLen(requestIds.size());
     }
 
-    private static WorkerStatusResponse
-            prefillStatusWithFinishedAndUnknownRunning(
-                    long version,
-                    List<Long> finishedRequestIds,
-                    int unknownRunningCount) {
-        WorkerStatusResponse response =
-                statusResponse(RoleType.PREFILL, version, false);
-        Map<String, TaskInfo> finished = new LinkedHashMap<>();
+    private static WorkerStatusPB.Builder prefillStatusWithFinishedAndUnknownRunning(long version,
+                                                                                     List<Long> finishedRequestIds,
+                                                                                     int unknownRunningCount) {
+        WorkerStatusPB.Builder response = statusResponse(RoleType.PREFILL, version, false);
         for (long requestId : finishedRequestIds) {
-            TaskInfo task = new TaskInfo();
-            task.setRequestId(Long.toString(requestId));
-            task.setPhase(TaskPhase.RUNNING);
-            task.setInputLength(128_000L);
-            finished.put(Long.toString(requestId), task);
+            response.addFinishedTaskList(TaskInfoPB.newBuilder()
+                    .setRequestIdStr(Long.toString(requestId))
+                    .setBatchId(-1L)
+                    .setExecutionTimeMs(-1L)
+                    .setPhase(TaskPhase.TASK_PHASE_RUNNING)
+                    .setInputLength(128_000));
         }
-        Map<String, TaskInfo> running = new LinkedHashMap<>();
         for (int index = 0; index < unknownRunningCount; index++) {
             long requestId = Fixture.EXTERNAL_REQUEST_ID + index;
-            TaskInfo task = new TaskInfo();
-            task.setRequestId(Long.toString(requestId));
-            task.setPhase(TaskPhase.RUNNING);
-            task.setInputLength(128_000L);
-            running.put(Long.toString(requestId), task);
+            response.addRunningTaskInfo(TaskInfoPB.newBuilder()
+                    .setRequestIdStr(Long.toString(requestId))
+                    .setBatchId(-1L)
+                    .setExecutionTimeMs(-1L)
+                    .setPhase(TaskPhase.TASK_PHASE_RUNNING)
+                    .setInputLength(128_000));
         }
-        response.setFinishedTaskInfo(finished);
-        response.setRunningTaskInfo(running);
-        response.setRunningQueryLen((long) unknownRunningCount);
-        return response;
+        return response.setRunningQueryLen(unknownRunningCount);
     }
 
     private static final class RecordingSubmissionPort {

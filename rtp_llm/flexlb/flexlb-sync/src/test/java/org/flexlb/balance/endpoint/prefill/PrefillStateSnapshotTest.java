@@ -5,10 +5,12 @@ import org.flexlb.balance.endpoint.EndpointTestSupport;
 import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.scheduler.ScheduledRequest;
-import org.flexlb.dao.master.TaskInfo;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -300,10 +302,11 @@ class PrefillStateSnapshotTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"true,false,500,0", "false,true,500,0",
-            "false,false,0,40", "false,false,500,40"})
-    void executionEvidencePreservesBatchPrediction(
-            boolean previouslyRunning, boolean currentlyRunning, long errorCode, long executionMs) {
+    @CsvSource({"true,false,500,0", "false,true,500,0", "false,false,0,40", "false,false,500,40"})
+    void executionEvidencePreservesBatchPrediction(boolean previouslyRunning,
+                                                   boolean currentlyRunning,
+                                                   long errorCode,
+                                                   long executionMs) {
         commitBatch(List.of(item(1), item(2), item(3)), 300L);
         if (previouslyRunning) {
             reconcile(Map.of(), Map.of("2", task(2, TaskPhase.RUNNING, 0, 0)), unused -> {
@@ -311,8 +314,8 @@ class PrefillStateSnapshotTest {
             });
         }
         clock.set(150);
-        Map<String, TaskInfo> active = currentlyRunning
-                ? Map.of("2", task(2, TaskPhase.RUNNING, 0, 0)) : Map.of();
+        Map<String, TaskInfoPB.Builder> active =
+                currentlyRunning ? Map.of("2", task(2, TaskPhase.RUNNING, 0, 0)) : Map.of();
         reconcile(Map.of("1", task(1, null, errorCode, executionMs)), active, unused -> {
             throw new AssertionError("started Prefill must retain its batch prediction");
         });
@@ -376,15 +379,15 @@ class PrefillStateSnapshotTest {
         }
     }
 
-    private void reconcile(Map<String, TaskInfo> finished,
-                           Map<String, TaskInfo> active,
+    private void reconcile(Map<String, TaskInfoPB.Builder> finished,
+                           Map<String, TaskInfoPB.Builder> active,
                            ToLongFunction<List<ScheduledRequest>> predictBatchTime) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
-        response.setFinishedTaskInfo(finished);
-        response.setRunningTaskInfo(active);
-        var observation = EndpointTestSupport.workerStatus(RoleType.PREFILL, "127.0.0.1", 8080, 8090)
-                .freezeStatusResponse(response);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        WorkerStatusPBs.setRunningTasks(response, active);
+        var observation = EngineStatusConverter.convertToStatusObservation(
+                EndpointTestSupport.workerStatus(RoleType.PREFILL, "127.0.0.1", 8080, 8090), response.build());
         var outcome = state.updateFromWorkerStatus(observation, predictBatchTime, () -> {}, () -> {});
         assertNull(outcome.publicationFailure());
     }
@@ -393,12 +396,12 @@ class PrefillStateSnapshotTest {
         return state.committedSnapshot().totalRemainingWorkMsAt(clock.get()).orElseThrow();
     }
 
-    private static TaskInfo task(long requestId, TaskPhase phase, long errorCode, long executionMs) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
+    private static TaskInfoPB.Builder task(long requestId, TaskPhase phase, long errorCode, long executionMs) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
         task.setBatchId(10L);
-        task.setPhase(phase);
-        task.setErrorCode(errorCode);
+        WorkerStatusPBs.phase(task, phase);
+        task.getErrorInfoBuilder().setErrorCode(errorCode);
         task.setExecutionTimeMs(executionMs);
         return task;
     }

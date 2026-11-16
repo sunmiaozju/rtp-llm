@@ -6,8 +6,9 @@ import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatusProvider;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.sync.runner.RunnerTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,10 +34,10 @@ class WorkerDirectoryTest {
     private WorkerDirectory workerDirectory;
     private EndpointRegistry registry;
 
-    private record DecodeMember(WorkerStatus status, WorkerStatusResponse response) {
+    private record DecodeMember(WorkerStatus status, WorkerStatusPB.Builder response) {
     }
 
-    private record PrefillMember(WorkerStatus status, WorkerStatusResponse response) {
+    private record PrefillMember(WorkerStatus status, WorkerStatusPB.Builder response) {
     }
 
     @BeforeEach
@@ -391,14 +392,16 @@ class WorkerDirectoryTest {
     private WorkerStatus publishDpMember(RoleType role, String masterAddress, long rank, long size, int port) {
         WorkerStatus status = status(role, "routing-a", port);
         discover(status);
-        WorkerStatusResponse response = RunnerTestSupport.response(status, true, 1L);
-        response.setDpMasterAddress(masterAddress);
+        WorkerStatusPB.Builder response = RunnerTestSupport.response(status, true, 1L);
+        if (masterAddress != null) {
+            response.setDpMasterAddress(masterAddress);
+        }
         response.setDpRank(rank);
-        response.setDpSize(size);
+        response.setDpSize((int) size);
         status.lock.lock();
         try {
-            registry.publishPreparedEndpoint(status.getLogicalIpPort(), status,
-                    status.prepareNewStatus(status.freezeStatusResponse(response)));
+            registry.publishPreparedEndpoint(status.getLogicalIpPort(), status, status
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build())));
             status.recordSuccessfulPoll(true);
         } finally {
             status.lock.unlock();
@@ -424,9 +427,11 @@ class WorkerDirectoryTest {
     private PrefillMember prefillMember(String group, String masterAddress, long rank, long size, int port) {
         WorkerStatus status = status(RoleType.PREFILL, group, port);
         discover(status);
-        WorkerStatusResponse response = RunnerTestSupport.response(status, true, 1L);
-        response.setDpMasterAddress(masterAddress);
-        response.setDpSize(size);
+        WorkerStatusPB.Builder response = RunnerTestSupport.response(status, true, 1L);
+        if (masterAddress != null) {
+            response.setDpMasterAddress(masterAddress);
+        }
+        response.setDpSize((int) size);
         response.setDpRank(rank);
         return new PrefillMember(status, response);
     }
@@ -436,7 +441,7 @@ class WorkerDirectoryTest {
         status.lock.lock();
         try {
             WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(member.response()));
+                    EngineStatusConverter.convertToStatusObservation(status, member.response().build()));
             registry.publishPreparedEndpoint(status.getLogicalIpPort(), status, prepared);
             status.recordSuccessfulPoll(true);
         } finally {
@@ -447,9 +452,11 @@ class WorkerDirectoryTest {
     private DecodeMember decodeMember(String group, String masterAddress, long rank, long size, int port) {
         WorkerStatus status = status(RoleType.DECODE, group, port);
         discover(status);
-        WorkerStatusResponse response = RunnerTestSupport.response(status, true, 1L);
-        response.setDpMasterAddress(masterAddress);
-        response.setDpSize(size);
+        WorkerStatusPB.Builder response = RunnerTestSupport.response(status, true, 1L);
+        if (masterAddress != null) {
+            response.setDpMasterAddress(masterAddress);
+        }
+        response.setDpSize((int) size);
         response.setDpRank(rank);
         return new DecodeMember(status, response);
     }
@@ -459,7 +466,7 @@ class WorkerDirectoryTest {
         status.lock.lock();
         try {
             WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(member.response()));
+                    EngineStatusConverter.convertToStatusObservation(status, member.response().build()));
             registry.publishPreparedEndpoint(status.getLogicalIpPort(), status, prepared);
             status.recordSuccessfulPoll(true);
         } finally {

@@ -17,16 +17,17 @@ import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -69,9 +70,11 @@ class RequestConfirmationTimeoutTest {
             PrefillEndpoint prefill;
             prefillWorker.lock.lock();
             try {
-                prefill = (PrefillEndpoint) endpoints.publishPreparedEndpoint(prefillWorker.getIpPort(),
-                        prefillWorker, prefillWorker.prepareNewStatus(
-                                prefillWorker.freezeStatusResponse(status(RoleType.PREFILL)))).endpoint();
+                prefill = (PrefillEndpoint) endpoints
+                        .publishPreparedEndpoint(prefillWorker.getIpPort(), prefillWorker,
+                                prefillWorker.prepareNewStatus(EngineStatusConverter
+                                        .convertToStatusObservation(prefillWorker, status(RoleType.PREFILL).build())))
+                        .endpoint();
             } finally {
                 prefillWorker.lock.unlock();
             }
@@ -180,27 +183,24 @@ class RequestConfirmationTimeoutTest {
         return WorkerStatus.createDiscovered(role, "g1", ip, 8080, 8081, "test");
     }
 
-    private static WorkerStatusResponse status(RoleType role) {
-        var response = new WorkerStatusResponse();
-        response.setRole(role);
+    private static WorkerStatusPB.Builder status(RoleType role) {
+        var response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(role));
         response.setAlive(true);
         response.setStatusVersion(1L);
-        response.setLatestFinishedVersion(0L);
-        response.setRunningTaskInfo(Map.of());
-        response.setRunningQueryLen(0L);
-        response.setFinishedTaskInfo(Map.of());
-        response.setTotalKvCacheTokens(10_000L);
-        response.setAvailableKvCacheTokens(10_000L);
+        response.setRunningQueryLen(0);
+        response.setTotalKvCache(10_000L);
+        response.setAvailableKvCache(10_000L);
         return response;
     }
 
-    private static void applyStatus(WorkerEndpoint endpoint, WorkerStatusResponse response) {
+    private static void applyStatus(WorkerEndpoint endpoint, WorkerStatusPB.Builder response) {
         WorkerStatus worker = endpoint.getStatus();
         Runnable statusNotifier;
         worker.lock.lock();
         try {
-            statusNotifier = endpoint.applyPreparedStatus(worker,
-                    worker.prepareNewStatus(worker.freezeStatusResponse(response)));
+            statusNotifier = endpoint.applyPreparedStatus(worker, worker
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker, response.build())));
         } finally {
             worker.lock.unlock();
         }

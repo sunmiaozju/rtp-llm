@@ -7,10 +7,11 @@ import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -87,19 +88,18 @@ class EndpointRegistryRoleTest {
             return null;
         }).when(availability).topologyChanged(Mockito.eq(RoleType.PREFILL), Mockito.any(), Mockito.eq(address));
         try {
-            TaskInfo task = new TaskInfo();
-            task.setRequestId("1");
-            task.setPhase(org.flexlb.enums.TaskPhase.RUNNING);
-            WorkerStatusResponse firstStatus = new WorkerStatusResponse();
-            firstStatus.setRunningTaskInfo(Map.of("1", task));
+            TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+            task.setRequestIdStr("1");
+            WorkerStatusPBs.phase(task, org.flexlb.enums.TaskPhase.RUNNING);
+            WorkerStatusPB.Builder firstStatus = WorkerStatusPB.newBuilder();
+            WorkerStatusPBs.setRunningTasks(firstStatus, Map.of("1", task));
             var endpoint = (PrefillEndpoint) EndpointTestSupport.publishEndpoint(localRegistry,
                     RoleType.PREFILL, address, status(RoleType.PREFILL, 8001), firstStatus);
             assertEquals(0, queues.find(endpoint).waitingCount());
             Mockito.verify(queues).start(endpoint);
 
             var originalQueue = endpoint.prefillQueue();
-            WorkerStatusResponse nextStatus = new WorkerStatusResponse();
-            nextStatus.setRunningTaskInfo(Map.of());
+            WorkerStatusPB.Builder nextStatus = WorkerStatusPB.newBuilder();
             EndpointTestSupport.applyStatus(endpoint, nextStatus).run();
             assertSame(originalQueue, endpoint.prefillQueue());
             assertEquals(0L, originalQueue.inflightCount());
@@ -160,7 +160,7 @@ class EndpointRegistryRoleTest {
         for (RoleType role : List.of(RoleType.PREFILL, RoleType.PDFUSION)) {
             int port = role == RoleType.PREFILL ? 8090 : 8092;
             String address = "127.0.0.1:" + port;
-            WorkerStatusResponse response = new WorkerStatusResponse();
+            WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
             response.setDpSize(2);
             response.setDpRank(1);
 
@@ -318,10 +318,10 @@ class EndpointRegistryRoleTest {
     @Test
     void simple_endpoint_should_report_status_task_count_as_load() {
         WorkerStatus status = status(RoleType.VIT, 8080);
-        WorkerStatusResponse response = new WorkerStatusResponse();
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
         response.setAlive(true);
-        response.setRunningTaskInfo(
-                Map.of("1", new TaskInfo(), "2", new TaskInfo()));
+        response.addRunningTaskInfo(TaskInfoPB.newBuilder().setRequestIdStr("1"));
+        response.addRunningTaskInfo(TaskInfoPB.newBuilder().setRequestIdStr("2"));
         WorkerEndpoint endpoint = EndpointTestSupport.publishEndpoint(
                 registry, RoleType.VIT, "127.0.0.1:8080", status, response);
 

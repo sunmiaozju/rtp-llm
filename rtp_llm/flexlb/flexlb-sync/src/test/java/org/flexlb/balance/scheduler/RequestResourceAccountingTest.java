@@ -14,12 +14,14 @@ import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.Test;
@@ -155,7 +157,7 @@ class RequestResourceAccountingTest {
     void runningDecodeWinsAgainstUncertainTransportAndTerminalReclaimsBothEndpoints() throws Exception {
         try (Fixture f = new Fixture()) {
             DeliveryClaim claim = f.handoff();
-            TaskInfo running = task(ID);
+            TaskInfoPB.Builder running = task(ID);
             f.decodeStatus(Map.of("101", running), Map.of(), TOTAL_KV - HARD_KV);
             assertEquals(1, f.decode.resourceSnapshot().runningCount());
             assertEquals(1, f.decode.routingView().engineCapacityUsed());
@@ -180,11 +182,11 @@ class RequestResourceAccountingTest {
             f.handoff().complete(DeliveryResult.delivered());
             assertTrue(f.item.future().get(2, TimeUnit.SECONDS).isSuccess());
             applyStatus(f.prefill, status(RoleType.PREFILL, 2L, Map.of(), Map.of("101", task(ID)), TOTAL_KV));
-            TaskInfo active = task(ID);
-            active.setPhase(confirmed);
+            TaskInfoPB.Builder active = task(ID);
+            WorkerStatusPBs.phase(active, confirmed);
             f.decodeStatus(Map.of("101", active), Map.of(), TOTAL_KV - HARD_KV);
-            TaskInfo stillPresent = task(ID);
-            stillPresent.setPhase(regressed);
+            TaskInfoPB.Builder stillPresent = task(ID);
+            WorkerStatusPBs.phase(stillPresent, regressed);
             f.decodeStatus(Map.of("101", stillPresent), Map.of(), TOTAL_KV);
             assertEquals(RequestState.Phase.ACKNOWLEDGED, f.requests.getRequestState(ID, 0).state());
             // No inactivity expiry, sweep, sleep or shutdown is allowed to make this assertion pass.
@@ -274,8 +276,12 @@ class RequestResourceAccountingTest {
             var worker = WorkerStatus.createDiscovered(RoleType.PREFILL, "g", "127.0.0.1", 8080, 8081, "test");
             worker.lock.lock();
             try {
-                prefill = (PrefillEndpoint) endpoints.publishPreparedEndpoint(worker.getIpPort(), worker,
-                        worker.prepareNewStatus(worker.freezeStatusResponse(status(RoleType.PREFILL, 1, Map.of(), Map.of(), TOTAL_KV)))).endpoint();
+                prefill =
+                        (PrefillEndpoint) endpoints
+                                .publishPreparedEndpoint(worker.getIpPort(), worker,
+                                        worker.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker,
+                                                status(RoleType.PREFILL, 1, Map.of(), Map.of(), TOTAL_KV).build())))
+                                .endpoint();
             } finally { worker.lock.unlock(); }
             decode = new DecodeEndpoint(WorkerStatus.createDiscovered(RoleType.DECODE, "g", "127.0.0.2", 8080, 8081, "test"), eventHandler);
             decodeStatus(Map.of(), Map.of(), TOTAL_KV);
@@ -365,7 +371,9 @@ class RequestResourceAccountingTest {
         }
 
         void expire() { requests.expireInactiveRequest(requests.requestSlot(ID), System.currentTimeMillis() + TTL + 1); }
-        void decodeStatus(Map<String, TaskInfo> running, Map<String, TaskInfo> finished, long freeKv) {
+        void decodeStatus(Map<String, TaskInfoPB.Builder> running,
+                          Map<String, TaskInfoPB.Builder> finished,
+                          long freeKv) {
             applyStatus(decode, status(RoleType.DECODE, version++, running, finished, freeKv));
         }
         @Override
@@ -381,35 +389,42 @@ class RequestResourceAccountingTest {
         }
     }
 
-    private static TaskInfo task(String id) {
-        var task = new TaskInfo();
-        task.setRequestId(id);
+    private static TaskInfoPB.Builder task(String id) {
+        var task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(id);
         task.setInputLength(HARD_KV);
-        task.setPhase(TaskPhase.RUNNING);
+        WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
         return task;
     }
 
-    private static WorkerStatusResponse status(RoleType role, long version, Map<String, TaskInfo> running,
-                                                Map<String, TaskInfo> finished, long freeKv) {
-        var response = new WorkerStatusResponse();
-        response.setRole(role);
+    private static WorkerStatusPB.Builder status(RoleType role,
+                                                 long version,
+                                                 Map<String, TaskInfoPB.Builder> running,
+                                                 Map<String, TaskInfoPB.Builder> finished,
+                                                 long freeKv) {
+        var response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(role));
         response.setAlive(true);
         response.setStatusVersion(version);
         response.setLatestFinishedVersion(finished.isEmpty() ? 0L : version);
-        response.setRunningTaskInfo(running);
-        response.setRunningQueryLen((long) running.size());
-        response.setFinishedTaskInfo(finished);
-        response.setTotalKvCacheTokens(TOTAL_KV);
-        response.setAvailableKvCacheTokens(freeKv);
+        WorkerStatusPBs.setRunningTasks(response, running);
+        response.setRunningQueryLen(running.size());
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        response.setTotalKvCache(TOTAL_KV);
+        response.setAvailableKvCache(freeKv);
         return response;
     }
 
-    private static void applyStatus(WorkerEndpoint endpoint, WorkerStatusResponse response) {
+    private static void applyStatus(WorkerEndpoint endpoint, WorkerStatusPB.Builder response) {
         var worker = endpoint.getStatus();
         Runnable statusNotifier;
         worker.lock.lock();
-        try { statusNotifier = endpoint.applyPreparedStatus(worker, worker.prepareNewStatus(worker.freezeStatusResponse(response))); }
-        finally { worker.lock.unlock(); }
+        try {
+            statusNotifier = endpoint.applyPreparedStatus(worker, worker
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker, response.build())));
+        } finally {
+            worker.lock.unlock();
+        }
         statusNotifier.run();
     }
 }

@@ -2,12 +2,13 @@ package org.flexlb.balance.endpoint;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.metric.MicrometerFlexMonitor;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -117,8 +118,8 @@ class DecodeEndpointTest {
     void calibrate_kvAllocatedReleasesFromInflight() {
         reserve(100L, 500, 500);
 
-        TaskInfo running = task(100L);
-        running.setPhase(TaskPhase.KV_ALLOCATED);
+        TaskInfoPB.Builder running = task(100L);
+        WorkerStatusPBs.phase(running, TaskPhase.KV_ALLOCATED);
         updateStatus(Map.of("100", running), null, 10000);
 
         assertEquals(0, endpoint.getInflightCount());
@@ -129,9 +130,9 @@ class DecodeEndpointTest {
     void calibrate_finishedFailureReleasesFromInflight() {
         reserve(100L, 500, 500);
 
-        TaskInfo failed = task(100L);
-        failed.setErrorCode(1);
-        failed.setErrorMessage("timeout");
+        TaskInfoPB.Builder failed = task(100L);
+        failed.getErrorInfoBuilder().setErrorCode(1);
+        failed.getErrorInfoBuilder().setErrorMessage("timeout");
         updateStatus(null, Map.of("100", failed), 10000);
 
         assertEquals(0, endpoint.getInflightCount());
@@ -141,8 +142,7 @@ class DecodeEndpointTest {
     void calibrate_finishedSuccessReleasesIfStillPresent() {
         reserve(100L, 500, 500);
 
-        TaskInfo success = task(100L);
-        success.setErrorCode(0);
+        TaskInfoPB.Builder success = task(100L);
         updateStatus(null, Map.of("100", success), 10000);
 
         assertEquals(0, endpoint.getInflightCount());
@@ -222,8 +222,8 @@ class DecodeEndpointTest {
         assertEquals(0, endpoint.routingView().engineLoad()); // both queued
 
         // calibrate: req 1 confirmed → removed from inflight + queued
-        TaskInfo running = task(1L);
-        running.setPhase(TaskPhase.KV_ALLOCATED);
+        TaskInfoPB.Builder running = task(1L);
+        WorkerStatusPBs.phase(running, TaskPhase.KV_ALLOCATED);
         updateStatus(Map.of("1", running), null, 10000);
 
         // req 2 still queued, inflight=1 (req2), confirmed=1 (req1)
@@ -308,13 +308,14 @@ class DecodeEndpointTest {
         counter.set(value);
     }
 
-    private void updateStatus(Map<String, TaskInfo> running, Map<String, TaskInfo> finished,
+    private void updateStatus(Map<String, TaskInfoPB.Builder> running,
+                              Map<String, TaskInfoPB.Builder> finished,
                               long availableKvCacheTokens) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
-        response.setAvailableKvCacheTokens(availableKvCacheTokens);
-        response.setTotalKvCacheTokens(availableKvCacheTokens);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        response.setAvailableKvCache(availableKvCacheTokens);
+        response.setTotalKvCache(availableKvCacheTokens);
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
@@ -353,9 +354,9 @@ class DecodeEndpointTest {
         }
     }
 
-    private TaskInfo task(long requestId) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
+    private TaskInfoPB.Builder task(long requestId) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
         return task;
     }
 

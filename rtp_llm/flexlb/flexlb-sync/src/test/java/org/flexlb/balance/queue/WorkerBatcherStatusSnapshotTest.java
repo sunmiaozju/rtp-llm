@@ -8,8 +8,10 @@ import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -45,8 +47,7 @@ class WorkerBatcherStatusSnapshotTest {
 
     @Test
     void maxSequenceLengthBacksUnpublishedBatchTokenCapacity() {
-        WorkerStatusResponse response = statusResponse(
-                0L, 0L, 0L, 1L);
+        WorkerStatusPB.Builder response = statusResponse(0L, 0L, 0L, 1L);
         response.setMaxSeqLen(150L);
         WorkerStatus status = WorkerStatus.createDiscovered(
                 RoleType.PREFILL, "group-a", "10.0.0.1",
@@ -67,10 +68,8 @@ class WorkerBatcherStatusSnapshotTest {
 
     @Test
     void batchTokenEstimateUsesOneCoherentEngineObservation() {
-        WorkerStatusResponse first = statusResponse(
-                700L, 600L, 1_000L, 1L);
-        WorkerStatusResponse second = statusResponse(
-                3L, 5L, 10L, 2L);
+        WorkerStatusPB.Builder first = statusResponse(700L, 600L, 1_000L, 1L);
+        WorkerStatusPB.Builder second = statusResponse(3L, 5L, 10L, 2L);
         WorkerStatus status = spy(WorkerStatus.createDiscovered(
                 RoleType.PREFILL, "group-a", "10.0.0.1",
                 8080, 9090, "site-a"));
@@ -107,28 +106,26 @@ class WorkerBatcherStatusSnapshotTest {
                         .availableKvCacheTokens());
     }
 
-    private static void publish(
-            WorkerStatus status, WorkerStatusResponse response) {
+    private static void publish(WorkerStatus status, WorkerStatusPB.Builder response) {
         status.lock.lock();
         try {
-            status.publishPreparedStatus(status.prepareNewStatus(
-                    status.freezeStatusResponse(response)));
+            status.publishPreparedStatus(status
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build())));
         } finally {
             status.lock.unlock();
         }
     }
 
-    private static WorkerStatusResponse statusResponse(
-            long maxBatchTokens,
-            long availableKvTokens,
-            long totalKvTokens,
-            long statusVersion) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
+    private static WorkerStatusPB.Builder statusResponse(long maxBatchTokens,
+                                                         long availableKvTokens,
+                                                         long totalKvTokens,
+                                                         long statusVersion) {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
         response.setAlive(true);
         response.setMaxBatchTokensSize(maxBatchTokens);
-        response.setAvailableKvCacheTokens(availableKvTokens);
-        response.setTotalKvCacheTokens(totalKvTokens);
+        response.setAvailableKvCache(availableKvTokens);
+        response.setTotalKvCache(totalKvTokens);
         response.setStatusVersion(statusVersion);
         return response;
     }

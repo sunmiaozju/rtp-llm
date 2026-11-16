@@ -26,8 +26,9 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 
@@ -176,12 +177,12 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         }
     }
 
-    /** Apply a newer worker status or refresh liveness from a same-version heartbeat. */
-    public void applyStatus(
-            WorkerStatus status, WorkerStatusResponse response) {
-        Objects.requireNonNull(status, "status");
-        Objects.requireNonNull(response, "response");
-        RoleType role = Objects.requireNonNull(response.getRole(), "response role");
+    /**
+     * 发布新版本状态，或用同版本心跳刷新存活状态。
+     */
+    public void applyStatus(WorkerStatus status, WorkerStatusPB response) {
+        WorkerStatus.StatusObservation observation = EngineStatusConverter.convertToStatusObservation(status, response);
+        RoleType role = observation.role();
         WorkerEndpoint endpoint = registry.get(
                 role, status.getIpPort(), status);
         if (endpoint == null) {
@@ -193,16 +194,14 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         Runnable statusNotifier;
         status.lock.lock();
         try {
-            long responseVersion = Objects.requireNonNull(
-                    response.getStatusVersion(), "response status version");
+            long responseVersion = response.getStatusVersion();
             long committedVersion = status.appliedStatusCursor().statusVersion();
             if (responseVersion < committedVersion) {
                 throw new IllegalArgumentException(
                         "worker status version regressed: committed="
                                 + committedVersion + ", response=" + responseVersion);
             }
-            WorkerStatus.StatusObservation observation =
-                    status.freezeStatusResponse(response);
+
             if (responseVersion == committedVersion) {
                 statusNotifier = endpoint.observeStatusHeartbeat(status, observation);
             } else {

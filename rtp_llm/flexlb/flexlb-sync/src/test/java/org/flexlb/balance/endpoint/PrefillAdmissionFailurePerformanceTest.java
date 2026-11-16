@@ -7,8 +7,8 @@ import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -47,9 +47,7 @@ class PrefillAdmissionFailurePerformanceTest {
             for (int i = 0; i < workerCount; i++) {
                 var status = EndpointTestSupport.workerStatus(RoleType.PREFILL, "worker-" + i, 8080, 8090);
                 var endpoint = EndpointTestSupport.standalonePrefillEndpoint(status, config, delivery, events, reporter);
-                var observation = new WorkerStatusResponse();
-                observation.setAlive(true);
-                observation.setRunningQueryLen(1L);
+                var observation = WorkerStatusPB.newBuilder().setAlive(true).setRunningQueryLen(1);
                 EndpointTestSupport.applyStatus(endpoint, observation);
                 directory.add(new EndpointRegistry.PrefillRoutingEntry(status.getIpPort(), endpoint));
             }

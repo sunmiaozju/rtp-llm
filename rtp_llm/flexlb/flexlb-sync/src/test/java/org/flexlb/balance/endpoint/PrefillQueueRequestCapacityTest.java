@@ -23,8 +23,8 @@ import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -617,14 +617,13 @@ class PrefillQueueRequestCapacityTest {
     }
 
     private static Fixture fixture(Supplier<FlexlbConfig> configSupplier,
-                                   PlacementAvailability availability, String ip,
+                                   PlacementAvailability availability,
+                                   String ip,
                                    EndpointTestSupport.TestRequestRuntime runtime,
-                                   EndpointRegistry registry, QueueCapacity queueCapacity) {
+                                   EndpointRegistry registry,
+                                   QueueCapacity queueCapacity) {
         WorkerStatus status = WorkerStatus.createDiscovered(RoleType.PREFILL, "test", ip, 8080, 9090, "test");
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
-        response.setAlive(true);
-        EndpointTestSupport.publishStatus(status, response);
+        EndpointTestSupport.publishStatus(status, WorkerStatusPBs.status(RoleType.PREFILL).setAlive(true));
         DeliveryStrategy parked = EndpointTestSupport.routeStrategy(runtime);
         DeliveryStrategy delivery = mock(DeliveryStrategy.class, delegatesTo(parked));
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);

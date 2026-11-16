@@ -4,12 +4,13 @@ import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.balance.eviction.DecodeEndpointSnapshot;
 import org.flexlb.balance.preemption.PreemptionCancelPhase;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,8 +55,8 @@ class DecodeEndpointLayeredViewTest {
         reserve(1L, 500, 508, 30);
         reserve(2L, 500, 508, 40);
 
-        TaskInfo accepted = runningTask(1L, TaskPhase.KV_ALLOCATED, 256);
-        TaskInfo running = runningTask(2L, TaskPhase.RUNNING, 512);
+        TaskInfoPB.Builder accepted = runningTask(1L, TaskPhase.KV_ALLOCATED, 256);
+        TaskInfoPB.Builder running = runningTask(2L, TaskPhase.RUNNING, 512);
         updateStatus(Map.of("1", accepted, "2", running), null, 10_000);
 
         assertEquals(1, endpoint.resourceSnapshot().acceptedCount());
@@ -153,8 +154,7 @@ class DecodeEndpointLayeredViewTest {
         assertTrue(isConfirmed(1L));
 
         // Same round lists it both running and finished: finished wins.
-        TaskInfo finished = runningTask(1L, TaskPhase.RUNNING, 256);
-        finished.setErrorCode(0);
+        TaskInfoPB.Builder finished = runningTask(1L, TaskPhase.RUNNING, 256);
         updateStatus(Map.of("1", runningTask(1L, TaskPhase.RUNNING, 256)),
                 Map.of("1", finished), 10_000);
 
@@ -563,13 +563,14 @@ class DecodeEndpointLayeredViewTest {
                 .orElseThrow(() -> new AssertionError("request " + requestId + " not tracked"));
     }
 
-    private void updateStatus(Map<String, TaskInfo> running, Map<String, TaskInfo> finished,
+    private void updateStatus(Map<String, TaskInfoPB.Builder> running,
+                              Map<String, TaskInfoPB.Builder> finished,
                               long availableKvCacheTokens) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
-        response.setAvailableKvCacheTokens(availableKvCacheTokens);
-        response.setTotalKvCacheTokens(20_000L);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        response.setAvailableKvCache(availableKvCacheTokens);
+        response.setTotalKvCache(20_000L);
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
@@ -601,10 +602,10 @@ class DecodeEndpointLayeredViewTest {
                 priority, new DecodeEndpoint.CapacityLimit(Math.max(1, endpoint.routingView().totalLoad()), 100));
     }
 
-    private static TaskInfo runningTask(long requestId, TaskPhase phase, long inputLength) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
-        task.setPhase(phase);
+    private static TaskInfoPB.Builder runningTask(long requestId, TaskPhase phase, long inputLength) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
+        WorkerStatusPBs.phase(task, phase);
         task.setInputLength(inputLength);
         return task;
     }

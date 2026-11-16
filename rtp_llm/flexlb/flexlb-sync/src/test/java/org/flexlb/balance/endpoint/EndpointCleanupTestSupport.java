@@ -5,13 +5,12 @@ import org.flexlb.balance.endpoint.prefill.PrefillState;
 import org.flexlb.balance.endpoint.prefill.Reservation;
 import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.scheduler.ScheduledRequest;
-import org.flexlb.dao.master.TaskInfo;
-import org.flexlb.dao.master.WorkerStatusResponse;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Predicate;
@@ -28,14 +27,10 @@ public final class EndpointCleanupTestSupport {
     private EndpointCleanupTestSupport() { }
 
     public static void confirmDecode(DecodeEndpoint endpoint, String requestId) {
-        TaskInfo running = new TaskInfo();
-        running.setRequestId(requestId);
-        running.setPhase(TaskPhase.KV_ALLOCATED);
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(Map.of(requestId, running));
-        response.setFinishedTaskInfo(Map.of());
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setTotalKvCacheTokens(10_000L);
+        var response = WorkerStatusPB.newBuilder()
+                .addRunningTaskInfo(WorkerStatusPBs.task(requestId, TaskPhase.KV_ALLOCATED))
+                .setAvailableKvCache(10_000L)
+                .setTotalKvCache(10_000L);
         EndpointTestSupport.applyStatus(endpoint, response).run();
     }
 

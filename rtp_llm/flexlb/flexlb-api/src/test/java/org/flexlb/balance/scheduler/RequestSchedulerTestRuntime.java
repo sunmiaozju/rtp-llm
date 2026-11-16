@@ -24,8 +24,9 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 
@@ -159,12 +160,11 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         runtime.maintainExpiration();
     }
 
-    /** Apply and notify one exact worker-status transaction. */
-    public void applyStatus(
-            WorkerStatus status, WorkerStatusResponse response) {
-        Objects.requireNonNull(status, "status");
-        Objects.requireNonNull(response, "response");
-        applyStatus(status, status.freezeStatusResponse(response));
+    /**
+     * 将 protobuf 响应转为状态观测，并执行状态更新与通知。
+     */
+    public void applyStatus(WorkerStatus status, WorkerStatusPB.Builder response) {
+        applyStatus(status, EngineStatusConverter.convertToStatusObservation(status, response.build()));
     }
 
     /** Apply an immutable protocol observation without a mutable DTO hop. */

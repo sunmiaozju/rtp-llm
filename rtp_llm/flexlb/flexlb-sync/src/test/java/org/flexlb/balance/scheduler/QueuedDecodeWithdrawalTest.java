@@ -12,11 +12,13 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
@@ -115,10 +117,10 @@ class QueuedDecodeWithdrawalTest {
         assertNotNull(delivery);
         delivery.complete(DeliveryResult.delivered());
         assertEquals(RequestState.Phase.ACKNOWLEDGED, slot.snapshot().state());
-        TaskInfo task = new TaskInfo();
-        task.setRequestId("42");
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr("42");
         task.setInputLength(16L);
-        task.setPhase(TaskPhase.RUNNING);
+        WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
         applyStatus(Map.of("42", task), Map.of());
         applyStatus(Map.of(), Map.of());
         applyStatus(Map.of(), Map.of());
@@ -136,21 +138,22 @@ class QueuedDecodeWithdrawalTest {
         decode.close();
     }
 
-    private void applyStatus(Map<String, TaskInfo> running, Map<String, TaskInfo> finished) {
+    private void applyStatus(Map<String, TaskInfoPB.Builder> running, Map<String, TaskInfoPB.Builder> finished) {
         WorkerStatus status = decode.getStatus();
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.DECODE);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.DECODE));
         response.setAlive(true);
-        response.setTotalKvCacheTokens(10_000L);
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
+        response.setTotalKvCache(10_000L);
+        response.setAvailableKvCache(10_000L);
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
         response.setStatusVersion(Math.max(1, status.appliedStatusCursor().statusVersion() + 1));
         response.setLatestFinishedVersion(Math.max(0, status.appliedStatusCursor().latestFinishedTaskVersion()) + finished.size());
         Runnable statusNotifier;
         status.lock.lock();
         try {
-            statusNotifier = decode.applyPreparedStatus(status, status.prepareNewStatus(status.freezeStatusResponse(response)));
+            statusNotifier = decode.applyPreparedStatus(status, status
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build())));
         } finally {
             status.lock.unlock();
         }

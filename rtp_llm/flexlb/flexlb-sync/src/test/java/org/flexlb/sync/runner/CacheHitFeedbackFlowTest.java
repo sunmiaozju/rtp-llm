@@ -38,6 +38,7 @@ import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.engine.grpc.client.EngineGrpcClient;
 import org.flexlb.metric.FlexMonitor;
 import org.flexlb.service.grpc.EngineGrpcService;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
@@ -372,10 +373,11 @@ class CacheHitFeedbackFlowTest {
     }
 
     private void publish(WorkerStatus status) {
-        var value = RunnerTestSupport.response(status, true, 1, 1_000_000, 1_000_000, 1, Map.of());
+        var value = RunnerTestSupport.response(status, true, 1, 1_000_000, 1_000_000, 1);
         status.lock.lock();
         try {
-            registry.publishPreparedEndpoint(status.getLogicalIpPort(), status, status.prepareNewStatus(status.freezeStatusResponse(value)));
+            registry.publishPreparedEndpoint(status.getLogicalIpPort(), status,
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, value.build())));
             status.recordSuccessfulPoll(true);
         } finally {
             status.lock.unlock();

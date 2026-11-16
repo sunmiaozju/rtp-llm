@@ -9,10 +9,11 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.ServerStatus;
-import org.flexlb.dao.master.TaskInfo;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -64,7 +65,7 @@ class TwinOverloadAdmissionTest {
         assertEquals(8, endpoint.observedRequestCount());
         assertTrue(!endpoint.batchAdmissionAvailability(1).isAvailable());
 
-        Map<String, TaskInfo> finished = tasks(1L, 7, 11L, TaskPhase.RUNNING);
+        Map<String, TaskInfoPB.Builder> finished = tasks(1L, 7, 11L, TaskPhase.RUNNING);
         applyStatus(endpoint, tasks(8L, 1, 11L, TaskPhase.RUNNING), finished);
         assertEquals(1, endpoint.getInflightBatchCount());
         assertEquals(1, endpoint.observedRequestCount(),
@@ -228,27 +229,27 @@ class TwinOverloadAdmissionTest {
                 endpoint, null, null, System.currentTimeMillis());
     }
 
-    private static Map<String, TaskInfo> tasks(long firstId, int count, long batchId, TaskPhase phase) {
-        Map<String, TaskInfo> result = new LinkedHashMap<>();
+    private static Map<String, TaskInfoPB.Builder> tasks(long firstId, int count, long batchId, TaskPhase phase) {
+        Map<String, TaskInfoPB.Builder> result = new LinkedHashMap<>();
         for (long id = firstId; id < firstId + count; id++) {
-            TaskInfo task = new TaskInfo();
-            task.setRequestId(Long.toString(id));
+            TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+            task.setRequestIdStr(Long.toString(id));
             task.setBatchId(batchId);
-            task.setPhase(phase);
+            WorkerStatusPBs.phase(task, phase);
             task.setInputLength(128L);
-            task.setErrorCode(0);
             result.put(Long.toString(id), task);
         }
         return result;
     }
 
     private static void applyStatus(WorkerEndpoint endpoint,
-                                    Map<String, TaskInfo> running, Map<String, TaskInfo> finished) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
-        response.setTotalKvCacheTokens(22_000_000L);
-        response.setAvailableKvCacheTokens(21_900_000L);
+                                    Map<String, TaskInfoPB.Builder> running,
+                                    Map<String, TaskInfoPB.Builder> finished) {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        response.setTotalKvCache(22_000_000L);
+        response.setAvailableKvCache(21_900_000L);
         EndpointTestSupport.applyStatus(endpoint, response).run();
     }
 }

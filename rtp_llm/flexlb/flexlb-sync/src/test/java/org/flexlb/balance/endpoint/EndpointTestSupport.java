@@ -25,9 +25,12 @@ import org.flexlb.balance.scheduler.RequestSlot.DeliveryClaim;
 import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.RoleTypePB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.PrefillQueueEnqueueResult;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 
 import java.util.ArrayList;
@@ -91,63 +94,53 @@ public final class EndpointTestSupport {
                 role, group, ip, port, grpcPort, site);
     }
 
-    static Runnable applyStatus(
-            WorkerEndpoint endpoint,
-            WorkerStatusResponse response) {
+    static Runnable applyStatus(WorkerEndpoint endpoint, WorkerStatusPB.Builder response) {
         WorkerStatus status = endpoint.getStatus();
         prepareResponse(status, response);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
             Runnable statusNotifier =
                     endpoint.applyPreparedStatus(status, prepared);
-            status.recordSuccessfulPoll(response.isAlive());
+            status.recordSuccessfulPoll(response.getAlive());
             return statusNotifier;
         } finally {
             status.lock.unlock();
         }
     }
 
-    static void publishStatus(
-            WorkerStatus status,
-            WorkerStatusResponse response) {
+    static void publishStatus(WorkerStatus status, WorkerStatusPB.Builder response) {
         prepareResponse(status, response);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
             status.publishPreparedStatus(prepared);
-            status.recordSuccessfulPoll(response.isAlive());
+            status.recordSuccessfulPoll(response.getAlive());
         } finally {
             status.lock.unlock();
         }
     }
 
-    static WorkerEndpoint publishEndpoint(
-            EndpointRegistry registry,
-            RoleType role,
-            String address,
-            WorkerStatus status) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(role);
-        response.setAlive(true);
-        response.setStatusVersion(1L);
-        response.setLatestFinishedVersion(0L);
+    static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+                                          RoleType role,
+                                          String address,
+                                          WorkerStatus status) {
+        WorkerStatusPB.Builder response = WorkerStatusPBs.status(role).setAlive(true).setStatusVersion(1L);
         return publishEndpoint(registry, role, address, status, response);
     }
 
-    static WorkerEndpoint publishEndpoint(
-            EndpointRegistry registry,
-            RoleType role,
-            String address,
-            WorkerStatus status,
-            WorkerStatusResponse response) {
+    static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+                                          RoleType role,
+                                          String address,
+                                          WorkerStatus status,
+                                          WorkerStatusPB.Builder response) {
         prepareResponse(status, response);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
             return registry.publishPreparedEndpoint(
                     address, status, prepared).endpoint();
         } finally {
@@ -155,28 +148,19 @@ public final class EndpointTestSupport {
         }
     }
 
-    private static void prepareResponse(
-            WorkerStatus status,
-            WorkerStatusResponse response) {
+    private static void prepareResponse(WorkerStatus status, WorkerStatusPB.Builder response) {
         // This helper models a successful status poll for an active generation.
         // Retirement tests must exercise the explicit dead-status path instead.
         response.setAlive(true);
-        if (response.getRole() == null) {
-            response.setRole(status.getRole());
+        if (response.getRoleType() == RoleTypePB.ROLE_TYPE_PDFUSION && response.getRole().isEmpty()) {
+            response.setRoleType(WorkerStatusPBs.role(status.getRole()));
         }
         long committedVersion =
                 status.appliedStatusCursor().statusVersion();
-        Long responseVersion = response.getStatusVersion();
-        if (responseVersion == null
-                || responseVersion <= 0L
-                || responseVersion <= committedVersion) {
+        long responseVersion = response.getStatusVersion();
+        if (responseVersion <= 0L || responseVersion <= committedVersion) {
             response.setStatusVersion(Math.max(
                     1L, committedVersion + 1L));
-        }
-        if (response.getLatestFinishedVersion() == null) {
-            response.setLatestFinishedVersion(
-                    status.appliedStatusCursor()
-                            .latestFinishedTaskVersion());
         }
     }
 

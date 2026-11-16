@@ -1,11 +1,12 @@
 package org.flexlb.balance.endpoint;
 
 import org.flexlb.balance.preemption.PreemptionCancelPhase;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -156,7 +157,7 @@ class DecodeRequestExpirationTest {
     @Test
     void ordinaryFinishedRequestsDoNotPopulateRetainedTerminalRecords() {
         int requestCount = 10_000;
-        Map<String, TaskInfo> finished = new HashMap<>(requestCount);
+        Map<String, TaskInfoPB.Builder> finished = new HashMap<>(requestCount);
         for (long requestId = 1; requestId <= requestCount; requestId++) {
             reserve(requestId, 1, 1, 0);
             finished.put(Long.toString(requestId),
@@ -188,14 +189,14 @@ class DecodeRequestExpirationTest {
         assertTrue(isConfirmed(1L));
     }
 
-    private void updateStatus(Map<String, TaskInfo> running,
-                              Map<String, TaskInfo> finished,
+    private void updateStatus(Map<String, TaskInfoPB.Builder> running,
+                              Map<String, TaskInfoPB.Builder> finished,
                               long availableKvCacheTokens) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
-        response.setAvailableKvCacheTokens(availableKvCacheTokens);
-        response.setTotalKvCacheTokens(10_000L);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        response.setAvailableKvCache(availableKvCacheTokens);
+        response.setTotalKvCache(10_000L);
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
@@ -236,12 +237,11 @@ class DecodeRequestExpirationTest {
                 new DecodeEndpoint.CapacityLimit(Math.max(1, endpoint.routingView().totalLoad()), 100));
     }
 
-    private static TaskInfo task(long requestId, TaskPhase phase, long inputLength) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
-        task.setPhase(phase);
+    private static TaskInfoPB.Builder task(long requestId, TaskPhase phase, long inputLength) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
+        WorkerStatusPBs.phase(task, phase);
         task.setInputLength(inputLength);
-        task.setErrorCode(0);
         return task;
     }
 }

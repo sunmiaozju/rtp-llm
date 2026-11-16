@@ -9,14 +9,13 @@ import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.mockito.Mockito;
-
-import java.util.Map;
 
 /** Package-local fixtures for the frozen status/endpoint composition boundary. */
 public final class RunnerTestSupport {
@@ -67,56 +66,42 @@ public final class RunnerTestSupport {
         return status;
     }
 
-    public static WorkerStatusResponse response(
-            WorkerStatus status, boolean alive, long version) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(status.getRole());
-        response.setAlive(alive);
-        response.setStatusVersion(version);
-        response.setLatestFinishedVersion(0L);
-        response.setRunningTaskInfo(Map.of());
-        return response;
+    public static WorkerStatusPB.Builder response(WorkerStatus status, boolean alive, long version) {
+        return WorkerStatusPBs.status(status.getRole()).setAlive(alive).setStatusVersion(version);
     }
 
-    public static WorkerStatusResponse response(
-            WorkerStatus status,
-            boolean alive,
-            long version,
-            long availableKv,
-            long totalKv,
-            double stepLatencyMs,
-            Map<String, TaskInfo> runningTasks) {
-        WorkerStatusResponse response = response(status, alive, version);
-        response.setAvailableKvCacheTokens(availableKv);
-        response.setTotalKvCacheTokens(totalKv);
-        response.setStepLatencyMs(stepLatencyMs);
-        response.setRunningTaskInfo(runningTasks);
-        return response;
+    public static WorkerStatusPB.Builder response(WorkerStatus status,
+                                                  boolean alive,
+                                                  long version,
+                                                  long availableKv,
+                                                  long totalKv,
+                                                  double stepLatencyMs) {
+        return response(status, alive, version).setAvailableKvCache(availableKv)
+                .setTotalKvCache(totalKv)
+                .setStepLatencyMs(stepLatencyMs);
     }
 
-    public static void publish(
-            WorkerStatus status, WorkerStatusResponse response) {
+    public static void publish(WorkerStatus status, WorkerStatusPB.Builder response) {
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
             status.publishPreparedStatus(prepared);
-            status.recordSuccessfulPoll(response.isAlive());
+            status.recordSuccessfulPoll(response.getAlive());
         } finally {
             status.lock.unlock();
         }
     }
 
-    public static WorkerEndpoint publishEndpoint(
-            EndpointRegistry registry,
-            RoleType role,
-            String address,
-            WorkerStatus status) {
-        WorkerStatusResponse response = response(status, true, 1L);
+    public static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+                                                 RoleType role,
+                                                 String address,
+                                                 WorkerStatus status) {
+        WorkerStatusPB.Builder response = response(status, true, 1L);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
             WorkerEndpoint endpoint = registry
                     .publishPreparedEndpoint(address, status, prepared)
                     .endpoint();

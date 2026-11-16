@@ -1,12 +1,13 @@
 package org.flexlb.dao.master;
 
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.enums.KvCacheGroupMode;
+import org.flexlb.enums.PriorityPreemptionProgress;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -25,16 +26,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Contract tests for the redesigned {@link WorkerStatus} status-commit model.
+ * 验证 {@link WorkerStatus} 的状态发布契约。
  *
- * <p>The previous transaction API ({@code applyResponseFields} /
- * {@code commitAppliedStatus} / {@code appliedStatusSnapshot}) and the
- * in-status resource-availability hysteresis were both removed. Status is now
- * published through the {@code freeze -> prepare -> publish} transaction under
- * the per-generation lock, with a CAS on the single committed holder. The
- * resource-availability/hysteresis decision moved out of {@code WorkerStatus}
- * to the resource-measure / routing layer, so its coverage is intentionally not
- * re-created here; it belongs with its new owner.
+ * <p>测试直接构造状态观测，在 generation 锁内准备并发布状态，验证字段与游标通过 CAS 整体更新，
+ * 以及版本递增、退役状态和轮询健康记录的约束。资源可用性判断由资源统计和路由层负责。</p>
  */
 @DisplayName("WorkerStatus status-commit contract")
 class WorkerStatusTest {
@@ -70,15 +65,11 @@ class WorkerStatusTest {
     }
 
     /**
-     * Run one whole status transaction exactly as the production reducers do:
-     * freeze the RPC response, prepare a strictly-newer committed holder under
-     * the generation lock, then publish it.
+     * 在 generation 锁内准备并发布完整的状态观测。
      */
-    private static void publish(WorkerStatus status, WorkerStatusResponse response) {
+    private static void publish(WorkerStatus status, WorkerStatus.StatusObservation observation) {
         status.lock.lock();
         try {
-            WorkerStatus.StatusObservation observation =
-                    status.freezeStatusResponse(response);
             WorkerStatus.PreparedStatus prepared =
                     status.prepareNewStatus(observation);
             status.publishPreparedStatus(prepared);
@@ -88,32 +79,24 @@ class WorkerStatusTest {
     }
 
     /**
-     * Build a response whose every Engine field is a deterministic function of
-     * {@code marker}, so a torn read is detectable by any field disagreeing.
-     * {@code statusVersion} equals the marker and must strictly increase across
-     * publishes.
+     * 每个 Engine 字段都由 marker 决定，用于检测字段与游标是否属于同一轮发布。
      */
-    private static WorkerStatusResponse responseWithMarker(long marker) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
-        response.setAvailableConcurrency(marker);
-        response.setAlive(true);
-        response.setAvailableKvCacheTokens(100L + marker);
-        response.setTotalKvCacheTokens(1_000L + marker);
-        response.setStepLatencyMs(marker + 0.25);
-        response.setIterateCount(marker);
-        response.setDpSize(10L + marker);
-        response.setTpSize(20L + marker);
-        response.setDpRank(30L + marker);
-        response.setDpMasterAddress("master-" + marker);
-        response.setMaxSeqLen(40L + marker);
-        response.setMaxBatchTokensSize(50L + marker);
-        response.setStatusVersion(marker);
-        response.setLatestFinishedVersion(marker);
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(marker));
-        response.setRunningTaskInfo(Map.of(Long.toString(marker), task));
-        return response;
+    private static WorkerStatus.StatusObservation observationWithMarker(WorkerStatus status, long marker) {
+        return observationWithMarker(status, marker, marker);
+    }
+
+    private static WorkerStatus.StatusObservation observationWithMarker(WorkerStatus status,
+                                                                        long marker,
+                                                                        long finishedVersion) {
+        String requestId = Long.toString(marker);
+        WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(requestId, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
+                null, -1L, null, -1L, PriorityPreemptionProgress.NONE, false, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L,
+                0L, 0L, 0L, 0L, null, null, null);
+        WorkerStatus.EngineObservation engine = new WorkerStatus.EngineObservation(RoleType.PREFILL, marker,
+                100L + marker, 1_000L + marker, Map.of(requestId, task), marker + 0.25, marker, 10L + marker,
+                20L + marker, 30L + marker, "master-" + marker, 0L, 0, 0, KvCacheGroupMode.UNSPECIFIED, 40L + marker,
+                50L + marker, 0L, 0L, null);
+        return status.bindStatusObservation(engine, true, marker, finishedVersion, Map.of());
     }
 
     private static void assertCoherent(WorkerStatus.CommittedWorkerStatus committed) {
@@ -145,7 +128,7 @@ class WorkerStatusTest {
         @DisplayName("Readers never observe a torn field/cursor pair")
         void readersObserveOneWholePublishedSnapshot() throws Exception {
             WorkerStatus status = discovered();
-            publish(status, responseWithMarker(1L));
+            publish(status, observationWithMarker(status, 1L));
 
             int readers = 4;
             int observationsPerReader = 20_000;
@@ -159,8 +142,7 @@ class WorkerStatusTest {
                     ready.countDown();
                     assertTrue(start.await(5, TimeUnit.SECONDS));
                     for (int i = 0; i < observationsPerReader; i++) {
-                        publish(status, responseWithMarker(
-                                nextVersion.getAndIncrement()));
+                        publish(status, observationWithMarker(status, nextVersion.getAndIncrement()));
                     }
                     return null;
                 }));
@@ -186,28 +168,6 @@ class WorkerStatusTest {
                 assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
             }
         }
-
-        @Test
-        @DisplayName("Published running tasks are a frozen immutable copy")
-        void publishedRunningTasksDoNotRetainMutableMapStructure() {
-            WorkerStatus status = discovered();
-            Map<String, TaskInfo> tasks = new HashMap<>();
-            TaskInfo task = new TaskInfo();
-            task.setRequestId("7");
-            tasks.put("7", task);
-            WorkerStatusResponse response = responseWithMarker(7L);
-            response.setRunningTaskInfo(tasks);
-
-            publish(status, response);
-            tasks.clear();
-
-            Map<String, WorkerStatus.TaskObservation> published =
-                    status.committedEngineObservation().runningTaskList();
-            assertEquals(1, published.size());
-            assertEquals("7", published.get("7").requestId());
-            assertThrows(UnsupportedOperationException.class,
-                    () -> published.remove("7"));
-        }
     }
 
     @Nested
@@ -218,13 +178,12 @@ class WorkerStatusTest {
         @DisplayName("prepareNewStatus rejects a non-advancing status version")
         void prepareRejectsNonStrictlyNewerVersion() {
             WorkerStatus status = discovered();
-            publish(status, responseWithMarker(5L));
+            publish(status, observationWithMarker(status, 5L));
 
-            WorkerStatusResponse stale = responseWithMarker(5L); // equal version
+            WorkerStatus.StatusObservation stale = observationWithMarker(status, 5L); // equal version
             status.lock.lock();
             try {
-                WorkerStatus.StatusObservation observation =
-                        status.freezeStatusResponse(stale);
+                WorkerStatus.StatusObservation observation = stale;
                 assertThrows(IllegalArgumentException.class,
                         () -> status.prepareNewStatus(observation));
             } finally {
@@ -236,8 +195,7 @@ class WorkerStatusTest {
         @DisplayName("prepareNewStatus requires the generation lock")
         void prepareRequiresGenerationLock() {
             WorkerStatus status = discovered();
-            WorkerStatus.StatusObservation observation =
-                    status.freezeStatusResponse(responseWithMarker(1L));
+            WorkerStatus.StatusObservation observation = observationWithMarker(status, 1L);
             assertThrows(IllegalStateException.class,
                     () -> status.prepareNewStatus(observation));
         }
@@ -249,8 +207,7 @@ class WorkerStatusTest {
             WorkerStatus.PreparedStatus prepared;
             status.lock.lock();
             try {
-                prepared = status.prepareNewStatus(
-                        status.freezeStatusResponse(responseWithMarker(1L)));
+                prepared = status.prepareNewStatus(observationWithMarker(status, 1L));
             } finally {
                 status.lock.unlock();
             }
@@ -262,7 +219,7 @@ class WorkerStatusTest {
         @DisplayName("A stale prepared status loses the publish CAS")
         void stalePreparedStatusIsRejectedByCas() {
             WorkerStatus status = discovered();
-            publish(status, responseWithMarker(1L));
+            publish(status, observationWithMarker(status, 1L));
 
             // Two transactions prepared from the same committed base, mirroring
             // two overlapping status rounds. Only the first publish may win.
@@ -270,10 +227,8 @@ class WorkerStatusTest {
             WorkerStatus.PreparedStatus second;
             status.lock.lock();
             try {
-                first = status.prepareNewStatus(
-                        status.freezeStatusResponse(responseWithMarker(2L)));
-                second = status.prepareNewStatus(
-                        status.freezeStatusResponse(responseWithMarker(3L)));
+                first = status.prepareNewStatus(observationWithMarker(status, 2L));
+                second = status.prepareNewStatus(observationWithMarker(status, 3L));
             } finally {
                 status.lock.unlock();
             }
@@ -293,14 +248,13 @@ class WorkerStatusTest {
         @DisplayName("A retiring generation refuses further publication")
         void retiringGenerationRefusesPublication() {
             WorkerStatus status = discovered();
-            publish(status, responseWithMarker(1L));
+            publish(status, observationWithMarker(status, 1L));
 
             status.lock.lock();
             try {
                 assertTrue(status
                         .beginRetirementAfterEndpointGateClosed());
-                WorkerStatus.StatusObservation observation =
-                        status.freezeStatusResponse(responseWithMarker(2L));
+                WorkerStatus.StatusObservation observation = observationWithMarker(status, 2L);
                 assertThrows(IllegalStateException.class,
                         () -> status.prepareNewStatus(observation));
             } finally {
@@ -321,10 +275,7 @@ class WorkerStatusTest {
             long[] finishedVersions = {5L, 3L, 10L, 2L};
             long[] expectedHighWater = {5L, 5L, 10L, 10L};
             for (int round = 0; round < finishedVersions.length; round++) {
-                WorkerStatusResponse response =
-                        responseWithMarker(round + 1L); // strictly-newer status version
-                response.setLatestFinishedVersion(finishedVersions[round]);
-                publish(status, response);
+                publish(status, observationWithMarker(status, round + 1L, finishedVersions[round]));
                 assertEquals(expectedHighWater[round],
                         status.appliedStatusCursor().latestFinishedTaskVersion());
             }
@@ -348,9 +299,7 @@ class WorkerStatusTest {
                         status.lock.lock();
                         try {
                             long next = version.getAndIncrement();
-                            WorkerStatus.StatusObservation observation =
-                                    status.freezeStatusResponse(
-                                            responseWithMarker(next));
+                            WorkerStatus.StatusObservation observation = observationWithMarker(status, next);
                             status.publishPreparedStatus(
                                     status.prepareNewStatus(observation));
                         } finally {

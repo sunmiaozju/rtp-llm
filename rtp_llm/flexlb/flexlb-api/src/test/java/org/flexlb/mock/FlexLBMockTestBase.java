@@ -22,15 +22,16 @@ import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.engine.grpc.RequestId;
 import org.flexlb.engine.grpc.client.EngineGrpcClient;
 import org.flexlb.engine.grpc.core.GrpcChannelFactory;
 import org.flexlb.engine.grpc.monitor.GrpcReporter;
 import org.flexlb.engine.grpc.nameresolver.EngineAddressResolver;
 import org.flexlb.metric.NoOpFlexMonitor;
+import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.sync.status.WorkerDirectory;
@@ -555,9 +556,10 @@ public abstract class FlexLBMockTestBase {
         return input.toByteArray();
     }
 
-    /** Apply one strictly newer response through the production transaction. */
-    protected final void applyWorkerStatusResponse(
-            WorkerStatus status, WorkerStatusResponse response) {
+    /**
+     * 通过生产状态事务处理一轮 protobuf 响应。
+     */
+    protected final void applyWorkerStatusResponse(WorkerStatus status, WorkerStatusPB.Builder response) {
         schedulerRuntime.applyStatus(status, response);
     }
 
@@ -576,55 +578,47 @@ public abstract class FlexLBMockTestBase {
     /** Publish a synthetic Decode capacity observation for integration setup. */
     protected final void publishDecodeCapacity(long available, long total) {
         WorkerStatus status = getDecodeEndpoint().getStatus();
-        WorkerStatusResponse response = workerStatusResponse(
-                RoleType.DECODE,
-                status.getDpRank(),
-                available,
-                total,
+        WorkerStatusPB.Builder response = workerStatusResponse(RoleType.DECODE, status.getDpRank(), available, total,
                 status.appliedStatusCursor().statusVersion() + 1L);
         schedulerRuntime.applyStatus(status, response);
     }
 
-    private WorkerEndpoint publishEndpoint(
-            RoleType role,
-            String ip,
-            int httpPort,
-            int grpcPort,
-            long dpRank,
-            long availableKv,
-            long totalKv) {
+    private WorkerEndpoint publishEndpoint(RoleType role,
+                                           String ip,
+                                           int httpPort,
+                                           int grpcPort,
+                                           long dpRank,
+                                           long availableKv,
+                                           long totalKv) {
         WorkerStatus status = WorkerStatus.createDiscovered(
                 role, "test-group", ip, httpPort, grpcPort, null);
-        WorkerStatusResponse initial = workerStatusResponse(
-                role, dpRank, availableKv, totalKv, 1L);
+        WorkerStatusPB.Builder initial = workerStatusResponse(role, dpRank, availableKv, totalKv, 1L);
         status.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(initial));
+            WorkerStatus.PreparedStatus prepared =
+                    status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, initial.build()));
             WorkerEndpoint endpoint = endpointRegistry.publishPreparedEndpoint(
                     status.getLogicalIpPort(), status, prepared).endpoint();
-            status.recordSuccessfulPoll(initial.isAlive());
+            status.recordSuccessfulPoll(initial.getAlive());
             return endpoint;
         } finally {
             status.lock.unlock();
         }
     }
 
-    private static WorkerStatusResponse workerStatusResponse(
-            RoleType role,
-            long dpRank,
-            long availableKv,
-            long totalKv,
-            long statusVersion) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(role);
-        response.setAlive(true);
-        response.setDpRank(dpRank);
-        response.setAvailableKvCacheTokens(availableKv);
-        response.setTotalKvCacheTokens(totalKv);
-        response.setStatusVersion(statusVersion);
-        response.setLatestFinishedVersion(0L);
-        return response;
+    private static WorkerStatusPB.Builder workerStatusResponse(RoleType role,
+                                                               long dpRank,
+                                                               long availableKv,
+                                                               long totalKv,
+                                                               long statusVersion) {
+        return WorkerStatusPB.newBuilder()
+                .setRole(role.getCode())
+                .setAlive(true)
+                .setDpRank((int) dpRank)
+                .setAvailableKvCache(availableKv)
+                .setTotalKvCache(totalKv)
+                .setStatusVersion(statusVersion)
+                .setLatestFinishedVersion(0L);
     }
 
     private Response successRoute(String requestId) {

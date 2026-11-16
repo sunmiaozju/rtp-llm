@@ -15,8 +15,8 @@ import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.master.CacheStatus;
 import org.flexlb.dao.master.WorkerIdentity;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.engine.grpc.client.EngineGrpcClient;
 import org.flexlb.enums.BalanceStatusEnum;
 import org.flexlb.enums.FlexMetricType;
@@ -25,6 +25,8 @@ import org.flexlb.enums.TaskPhase;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
 import org.flexlb.metric.FlexStatisticsType;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -903,26 +905,22 @@ class EngineHealthReporterTest {
                                       long waitingQueryLen) {
         WorkerStatus workerStatus = WorkerStatus.createDiscovered(
                 role, null, ip, 8080, 8081, "test-site");
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(role);
-        response.setCacheStatus(cacheStatus);
-        response.setAlive(true);
-        response.setStatusVersion(1L);
-        response.setLatestFinishedVersion(0L);
-        response.setRunningTaskInfo(Map.of());
-        response.setFinishedTaskInfo(Map.of());
-        response.setAvailableKvCacheTokens(availableKvCacheTokens);
-        response.setTotalKvCacheTokens(totalKvCacheTokens);
-        response.setRunningQueryLen(runningQueryLen);
-        response.setWaitingQueryLen(waitingQueryLen);
+        WorkerStatusPB.Builder response = WorkerStatusPBs.status(role)
+                .setBlockSize(cacheStatus == null ? 0L : cacheStatus.getBlockSize())
+                .setAlive(true)
+                .setStatusVersion(1L)
+                .setAvailableKvCache(availableKvCacheTokens)
+                .setTotalKvCache(totalKvCacheTokens)
+                .setRunningQueryLen((int) runningQueryLen)
+                .setWaitingQueryLen((int) waitingQueryLen);
 
         workerStatus.lock.lock();
         try {
             if (cacheStatus != null) {
                 workerStatus.publishCacheStatus(cacheStatus);
             }
-            WorkerStatus.PreparedStatus prepared = workerStatus.prepareNewStatus(
-                    workerStatus.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared = workerStatus
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(workerStatus, response.build()));
             workerStatus.publishPreparedStatus(prepared);
             workerStatus.recordSuccessfulPoll(true);
         } finally {

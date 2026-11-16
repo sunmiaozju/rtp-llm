@@ -6,14 +6,14 @@ import org.flexlb.balance.endpoint.prefill.ReservationResult;
 import org.flexlb.balance.endpoint.prefill.WorkerStatusFact;
 import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.scheduler.ScheduledRequest;
-import org.flexlb.dao.master.TaskInfo;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -61,26 +61,17 @@ public final class DeliverySettlementTestSupport {
     }
 
     public List<WorkerStatusFact> finish(long batchId, ScheduledRequest item) {
-        TaskInfo finished = new TaskInfo();
-        finished.setRequestId(item.requestId());
-        finished.setBatchId(batchId);
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
-        response.setRunningTaskInfo(Map.of());
-        response.setFinishedTaskInfo(Map.of(item.requestId(), finished));
-        var observation = EndpointTestSupport.workerStatus(RoleType.PREFILL, "127.0.0.1", 8080, 8090)
-                .freezeStatusResponse(response);
+        var response = WorkerStatusPBs.status(RoleType.PREFILL)
+                .addFinishedTaskList(WorkerStatusPBs.task(item.requestId()).setBatchId(batchId));
+        var observation = EngineStatusConverter.convertToStatusObservation(
+                EndpointTestSupport.workerStatus(RoleType.PREFILL, "127.0.0.1", 8080, 8090), response.build());
         var result = prefill.updateFromWorkerStatus(observation, ignored -> 100L, () -> {}, () -> {});
         assertNull(result.publicationFailure());
         return result.schedulerFacts();
     }
 
     public static void queueDecode(DecodeEndpoint endpoint, DecodeEndpoint.ReservationHandle reservation) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(Map.of());
-        response.setFinishedTaskInfo(Map.of());
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setTotalKvCacheTokens(10_000L);
+        var response = WorkerStatusPB.newBuilder().setAvailableKvCache(10_000L).setTotalKvCache(10_000L);
         EndpointTestSupport.applyStatus(endpoint, response).run();
         try (var hold = endpoint.tryHold()) {
             assertTrue(endpoint.markQueued(hold, reservation));
@@ -96,15 +87,13 @@ public final class DeliverySettlementTestSupport {
     }
 
     public static void decodeStatus(DecodeEndpoint endpoint, long requestId, boolean finished) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
-        task.setPhase(finished ? null : TaskPhase.KV_ALLOCATED);
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        var tasks = Map.of(Long.toString(requestId), task);
-        response.setRunningTaskInfo(finished ? Map.of() : tasks);
-        response.setFinishedTaskInfo(finished ? tasks : Map.of());
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setTotalKvCacheTokens(10_000L);
+        var task = WorkerStatusPBs.task(Long.toString(requestId), finished ? null : TaskPhase.KV_ALLOCATED);
+        var response = WorkerStatusPB.newBuilder().setAvailableKvCache(10_000L).setTotalKvCache(10_000L);
+        if (finished) {
+            response.addFinishedTaskList(task);
+        } else {
+            response.addRunningTaskInfo(task);
+        }
         EndpointTestSupport.applyStatus(endpoint, response).run();
     }
 }

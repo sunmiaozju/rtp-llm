@@ -34,12 +34,12 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.consistency.MasterElectService;
 import org.flexlb.dao.BalanceContext;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService;
-import org.flexlb.enums.TaskPhase;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.TaskPhase;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.interceptor.GrpcQosHeaderInterceptor;
 import org.flexlb.interceptor.GrpcServerTimingInterceptor;
 import org.flexlb.metric.NoOpFlexMonitor;
@@ -1081,24 +1081,24 @@ class MasterBatchEndToEndPerformanceTest extends FlexLBMockTestBase {
                 List<CompletedRoute> completed = new ArrayList<>();
                 completed.add(simulatedCompletions.take());
                 simulatedCompletions.drainTo(completed);
-                Map<WorkerEndpoint, Map<String, TaskInfo>> prefillFinished = new HashMap<>();
-                Map<WorkerEndpoint, Map<String, TaskInfo>> decodeFinished = new HashMap<>();
+                Map<WorkerEndpoint, Map<String, TaskInfoPB.Builder>> prefillFinished = new HashMap<>();
+                Map<WorkerEndpoint, Map<String, TaskInfoPB.Builder>> decodeFinished = new HashMap<>();
                 for (CompletedRoute route : completed) {
                     for (var target : route.accepted().addresses().entrySet()) {
                         RoleType role = target.getKey();
                         String address = target.getValue();
-                        WorkerEndpoint endpoint = endpointRegistry.get(role, address);
+                        WorkerEndpoint endpoint = endpointRegistry.get(role, logicalWorkerIpPort(address));
                         assertTrue(endpoint != null,
                                 "completed route must retain its actual worker endpoint: " + address);
-                        TaskInfo task = new TaskInfo();
-                        task.setRequestId(Long.toString(route.requestId()));
-                        task.setInputLength(route.accepted().inputLength());
-                        task.setBatchId(route.accepted().batchId());
-                        task.setDpRank(endpoint.getStatus().getDpRank());
-                        task.setPhase(TaskPhase.RUNNING);
-                        task.setEndTimeMs(System.currentTimeMillis());
-                        task.setExecutionTimeMs(1L);
-                        task.setIterateCount(1L);
+                        TaskInfoPB.Builder task = TaskInfoPB.newBuilder()
+                                .setRequestIdStr(Long.toString(route.requestId()))
+                                .setInputLength((int) route.accepted().inputLength())
+                                .setBatchId(route.accepted().batchId())
+                                .setDpRank((int) endpoint.getStatus().getDpRank())
+                                .setPhase(TaskPhase.TASK_PHASE_RUNNING)
+                                .setEndTimeMs(System.currentTimeMillis())
+                                .setExecutionTimeMs(1L)
+                                .setIterateCount(1);
                         (role == RoleType.PREFILL ? prefillFinished : decodeFinished)
                                 .computeIfAbsent(endpoint, ignored -> new HashMap<>())
                                 .put(Long.toString(route.requestId()), task);
@@ -1115,19 +1115,18 @@ class MasterBatchEndToEndPerformanceTest extends FlexLBMockTestBase {
         }
     }
 
-    private void publishSimulatedTerminalStatus(
-            WorkerEndpoint endpoint, Map<String, TaskInfo> finished) {
+    private void publishSimulatedTerminalStatus(WorkerEndpoint endpoint, Map<String, TaskInfoPB.Builder> finished) {
         WorkerStatus status = endpoint.getStatus();
         WorkerStatus.AppliedStatusCursor cursor = status.appliedStatusCursor();
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(status.getRole());
-        response.setAlive(true);
-        response.setDpRank(status.getDpRank());
-        response.setAvailableKvCacheTokens(status.getAvailableKvCacheTokens());
-        response.setTotalKvCacheTokens(status.getTotalKvCacheTokens());
-        response.setStatusVersion(cursor.statusVersion() + 1L);
-        response.setLatestFinishedVersion(cursor.latestFinishedTaskVersion() + finished.size());
-        response.setFinishedTaskInfo(finished);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder()
+                .setRole(status.getRole().getCode())
+                .setAlive(true)
+                .setDpRank((int) status.getDpRank())
+                .setAvailableKvCache(status.getAvailableKvCacheTokens())
+                .setTotalKvCache(status.getTotalKvCacheTokens())
+                .setStatusVersion(cursor.statusVersion() + 1L)
+                .setLatestFinishedVersion(cursor.latestFinishedTaskVersion() + finished.size());
+        finished.values().forEach(response::addFinishedTaskList);
         applyWorkerStatusResponse(status, response);
     }
 

@@ -13,11 +13,12 @@ import org.flexlb.config.VictimStage;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.ServerStatus;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,10 +77,12 @@ class DecodeSelectorTest {
 
     private WorkerStatus dpWorker(String ip, String group, String masterAddress, long rank) {
         WorkerStatus worker = createWorkerStatus(ip, group);
-        WorkerStatusResponse response = StrategyTestSupport.response(RoleType.DECODE, true, 10_000L, 10_000L, 2L);
+        WorkerStatusPB.Builder response = StrategyTestSupport.response(RoleType.DECODE, true, 10_000L, 10_000L, 2L);
         response.setDpSize(2);
         response.setDpRank(rank);
-        response.setDpMasterAddress(masterAddress);
+        if (masterAddress != null) {
+            response.setDpMasterAddress(masterAddress);
+        }
         StrategyTestSupport.publish(worker, response);
         return worker;
     }
@@ -462,9 +465,8 @@ class DecodeSelectorTest {
         WorkerStatus confirmed = registerWorker("127.0.0.1", 10_000L, 9_000L);
         var response = StrategyTestSupport.response(RoleType.DECODE, true, 9_000L, 10_000L,
                 confirmed.appliedStatusCursor().statusVersion() + 1L);
-        response.setRunningTaskInfo(Map.of(
-                "81", task(81L, TaskPhase.KV_ALLOCATED),
-                "82", task(82L, TaskPhase.RUNNING)));
+        WorkerStatusPBs.setRunningTasks(response,
+                Map.of("81", task(81L, TaskPhase.KV_ALLOCATED), "82", task(82L, TaskPhase.RUNNING)));
         StrategyTestSupport.publish(confirmed, response);
         registerWorker("127.0.0.2", 10_000L, 9_000L);
         EndpointRegistry registry = decodeRegistry();
@@ -772,10 +774,10 @@ class DecodeSelectorTest {
         decode.getAvailability().setMaxEngineRequests(10L);
     }
 
-    private static TaskInfo task(long requestId, TaskPhase phase) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
-        task.setPhase(phase);
+    private static TaskInfoPB.Builder task(long requestId, TaskPhase phase) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
+        WorkerStatusPBs.phase(task, phase);
         return task;
     }
 

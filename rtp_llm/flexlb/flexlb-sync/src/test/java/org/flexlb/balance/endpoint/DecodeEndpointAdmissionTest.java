@@ -2,12 +2,13 @@ package org.flexlb.balance.endpoint;
 
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -692,9 +693,9 @@ class DecodeEndpointAdmissionTest {
         reserve(requestId, 200, 220, 70);
         markQueued(requestId);
         DecodeEndpoint.EngineDispatchPermit current = acquirePermit(requestId, 1);
-        TaskInfo running = new TaskInfo();
-        running.setRequestId(Long.toString(requestId));
-        running.setPhase(TaskPhase.RUNNING);
+        TaskInfoPB.Builder running = TaskInfoPB.newBuilder();
+        running.setRequestIdStr(Long.toString(requestId));
+        WorkerStatusPBs.phase(running, TaskPhase.RUNNING);
         updateStatus(Map.of(Long.toString(requestId), running), null, 10_000L);
 
         assertEquals(OWNERSHIP_LOST, stale.dispatch());
@@ -708,9 +709,9 @@ class DecodeEndpointAdmissionTest {
         markQueued(1L);
         DecodeEndpoint.EngineDispatchPermit stale = acquirePermit(1L, 2);
 
-        TaskInfo running = new TaskInfo();
-        running.setRequestId("1");
-        running.setPhase(TaskPhase.RUNNING);
+        TaskInfoPB.Builder running = TaskInfoPB.newBuilder();
+        running.setRequestIdStr("1");
+        WorkerStatusPBs.phase(running, TaskPhase.RUNNING);
         updateStatus(Map.of("1", running), null, 10_000);
 
         reserve(2L, 100, 110, 50);
@@ -744,9 +745,9 @@ class DecodeEndpointAdmissionTest {
     void calibrate_movesConfirmedOutOfReservedView() {
         reserve(1L, 500, 508, 30);
 
-        TaskInfo running = new TaskInfo();
-        running.setRequestId("1");
-        running.setPhase(TaskPhase.KV_ALLOCATED);
+        TaskInfoPB.Builder running = TaskInfoPB.newBuilder();
+        running.setRequestIdStr("1");
+        WorkerStatusPBs.phase(running, TaskPhase.KV_ALLOCATED);
         updateStatus(Map.of("1", running), null, 10_000);
 
         // Confirmed by the engine: no longer a reserved (evictable) entry,
@@ -762,9 +763,9 @@ class DecodeEndpointAdmissionTest {
         reserve(11L, 500, 508, 30);
         settleFromWorkerStatus(11L);
 
-        TaskInfo zombie = new TaskInfo();
-        zombie.setRequestId("11");
-        zombie.setPhase(TaskPhase.RUNNING);
+        TaskInfoPB.Builder zombie = TaskInfoPB.newBuilder();
+        zombie.setRequestIdStr("11");
+        WorkerStatusPBs.phase(zombie, TaskPhase.RUNNING);
         updateStatus(Map.of("11", zombie), Map.of(), 10_000L);
 
         assertNull(endpoint.reservationHandle("11"));
@@ -778,14 +779,13 @@ class DecodeEndpointAdmissionTest {
         endpoint = new DecodeEndpoint(status, events);
         DecodeEndpoint.ReservationHandle reservation =
                 reserve(1L, 500, 508, 30);
-        TaskInfo received = new TaskInfo();
-        received.setRequestId("1");
-        received.setPhase(TaskPhase.RECEIVED);
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(Map.of("1", received));
-        response.setFinishedTaskInfo(Map.of());
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setTotalKvCacheTokens(10_000L);
+        TaskInfoPB.Builder received = TaskInfoPB.newBuilder();
+        received.setRequestIdStr("1");
+        WorkerStatusPBs.phase(received, TaskPhase.RECEIVED);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, Map.of("1", received));
+        response.setAvailableKvCache(10_000L);
+        response.setTotalKvCache(10_000L);
 
         EndpointTestSupport.applyStatus(endpoint, response).run();
 
@@ -807,12 +807,10 @@ class DecodeEndpointAdmissionTest {
                 RoleType.DECODE, "10.0.0.2", 8080, 8081);
         DecodeEndpoint blockingEndpoint = new DecodeEndpoint(
                 blockingStatus, EndpointTestSupport.noopEventSink());
-        WorkerStatusResponse response = new WorkerStatusResponse();
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
         response.setAlive(true);
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setTotalKvCacheTokens(20_000L);
-        response.setRunningTaskInfo(Map.of());
-        response.setFinishedTaskInfo(Map.of());
+        response.setAvailableKvCache(10_000L);
+        response.setTotalKvCache(20_000L);
 
         ExecutorService executor = Executors.newFixedThreadPool(2);
         ReentrantLock stateLock = decodeStateLock(blockingEndpoint);
@@ -903,9 +901,9 @@ class DecodeEndpointAdmissionTest {
         updateStatus(Map.of(), Map.of(), 10_000L);
         var handle = reserveQueued(72L, 100L, 1000L, 50);
         assertFalse(endpoint.isAcceptedByEngine(handle));
-        TaskInfo accepted = new TaskInfo();
-        accepted.setRequestId("72");
-        accepted.setPhase(TaskPhase.KV_ALLOCATED);
+        TaskInfoPB.Builder accepted = TaskInfoPB.newBuilder();
+        accepted.setRequestIdStr("72");
+        WorkerStatusPBs.phase(accepted, TaskPhase.KV_ALLOCATED);
         accepted.setInputLength(100L);
         updateStatus(Map.of("72", accepted), Map.of(), 9900L);
 
@@ -935,9 +933,9 @@ class DecodeEndpointAdmissionTest {
     @Test
     void alreadyAcceptedPermitsCannotOutliveTerminalOrRequestReplacement() {
         var handle = reserveQueued(72L, 100L, 1000L, 50);
-        TaskInfo accepted = new TaskInfo();
-        accepted.setRequestId("72");
-        accepted.setPhase(TaskPhase.KV_ALLOCATED);
+        TaskInfoPB.Builder accepted = TaskInfoPB.newBuilder();
+        accepted.setRequestIdStr("72");
+        WorkerStatusPBs.phase(accepted, TaskPhase.KV_ALLOCATED);
         accepted.setInputLength(100L);
         updateStatus(Map.of("72", accepted), Map.of(), 9900L);
         var capacity = new DecodeEndpoint.CapacityLimit(2L, 90L);
@@ -948,8 +946,8 @@ class DecodeEndpointAdmissionTest {
         assertEquals(1, endpoint.routingView().engineCapacityUsed(),
                 "identity-only permits must not duplicate Engine capacity");
 
-        TaskInfo finished = new TaskInfo();
-        finished.setRequestId("72");
+        TaskInfoPB.Builder finished = TaskInfoPB.newBuilder();
+        finished.setRequestIdStr("72");
         updateStatus(Map.of(), Map.of("72", finished), 10_000L);
         assertEquals(OWNERSHIP_LOST, terminalCheck.permit().dispatch());
         assertFalse(terminalCheck.permit().release());
@@ -991,8 +989,8 @@ class DecodeEndpointAdmissionTest {
         assertThrows(IllegalStateException.class,
                 () -> endpoint.release(handle, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK));
         assertEquals(1000L, endpoint.routingView().inputAndMaxOutputKvReserved());
-        TaskInfo finished = new TaskInfo();
-        finished.setRequestId("71");
+        TaskInfoPB.Builder finished = TaskInfoPB.newBuilder();
+        finished.setRequestIdStr("71");
         updateStatus(Map.of(), Map.of("71", finished), 10_000L);
         assertEquals(0L, endpoint.routingView().inputAndMaxOutputKvReserved());
     }
@@ -1006,13 +1004,14 @@ class DecodeEndpointAdmissionTest {
 
     // ==================== helpers ====================
 
-    private void updateStatus(Map<String, TaskInfo> running, Map<String, TaskInfo> finished,
+    private void updateStatus(Map<String, TaskInfoPB.Builder> running,
+                              Map<String, TaskInfoPB.Builder> finished,
                               long availableKvCacheTokens) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
-        response.setAvailableKvCacheTokens(availableKvCacheTokens);
-        response.setTotalKvCacheTokens(availableKvCacheTokens);
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        response.setAvailableKvCache(availableKvCacheTokens);
+        response.setTotalKvCache(availableKvCacheTokens);
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
@@ -1110,9 +1109,8 @@ class DecodeEndpointAdmissionTest {
     }
 
     private void settleFromWorkerStatus(long requestId) {
-        TaskInfo finished = new TaskInfo();
-        finished.setRequestId(Long.toString(requestId));
-        finished.setErrorCode(0);
+        TaskInfoPB.Builder finished = TaskInfoPB.newBuilder();
+        finished.setRequestIdStr(Long.toString(requestId));
         updateStatus(Map.of(), Map.of(Long.toString(requestId), finished),
                 Math.max(10_000L,
                         status.getAvailableKvCacheTokens()));

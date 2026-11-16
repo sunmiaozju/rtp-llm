@@ -12,12 +12,14 @@ import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -60,7 +62,8 @@ class PrefillCompletionEventTest {
             worker.lock.lock();
             try {
                 prefill = (PrefillEndpoint) endpoints.publishPreparedEndpoint(worker.getIpPort(), worker,
-                        worker.prepareNewStatus(worker.freezeStatusResponse(status(1L, Map.of(), Map.of()))))
+                        worker.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker,
+                                status(1L, Map.of(), Map.of()).build())))
                         .endpoint();
             } finally {
                 worker.lock.unlock();
@@ -104,10 +107,10 @@ class PrefillCompletionEventTest {
             assertTrue(future.get(2L, TimeUnit.SECONDS).isSuccess());
             assertEquals(1L, prefill.observedRequestCount());
 
-            TaskInfo task = new TaskInfo();
-            task.setRequestId("101");
+            TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+            task.setRequestIdStr("101");
             task.setInputLength(16L);
-            task.setPhase(TaskPhase.RUNNING);
+            WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
             applyStatus(prefill, status(2L, Map.of("101", task), Map.of()));
             RequestSlot slot = requests.requestSlot("101");
             synchronized (slot) {
@@ -143,34 +146,35 @@ class PrefillCompletionEventTest {
         }
     }
 
-    private static WorkerStatusResponse status(long version, Map<String, TaskInfo> running,
-                                                Map<String, TaskInfo> finished) {
-        var response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
+    private static WorkerStatusPB.Builder status(long version,
+                                                 Map<String, TaskInfoPB.Builder> running,
+                                                 Map<String, TaskInfoPB.Builder> finished) {
+        var response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
         response.setAlive(true);
         response.setStatusVersion(version);
         response.setLatestFinishedVersion(finished.isEmpty() ? 0L : 1L);
-        response.setRunningTaskInfo(running);
-        response.setRunningQueryLen((long) running.size());
-        response.setFinishedTaskInfo(finished);
+        WorkerStatusPBs.setRunningTasks(response, running);
+        response.setRunningQueryLen((int) ((long) running.size()));
+        WorkerStatusPBs.setFinishedTasks(response, finished);
         return response;
     }
 
-    private static WorkerStatusResponse decodeStatus(long version, Map<String, TaskInfo> running) {
+    private static WorkerStatusPB.Builder decodeStatus(long version, Map<String, TaskInfoPB.Builder> running) {
         var response = status(version, running, Map.of());
-        response.setRole(RoleType.DECODE);
-        response.setTotalKvCacheTokens(10_000L);
-        response.setAvailableKvCacheTokens(9_000L);
+        response.setRoleType(WorkerStatusPBs.role(RoleType.DECODE));
+        response.setTotalKvCache(10_000L);
+        response.setAvailableKvCache(9_000L);
         return response;
     }
 
-    private static void applyStatus(WorkerEndpoint endpoint, WorkerStatusResponse response) {
+    private static void applyStatus(WorkerEndpoint endpoint, WorkerStatusPB.Builder response) {
         WorkerStatus worker = endpoint.getStatus();
         Runnable statusNotifier;
         worker.lock.lock();
         try {
-            statusNotifier = endpoint.applyPreparedStatus(worker,
-                    worker.prepareNewStatus(worker.freezeStatusResponse(response)));
+            statusNotifier = endpoint.applyPreparedStatus(worker, worker
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(worker, response.build())));
         } finally {
             worker.lock.unlock();
         }

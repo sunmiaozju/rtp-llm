@@ -4,11 +4,13 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityLimit;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DispatchOutcome;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
 import org.flexlb.balance.preemption.PreemptionCancelPhase;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -65,10 +67,10 @@ class DecodeStateTest {
         var reservation = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         state.dispatch(permit, DispatchOutcome.ENGINE_OWNED);
-        WorkerStatusResponse response = response();
-        response.setRunningTaskInfo(Map.of("1", task(1, TaskPhase.PENDING)));
+        WorkerStatusPB.Builder response = response();
+        WorkerStatusPBs.setRunningTasks(response, Map.of("1", task(1, TaskPhase.PENDING)));
         response.setStatusVersion(status.appliedStatusCursor().statusVersion());
-        state.observeHeartbeat(status.freezeStatusResponse(response));
+        state.observeHeartbeat(EngineStatusConverter.convertToStatusObservation(status, response.build()));
         assertTrue(state.isAcceptedByEngine(reservation));
         assertFalse(state.expireStaleRequest(reservation, System.currentTimeMillis() - 10_000L,
                 System.currentTimeMillis(), 1000L));
@@ -99,8 +101,8 @@ class DecodeStateTest {
         var reservation = state.reserve("waiting", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         state.dispatch(permit, DispatchOutcome.ENGINE_OWNED);
-        TaskInfo task = task(1, phase);
-        task.setRequestId("waiting");
+        TaskInfoPB.Builder task = task(1, phase);
+        task.setRequestIdStr("waiting");
         calibrate(state, status, Map.of("waiting", task), Map.of());
         assertTrue(state.isAcceptedByEngine(reservation));
         assertEquals(1, state.routingView().engineCapacityUsed());
@@ -146,9 +148,9 @@ class DecodeStateTest {
         DecodeState state = new DecodeState(status);
         var reservation = state.reserve("2", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
-        TaskInfo task = new TaskInfo();
-        task.setRequestId("2");
-        task.setPhase(TaskPhase.KV_ALLOCATED);
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr("2");
+        WorkerStatusPBs.phase(task, TaskPhase.KV_ALLOCATED);
         var accepted = calibrate(state, status, Map.of("2", task), Map.of());
         assertEquals(reservation, accepted.facts().getFirst().reservation());
         assertTrue(state.isAcceptedByEngine(reservation));
@@ -159,7 +161,7 @@ class DecodeStateTest {
         assertTrue(state.resourceSnapshot().reserved().isEmpty());
         assertEquals(TRANSFERRED, state.dispatch(permit, DispatchOutcome.ENGINE_OWNED).status());
 
-        task.setPhase(TaskPhase.RUNNING);
+        WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
         calibrate(state, status, Map.of("2", task), Map.of());
         assertAdmissionMetricsMatch(state);
         assertEquals(1, state.admissionStats().running());
@@ -348,11 +350,11 @@ class DecodeStateTest {
         assertEquals(0, state.routingView().engineCapacityUsed());
     }
 
-    private static TaskInfo task(long requestId, TaskPhase phase) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(Long.toString(requestId));
+    private static TaskInfoPB.Builder task(long requestId, TaskPhase phase) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(Long.toString(requestId));
         task.setInputLength(100L);
-        task.setPhase(phase);
+        WorkerStatusPBs.phase(task, phase);
         return task;
     }
 
@@ -454,30 +456,30 @@ class DecodeStateTest {
         return status;
     }
 
-    private static DecodeState.CalibrationResult calibrate(DecodeState state, WorkerStatus status,
-                                                           Map<String, TaskInfo> running,
-                                                           Map<String, TaskInfo> finished) {
-        WorkerStatusResponse response = response();
-        response.setRunningTaskInfo(running);
-        response.setFinishedTaskInfo(finished);
+    private static DecodeState.CalibrationResult calibrate(DecodeState state,
+                                                           WorkerStatus status,
+                                                           Map<String, TaskInfoPB.Builder> running,
+                                                           Map<String, TaskInfoPB.Builder> finished) {
+        WorkerStatusPB.Builder response = response();
+        WorkerStatusPBs.setRunningTasks(response, running);
+        WorkerStatusPBs.setFinishedTasks(response, finished);
         response.setStatusVersion(status.appliedStatusCursor().statusVersion() + 1);
         response.setLatestFinishedVersion(status.appliedStatusCursor().latestFinishedTaskVersion() + 1);
         status.lock.lock();
         try {
-            return state.calibrate(status.prepareNewStatus(status.freezeStatusResponse(response)));
+            return state.calibrate(status
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build())));
         } finally {
             status.lock.unlock();
         }
     }
 
-    private static WorkerStatusResponse response() {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.DECODE);
+    private static WorkerStatusPB.Builder response() {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        response.setRoleType(WorkerStatusPBs.role(RoleType.DECODE));
         response.setAlive(true);
-        response.setTotalKvCacheTokens(10_000L);
-        response.setAvailableKvCacheTokens(10_000L);
-        response.setRunningTaskInfo(Map.of());
-        response.setFinishedTaskInfo(Map.of());
+        response.setTotalKvCache(10_000L);
+        response.setAvailableKvCache(10_000L);
         return response;
     }
 }

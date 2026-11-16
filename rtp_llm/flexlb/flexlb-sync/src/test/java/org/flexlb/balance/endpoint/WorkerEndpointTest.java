@@ -5,10 +5,12 @@ import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
-import org.flexlb.dao.master.TaskInfo;
 import org.flexlb.dao.master.WorkerStatus;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
+import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.service.grpc.EngineStatusConverter;
+import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -109,8 +111,7 @@ class WorkerEndpointTest {
         registerBatch(1L, 500,
                 item(100L, 1000));
 
-        TaskInfo finished = task("100", 1000, 0, 1L);
-        finished.setErrorCode(0);
+        TaskInfoPB.Builder finished = task("100", 1000, 0, 1L);
         calibrate(Map.of("100", finished), null);
 
         assertEquals(0, endpoint.getLoadMetric().orElseThrow());
@@ -122,10 +123,8 @@ class WorkerEndpointTest {
         registerBatch(5L, 9999,
                 item(100L, 1000), item(101L, 2000));
 
-        TaskInfo t1 = task("100", 1000, 0, 5L);
-        t1.setErrorCode(0);
-        TaskInfo t2 = task("101", 2000, 0, 5L);
-        t2.setErrorCode(0);
+        TaskInfoPB.Builder t1 = task("100", 1000, 0, 5L);
+        TaskInfoPB.Builder t2 = task("101", 2000, 0, 5L);
         calibrate(Map.of("100", t1, "101", t2), null);
 
         assertEquals(0, endpoint.getLoadMetric().orElseThrow());
@@ -137,11 +136,10 @@ class WorkerEndpointTest {
         registerBatch(5L, 9999,
                 item(100L, 1000), item(101L, 2000));
 
-        TaskInfo failed = task("100", 1000, 0, 5L);
-        failed.setErrorCode(1);
-        failed.setErrorMessage("timeout");
-        TaskInfo success = task("101", 2000, 0, 5L);
-        success.setErrorCode(0);
+        TaskInfoPB.Builder failed = task("100", 1000, 0, 5L);
+        failed.getErrorInfoBuilder().setErrorCode(1);
+        failed.getErrorInfoBuilder().setErrorMessage("timeout");
+        TaskInfoPB.Builder success = task("101", 2000, 0, 5L);
         calibrate(Map.of("100", failed, "101", success), null);
 
         assertEquals(0, endpoint.getInflightBatchCount());
@@ -155,8 +153,7 @@ class WorkerEndpointTest {
         registerBatch(7L, 2000,
                 item(200L, 1000));
 
-        TaskInfo finished = task("100", 500, 0, 5L);
-        finished.setErrorCode(0);
+        TaskInfoPB.Builder finished = task("100", 500, 0, 5L);
         calibrate(Map.of("100", finished), null);
 
         assertEquals(1, endpoint.getInflightBatchCount());
@@ -204,9 +201,9 @@ class WorkerEndpointTest {
 
     @Test
     void getStatus_returns_live_reference() {
-        WorkerStatusResponse response = new WorkerStatusResponse();
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
         response.setAlive(true);
-        response.setAvailableConcurrency(42L);
+        response.setAvailableConcurrency(42);
         response.setDpRank(3);
         EndpointTestSupport.applyStatus(endpoint, response);
 
@@ -221,26 +218,25 @@ class WorkerEndpointTest {
 
     @Test
     void responseFieldsAndAppliedCursorsHaveSeparateCommitBoundaries() {
-        WorkerStatusResponse resp = new WorkerStatusResponse();
-        resp.setRole(RoleType.DECODE);
+        WorkerStatusPB.Builder resp = WorkerStatusPB.newBuilder();
+        resp.setRoleType(WorkerStatusPBs.role(RoleType.DECODE));
         resp.setAlive(true);
-        resp.setAvailableConcurrency(8L);
+        resp.setAvailableConcurrency(8);
         resp.setStepLatencyMs(25.0);
-        resp.setIterateCount(100L);
+        resp.setIterateCount(100);
         resp.setDpSize(4);
         resp.setTpSize(2);
         resp.setDpRank(1);
         resp.setMaxSeqLen(131072L);
         resp.setMaxBatchTokensSize(262144L);
-        resp.setAvailableKvCacheTokens(10000L);
+        resp.setAvailableKvCache(10000L);
         resp.setStatusVersion(5L);
         resp.setLatestFinishedVersion(3L);
 
         WorkerStatus.PreparedStatus prepared;
         status.lock.lock();
         try {
-            prepared = status.prepareNewStatus(
-                    status.freezeStatusResponse(resp));
+            prepared = status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, resp.build()));
         } finally {
             status.lock.unlock();
         }
@@ -275,10 +271,8 @@ class WorkerEndpointTest {
 
     @Test
     void nullStatusResponseIsRejectedBeforeMutation() {
-        WorkerStatus.CommittedWorkerStatus before =
-                status.committedWorkerStatus();
-        assertThrows(NullPointerException.class,
-                () -> status.freezeStatusResponse(null));
+        WorkerStatus.CommittedWorkerStatus before = status.committedWorkerStatus();
+        assertThrows(NullPointerException.class, () -> EngineStatusConverter.convertToStatusObservation(status, null));
         assertSame(before, status.committedWorkerStatus());
     }
 
@@ -286,17 +280,16 @@ class WorkerEndpointTest {
 
     @Test
     void foreignStatusGenerationCannotRebindEndpoint() {
-        WorkerStatusResponse resp = new WorkerStatusResponse();
-        resp.setRole(RoleType.PREFILL);
+        WorkerStatusPB.Builder resp = WorkerStatusPB.newBuilder();
+        resp.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
         resp.setStatusVersion(1L);
-        resp.setLatestFinishedVersion(0L);
         WorkerStatus newStatus = EndpointTestSupport.workerStatus(
                 RoleType.PREFILL, "group-b", "10.0.0.2",
                 8082, 8083, "site-a");
         newStatus.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = newStatus.prepareNewStatus(
-                    newStatus.freezeStatusResponse(resp));
+            WorkerStatus.PreparedStatus prepared = newStatus
+                    .prepareNewStatus(EngineStatusConverter.convertToStatusObservation(newStatus, resp.build()));
             assertThrows(IllegalArgumentException.class,
                     () -> endpoint.applyPreparedStatus(newStatus, prepared));
         } finally {
@@ -307,17 +300,16 @@ class WorkerEndpointTest {
 
     @Test
     void onWorkerStatusUpdate_calibrates_prefill() {
-        WorkerStatusResponse resp = new WorkerStatusResponse();
-        resp.setFinishedTaskInfo(Map.of("100", task("100", 1000, 0, 1L)));
+        WorkerStatusPB.Builder resp = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setFinishedTasks(resp, Map.of("100", task("100", 1000, 0, 1L)));
 
-        // PrefillEndpoint calibrates even when runningTaskInfo is null
+        // 仅上报完成任务时，protobuf 当前任务列表默认为空。
         EndpointTestSupport.applyStatus(endpoint, resp);
-        // No exception = calibrate handled null gracefully
     }
 
     @Test
     void initializeFromAppliedStatusPreservesGenerationFields() {
-        WorkerStatusResponse resp = new WorkerStatusResponse();
+        WorkerStatusPB.Builder resp = WorkerStatusPB.newBuilder();
         resp.setDpRank(5);
         resp.setAlive(true);
 
@@ -329,10 +321,10 @@ class WorkerEndpointTest {
         assertTrue(endpoint.getStatus().pollHealth().reportedAlive());
     }
 
-    private void calibrate(Map<String, TaskInfo> finished, Map<String, TaskInfo> running) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setFinishedTaskInfo(finished);
-        response.setRunningTaskInfo(running);
+    private void calibrate(Map<String, TaskInfoPB.Builder> finished, Map<String, TaskInfoPB.Builder> running) {
+        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
+        WorkerStatusPBs.setFinishedTasks(response, finished);
+        WorkerStatusPBs.setRunningTasks(response, running);
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
@@ -371,9 +363,9 @@ class WorkerEndpointTest {
         return ctx;
     }
 
-    private TaskInfo task(String requestId, long inputLength, long prefixLength, long batchId) {
-        TaskInfo task = new TaskInfo();
-        task.setRequestId(requestId);
+    private TaskInfoPB.Builder task(String requestId, long inputLength, long prefixLength, long batchId) {
+        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
+        task.setRequestIdStr(requestId);
         task.setInputLength(inputLength);
         task.setPrefixLength(prefixLength);
         task.setBatchId(batchId);

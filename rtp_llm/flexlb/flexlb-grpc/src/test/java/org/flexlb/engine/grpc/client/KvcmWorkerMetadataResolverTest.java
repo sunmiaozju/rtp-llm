@@ -6,7 +6,6 @@ import org.flexlb.config.KvcmCacheMatchingConfig;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatusProvider;
-import org.flexlb.dao.master.WorkerStatusResponse;
 import org.flexlb.dao.route.Endpoint;
 import org.flexlb.dao.route.GroupRoleEndPoint;
 import org.flexlb.dao.route.KvcmConfig;
@@ -84,23 +83,14 @@ class KvcmWorkerMetadataResolverTest {
         return workerStatus;
     }
 
-    private void publishMode(
-            WorkerStatus workerStatus,
-            KvCacheGroupMode mode,
-            long statusVersion) {
-        WorkerStatusResponse response = new WorkerStatusResponse();
-        response.setRole(RoleType.PREFILL);
-        response.setAlive(true);
-        response.setStatusVersion(statusVersion);
-        response.setLatestFinishedVersion(0L);
-        response.setRunningTaskInfo(Map.of());
-        response.setFinishedTaskInfo(Map.of());
-        response.setKvCacheGroupMode(mode);
+    private void publishMode(WorkerStatus workerStatus, KvCacheGroupMode mode, long statusVersion) {
+        WorkerStatus.EngineObservation engine = new WorkerStatus.EngineObservation(RoleType.PREFILL, 0L, 0L, 0L,
+                Map.of(), 0.0, 0L, 0L, 0L, 0L, null, 0L, 0, 0, mode, 0L, 0L, 0L, 0L, null);
 
         workerStatus.lock.lock();
         try {
-            WorkerStatus.PreparedStatus prepared = workerStatus.prepareNewStatus(
-                    workerStatus.freezeStatusResponse(response));
+            WorkerStatus.PreparedStatus prepared = workerStatus
+                    .prepareNewStatus(workerStatus.bindStatusObservation(engine, true, statusVersion, 0L, Map.of()));
             workerStatus.publishPreparedStatus(prepared);
             workerStatus.recordSuccessfulPoll(true);
         } finally {
