@@ -36,12 +36,15 @@ public class EngineGrpcService {
         return engineGrpcClient.getWorkerStatusAsync(ip, grpcPort, request, requestTimeoutMs);
     }
 
-    public CompletableFuture<EngineRpcService.CacheStatusPB> getCacheStatusAsync(
-            String ip, int grpcPort, WorkerStatus workerStatus, long cacheVersion,
-            long requestTimeoutMs, RoleType roleType) {
+    public CompletableFuture<EngineRpcService.CacheStatusPB> getCacheStatusAsync(String ip,
+                                                                                 int grpcPort,
+                                                                                 WorkerStatus workerStatus,
+                                                                                 long cacheVersion,
+                                                                                 long requestTimeoutMs,
+                                                                                 RoleType roleType) {
         boolean needCacheKeys = workerStatus.getRole().requiresCacheKeys();
         EngineRpcService.CacheVersionPB request = EngineRpcService.CacheVersionPB.newBuilder()
-                .setLatestCacheVersion((int) cacheVersion)
+                .setLatestCacheVersion(cacheVersion)
                 .setNeedCacheKeys(needCacheKeys)
                 .build();
         logger.debug("Get cache status Request: {}, cacheVersion: {}, needCacheKeys: {}",

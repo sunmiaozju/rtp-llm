@@ -384,6 +384,9 @@ public class MetricConstant {
      */
     public static final String CACHE_INPUT_TOKENS = "app.cache.input.tokens";
 
+    public static final String CACHE_HIT_TOKENS_QPS = "app.cache.hit.tokens.qps";
+    public static final String CACHE_INPUT_TOKENS_QPS = "app.cache.input.tokens.qps";
+
     /**
      * Cache hit percentage
      */
@@ -409,6 +412,8 @@ public class MetricConstant {
      */
     public static final String CACHE_HIT_COMPARISON_INPUT_TOKENS =
             "app.cache.hit.comparison.input.tokens";
+    public static final String CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS = "app.cache.hit.comparison.actual.tokens.qps";
+    public static final String CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS = "app.cache.hit.comparison.input.tokens.qps";
     public static final String CACHE_HIT_COMPARISON_DELTA_TOKENS =
             "app.cache.hit.comparison.delta.tokens";
     public static final String CACHE_HIT_COMPARISON_LOCAL_STANDBY_DELTA_TOKENS =
@@ -462,6 +467,9 @@ public class MetricConstant {
      * Theoretical input tokens reported as a counter.
      */
     public static final String CACHE_THEORY_TOTAL_COUNT = "app.cache.theory.total.count";
+
+    public static final String CACHE_THEORY_HIT_TOKENS_QPS = "app.cache.theory.hit.tokens.qps";
+    public static final String CACHE_THEORY_INPUT_TOKENS_QPS = "app.cache.theory.input.tokens.qps";
 
     /**
      * Keys evicted from the theory pool, expired or displaced by capacity (counter).

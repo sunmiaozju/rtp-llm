@@ -102,6 +102,10 @@ class EngineHealthReporterTest {
                 FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
         verify(monitor).register(MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS,
                 FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
+        verify(monitor).register(MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS,
+                FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        verify(monitor).register(MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS,
+                FlexMetricType.QPS, FlexPriorityType.NORMAL);
         verify(monitor).register(MetricConstant.CACHE_HIT_COMPARISON_KVCM_PREDICTED_TOKENS, FlexMetricType.COUNTER,
                 FlexPriorityType.NORMAL);
         verify(monitor).register(MetricConstant.CACHE_HIT_COMPARISON_DELTA_TOKENS, FlexMetricType.GAUGE,
@@ -678,6 +682,10 @@ class EngineHealthReporterTest {
                 any(FlexMetricTags.class), anyDouble());
         verify(monitor, never()).report(eq(MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS),
                 any(FlexMetricTags.class), anyDouble());
+        verify(monitor, never()).report(eq(MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS),
+                any(FlexMetricTags.class), anyDouble());
+        verify(monitor, never()).report(eq(MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS),
+                any(FlexMetricTags.class), anyDouble());
         verify(monitor, never()).report(eq(MetricConstant.CACHE_HIT_COMPARISON_DELTA_TOKENS),
                 any(FlexMetricTags.class), anyDouble());
     }
@@ -718,6 +726,8 @@ class EngineHealthReporterTest {
                 "taskState", "running",
                 "cacheMatchSource", "KVCM");
         verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS, expectedTags, 120.0);
+        verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS, expectedTags, 120.0);
+        verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS, expectedTags, 200.0);
         verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_KVCM_PREDICTED_TOKENS, expectedTags, 100.0);
         verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_DELTA_TOKENS, expectedTags, 20.0);
         verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_LOCAL_STANDBY_DELTA_TOKENS, expectedTags, 40.0);

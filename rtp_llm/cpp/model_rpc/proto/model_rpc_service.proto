@@ -522,6 +522,10 @@ message CacheStatusPB {
     int64 version = 4;
     map<int64, bool> cache_keys = 5;
     MultimodalCacheStatusPB multimodal_cache = 6;
+    // Optional SWA cache for a hybrid Full + SWA prefix. An absent window
+    // retains the existing full-attention-only cache matching behavior.
+    map<int64, bool> swa_cache_keys = 7;
+    int64 swa_window_tokens = 8;
 }
 
 message MultimodalCacheStatusPB {
@@ -663,6 +667,7 @@ enum KvCacheGroupModePB {
     KV_CACHE_GROUP_MODE_UNSPECIFIED = 0;
     KV_CACHE_GROUP_MODE_FULL_ATTENTION_ONLY = 1;
     KV_CACHE_GROUP_MODE_WITH_MAMBA = 2;
+    KV_CACHE_GROUP_MODE_WITH_SWA = 3;
 }
 
 // Latest completed nonempty scheduler step.

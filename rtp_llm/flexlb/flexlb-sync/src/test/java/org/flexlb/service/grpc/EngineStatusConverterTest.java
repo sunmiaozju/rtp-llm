@@ -22,6 +22,23 @@ class EngineStatusConverterTest {
             RoleType.PREFILL, "default", "127.0.0.1", 8001, 18002, "test");
 
     @Test
+    void cacheStatusRetainsFullAndSwaKeysAndWindow() {
+        var wire = EngineRpcService.CacheStatusPB.newBuilder()
+                .setBlockSize(128)
+                .setSwaWindowTokens(256)
+                .putCacheKeys(11, true)
+                .putCacheKeys(22, true)
+                .putSwaCacheKeys(22, true)
+                .build();
+
+        var converted = EngineStatusConverter.convertToCacheStatus(wire);
+
+        assertEquals(Set.of(11L, 22L), converted.getCachedKeys());
+        assertEquals(Set.of(22L), converted.getSwaCachedKeys());
+        assertEquals(256, converted.getSwaWindowTokens());
+    }
+
+    @Test
     void preservesAllActiveTaskPhasesAndKeepsFinishedTasksSeparate() {
         var status = statusBuilder()
                 .setRunningQueryLen(2)
@@ -149,6 +166,13 @@ class EngineStatusConverterTest {
         var observation = EngineStatusConverter.convertToStatusObservation(owner, status);
 
         assertEquals(KvCacheGroupMode.WITH_MAMBA, observation.engine().kvCacheGroupMode());
+    }
+
+    @Test
+    void preservesSglangSwaGroupMode() {
+        var status = statusBuilder().setKvCacheGroupModeValue(3).build();
+        var observation = EngineStatusConverter.convertToStatusObservation(owner, status);
+        assertEquals(KvCacheGroupMode.WITH_SWA, observation.engine().kvCacheGroupMode());
     }
 
     @Test

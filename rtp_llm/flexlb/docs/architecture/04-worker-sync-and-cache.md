@@ -4,6 +4,11 @@ worker 健康与容量信息由后台线程高频异步同步；KV cache 元数�
 本分支（feature/flexlb-kvcm）支持三种 cache 匹配源：LOCAL_SYNC（本地全量索引）、
 KVCM（外部 KV Cache Manager）、LOCAL_STANDBY（KVCM 的本地兜底）。
 
+对于 LOCAL_SYNC，引擎的 `GetCacheStatus` 可以分别返回 Full 和 SWA 的页面键及
+SWA 窗口大小。混合缓存先匹配连续 Full 前缀，再校验截至候选前缀末尾的 SWA 窗口；
+只有 Full 页不足以判定该前缀可复用。SWA 快照随引擎版本刷新，即使 Full 键不变也会更新；
+未提供 SWA 窗口的旧引擎继续使用原有 Full 匹配方式。缓存版本按 int64 传输和比较。
+
 主要代码：`flexlb-sync/src/main/java/org/flexlb/sync/`、`service/grpc/`，
 `flexlb-cache/src/main/java/org/flexlb/cache/`，`flexlb-grpc/.../KvcmGrpcClient.java`。
 
@@ -282,3 +287,8 @@ hash 不同）和 `querySucceeded`。空匹配是成功结果，查询失败的�
   算法代码保留，包括所需的 `TokenIds`、vLLM CBOR 计算工具和测试；调度链路没有调用这些策略。
 - LOCAL_SYNC、Local Standby 与 KVCM 复用同一组客户端 keys 和块大小，按请求顺序连续匹配，
   在首个 miss 停止。Local Standby 索引在路由成功后异步写入这些 keys。
+
+
+### SGLang Full 和 SWA
+
+SGLang 混合滑窗引擎通过 WorkerStatus 上报 `KV_CACHE_GROUP_MODE_WITH_SWA=3`。FlexLB 保留为 `WITH_SWA`，按实例缓存布局选择 `QT_PREFIX_MATCH_WITH_SWA=5`；Full-only 和 Mamba 仍分别使用原查询类型。实例注册的 namespace、页大小和 subscriber 的滑窗 spec 必须与引擎一致。未知分组继续保留为 UNSPECIFIED，不当作 Full-only 命中。

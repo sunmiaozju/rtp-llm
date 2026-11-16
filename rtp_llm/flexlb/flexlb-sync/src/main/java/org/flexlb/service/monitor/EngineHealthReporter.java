@@ -41,8 +41,10 @@ import static org.flexlb.constant.MetricConstant.CACHE_AVAILABLE_KV_CACHE_TOKENS
 import static org.flexlb.constant.MetricConstant.CACHE_BLOCK_SIZE;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_DELTA_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_KVCM_GLOBAL_MATCH_DELTA_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_KVCM_LOCAL_DELTA_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_KVCM_PREDICTED_TOKENS;
@@ -230,6 +232,8 @@ public class EngineHealthReporter {
                 FlexPriorityType.NORMAL);
         this.monitor.register(CACHE_HIT_COMPARISON_INPUT_TOKENS,
                 FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
+        this.monitor.register(CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        this.monitor.register(CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         this.monitor.register(CACHE_HIT_COMPARISON_DELTA_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         this.monitor.register(CACHE_HIT_COMPARISON_KVCM_LOCAL_DELTA_TOKENS, FlexMetricType.GAUGE,
                 FlexPriorityType.NORMAL);
@@ -752,6 +756,8 @@ public class EngineHealthReporter {
         if (inputTokens > 0) {
             monitor.report(CACHE_HIT_COMPARISON_INPUT_TOKENS, tags, inputTokens);
             monitor.report(CACHE_HIT_COMPARISON_ACTUAL_TOKENS, tags, comparison.actualHitTokens());
+            monitor.report(CACHE_HIT_COMPARISON_INPUT_TOKENS_QPS, tags, inputTokens);
+            monitor.report(CACHE_HIT_COMPARISON_ACTUAL_TOKENS_QPS, tags, comparison.actualHitTokens());
             monitor.report(CACHE_HIT_COMPARISON_ACTUAL_RATIO,
                     tags, comparison.actualHitTokens() / (double) inputTokens);
         }

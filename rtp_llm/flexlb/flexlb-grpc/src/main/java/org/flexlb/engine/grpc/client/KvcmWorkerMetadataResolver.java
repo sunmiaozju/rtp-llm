@@ -145,6 +145,7 @@ public class KvcmWorkerMetadataResolver {
         return switch (mode) {
             case FULL_ATTENTION_ONLY -> QueryType.QT_PREFIX_MATCH;
             case WITH_MAMBA -> QueryType.QT_PREFIX_MATCH_WITH_MAMBA;
+            case WITH_SWA -> QueryType.QT_PREFIX_MATCH_WITH_SWA;
             default -> null;
         };
     }

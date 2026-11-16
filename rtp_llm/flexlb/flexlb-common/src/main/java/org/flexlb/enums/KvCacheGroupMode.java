@@ -5,6 +5,5 @@ package org.flexlb.enums;
  */
 public enum KvCacheGroupMode {
     UNSPECIFIED,
-    FULL_ATTENTION_ONLY,
-    WITH_MAMBA
+    FULL_ATTENTION_ONLY, WITH_MAMBA, WITH_SWA
 }

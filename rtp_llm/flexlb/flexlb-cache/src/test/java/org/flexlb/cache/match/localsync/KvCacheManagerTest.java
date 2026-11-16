@@ -2,6 +2,7 @@ package org.flexlb.cache.match.localsync;
 
 import org.flexlb.cache.domain.DiffResult;
 import org.flexlb.cache.telemetry.CacheMetricsReporter;
+import org.flexlb.dao.master.CacheStatus;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatusProvider;
 import org.flexlb.dao.route.RoleType;
@@ -102,6 +103,40 @@ class KvCacheManagerTest {
 
         assertEquals(Map.of("10.0.0.1:8080@0", 2), matches);
         assertFalse(matches.containsKey("10.0.0.1:8080"));
+    }
+
+    @Test
+    void hybridCacheUsesTheSwaTailAndRefreshesItWhenFullKeysAreUnchanged() {
+        KvCacheManager manager = kvCacheManagerWithRealIndexes();
+        WorkerStatus status = workerStatus(0, 1);
+        Set<Long> fullKeys = Set.of(1L, 2L, 3L, 4L, 5L, 6L);
+        status.lock.lock();
+        try {
+            status.publishCacheStatus(CacheStatus.builder()
+                    .blockSize(128)
+                    .swaWindowTokens(256)
+                    .swaCachedKeys(Set.of(1L, 2L, 5L, 6L))
+                    .build());
+        } finally {
+            status.lock.unlock();
+        }
+        manager.updateEngineCache(status, "PREFILL", fullKeys);
+        List<Long> query = List.of(1L, 2L, 3L, 4L, 5L, 6L);
+        List<String> candidates = List.of("10.0.0.1:8080@0");
+        assertEquals(6, manager.findMatchingEngines(query, candidates).get(candidates.getFirst()));
+
+        status.lock.lock();
+        try {
+            status.publishCacheStatus(CacheStatus.builder()
+                    .blockSize(128)
+                    .swaWindowTokens(256)
+                    .swaCachedKeys(Set.of(1L, 2L, 5L))
+                    .build());
+        } finally {
+            status.lock.unlock();
+        }
+        manager.updateEngineCache(status, "PREFILL", fullKeys);
+        assertEquals(2, manager.findMatchingEngines(query, candidates).get(candidates.getFirst()));
     }
 
     @Test

@@ -515,6 +515,11 @@ KV 已用、可用和使用率保留裸 IP，单机总容量按 role 共享，�
 Step 延迟方差单位为 ms²。上述指标保留原有名称，通过标签聚合和面板说明表达实际口径。
 `app.cache.hit.count` 和 `app.cache.input.tokens` 是按 role 汇总的 Token Counter，
 全局命中率使用同一窗口内的命中 Token 增量除以输入 Token 增量，不能求单请求命中率的平均值。
+KMonitor 还提供按 20 秒窗口上报的 `app.cache.hit.tokens.qps` / `app.cache.input.tokens.qps`、
+`app.cache.theory.hit.tokens.qps` / `app.cache.theory.input.tokens.qps` 和
+`app.cache.hit.comparison.actual.tokens.qps` / `app.cache.hit.comparison.input.tokens.qps`。
+每组分别覆盖选中预测、理论预测和引擎实际命中的同一批样本；在同一时间窗口汇总命中与输入
+Token 速率后相除，得到对应的 Token 加权命中率。
 `app.engine.zk.master.event` 保留按事件类型上报 `1.0` 的既有 Gauge 口径；
 独立的 `app.engine.zk.master.event.time.ms` 用 epoch-ms Gauge 展示最近事件时间。
 `app.engine.worker.status.scheduler.to.running.ms` 中的 scheduler 是 Engine 调度器；该值

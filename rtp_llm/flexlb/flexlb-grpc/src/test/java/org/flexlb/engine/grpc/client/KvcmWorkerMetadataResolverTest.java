@@ -42,6 +42,16 @@ class KvcmWorkerMetadataResolverTest {
     }
 
     @Test
+    void selectsSwaQueryForHybridSglangWorkers() {
+        WorkerStatus workerStatus = workerStatus("mimo-prefill", KvCacheGroupMode.WITH_SWA);
+        KvcmWorkerMetadataResolver resolver =
+                new KvcmWorkerMetadataResolver(configuration(null), provider(List.of(workerStatus)));
+        resolver.refreshNamespacesAndQueryTypes();
+        assertEquals(QueryType.QT_PREFIX_MATCH_WITH_SWA, resolver.resolveQueryType(RoleType.PREFILL, "default"));
+        assertEquals(5, resolver.resolveQueryType(RoleType.PREFILL, "default").getNumber());
+    }
+
+    @Test
     void configuredNamespaceTakesPriorityWhileQueryTypeStillUsesWorkerStatus() {
         WorkerStatus workerStatus = workerStatus(
                 "ignored-deployment", KvCacheGroupMode.FULL_ATTENTION_ONLY);
