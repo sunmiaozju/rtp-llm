@@ -57,19 +57,47 @@ class RequestSlotTerminalSettlementTest {
     }
 
     @Test
-    void decodeTerminalIsAProofOfAlreadyCommittedEndpointSettlement() {
+    void decodeTerminalUsesAlreadyCommittedCleanup() {
         Fixture f = fixture(true);
         f.slot().claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
         PreemptionRegistration claim = f.slot().tryInstallPreemption(3L, 4L, "victim");
         assertTrue(f.slot().updatePreemption(claim, PreemptionCancelPhase.CANCEL_IN_FLIGHT));
 
-        f.slot().processDecodeStatus(f.item().decodeEp(), DecodeEndpoint.WorkerStatusFact.terminal(RESERVATION, 0L));
+        var fact = org.flexlb.balance.endpoint.WorkerStatusFact.terminal(RESERVATION, 0L);
+        assertEquals(org.flexlb.balance.endpoint.WorkerStatusFact.Kind.TERMINAL, fact.kind());
+        f.slot().processDecodeStatus(f.item().decodeEp(), fact);
 
         verify(f.item().decodeEp(), never()).updatePreemption(
                 anyLong(),
                 argThat(update -> update.kind() == DecodeEndpoint.PreemptionUpdate.Kind.FINISHED));
         assertTrue(RequestLifecycleTestSupport.<Boolean>inspect(f.slot(), "isTerminalRecordLocked"));
         assertTrue(claim.isFinished());
+    }
+
+    @Test
+    void statusTimeoutCompletesRequest() {
+        Fixture f = fixture(true);
+        var delivery = f.slot().claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
+        delivery.complete(DeliveryResult.delivered());
+        Response delivered = f.slot().future().join();
+        var requests = mock(RequestRegistry.class);
+        doAnswer(call -> {
+            f.slot().processDecodeStatus(call.getArgument(0), call.getArgument(1));
+            return null;
+        }).when(requests).processDecodeStatus(any(), any());
+        var events = new EndpointEventHandler(requests,
+                mock(org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry.class),
+                mock(org.flexlb.config.ConfigService.class),
+                new org.flexlb.balance.schedulev2.decode.DecodeReservations(), f.reporter());
+        var timeout = org.flexlb.balance.endpoint.WorkerStatusFact.terminal(RESERVATION, 0L);
+
+        events.onDecodeStatus(f.item().decodeEp(), java.util.List.of(timeout));
+
+        assertEquals(RequestState.Phase.COMPLETED, f.slot().snapshot().state());
+        assertTrue(RequestLifecycleTestSupport.<Boolean>inspect(f.slot(), "isTerminalRecordLocked"));
+        assertTrue(delivered.isSuccess());
+        assertSame(delivered, f.slot().future().join());
+        verify(requests).processDecodeStatus(f.item().decodeEp(), timeout);
     }
 
     @Test
@@ -118,7 +146,7 @@ class RequestSlotTerminalSettlementTest {
 
         delivery.complete(DeliveryResult.delivered());
         assertFalse(slot.completePreemption(claim, "late Cancel ACK"));
-        slot.processDecodeStatus(f.item().decodeEp(), DecodeEndpoint.WorkerStatusFact.terminal(RESERVATION, 0L));
+        slot.processDecodeStatus(f.item().decodeEp(), org.flexlb.balance.endpoint.WorkerStatusFact.terminal(RESERVATION, 0L));
         slot.onInactivityDeadline(inactivity, Long.MAX_VALUE);
         assertEquals(ended, slot.snapshot());
         verify(f.item().decodeEp()).release(RESERVATION, DecodeEndpoint.ReleaseReason.EXPIRED);
@@ -145,7 +173,7 @@ class RequestSlotTerminalSettlementTest {
     void workerTerminalDuringAdmissionPreservesTheEarlierCancellationCause() {
         Fixture f = fixture(false);
         f.slot().cancelRequest(0L, CancelReason.CLIENT_CANCELLED);
-        f.slot().processDecodeStatus(f.item().decodeEp(), DecodeEndpoint.WorkerStatusFact.terminal(RESERVATION, 0L));
+        f.slot().processDecodeStatus(f.item().decodeEp(), org.flexlb.balance.endpoint.WorkerStatusFact.terminal(RESERVATION, 0L));
         assertFalse(RequestLifecycleTestSupport.<Boolean>inspect(f.slot(), "isTerminalRecordLocked"));
         assertFalse(f.slot().future().isDone());
 
@@ -174,7 +202,7 @@ class RequestSlotTerminalSettlementTest {
             return DecodeEndpoint.ReservationReleaseResult.RELEASED;
         }).when(f.item().decodeEp()).release(RESERVATION, DecodeEndpoint.ReleaseReason.COUNTERPART_FINISHED);
 
-        slot.processDecodeStatus(f.item().decodeEp(), DecodeEndpoint.WorkerStatusFact.terminal(RESERVATION, 42L));
+        slot.processDecodeStatus(f.item().decodeEp(), org.flexlb.balance.endpoint.WorkerStatusFact.terminal(RESERVATION, 42L));
 
         assertEquals(RequestState.Phase.FAILED, slot.snapshot().state());
         assertTrue(RequestLifecycleTestSupport.<Boolean>inspect(slot, "isTerminalRecordLocked"));

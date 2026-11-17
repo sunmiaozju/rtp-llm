@@ -99,8 +99,7 @@ class DecodeEndpointAdmissionTest {
     void everyExactReservationReleaseSignalsPlacementCapacity() {
         PlacementAvailability availability =
                 mock(PlacementAvailability.class);
-        DecodeEndpoint exactEndpoint = new DecodeEndpoint(
-                status, mock(EndpointEventHandler.class), availability);
+        DecodeEndpoint exactEndpoint = new DecodeEndpoint(status, EndpointTestSupport.noopEventSink(), availability);
 
         DecodeEndpoint.ReservationHandle speculative;
         try (WorkerEndpoint.EndpointHold hold = exactEndpoint.tryHold()) {
@@ -775,7 +774,7 @@ class DecodeEndpointAdmissionTest {
 
     @Test
     void versionedReceivedTaskEmitsActivityWithoutAdvancingAcceptance() {
-        EndpointEventHandler events = mock(EndpointEventHandler.class);
+        EndpointEventHandler events = EndpointTestSupport.noopEventSink();
         endpoint = new DecodeEndpoint(status, events);
         DecodeEndpoint.ReservationHandle reservation =
                 reserve(1L, 500, 508, 30);
@@ -790,13 +789,13 @@ class DecodeEndpointAdmissionTest {
         EndpointTestSupport.applyStatus(endpoint, response).run();
 
         @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<DecodeEndpoint.WorkerStatusFact>> facts =
+        ArgumentCaptor<List<WorkerStatusFact>> facts =
                 ArgumentCaptor.forClass(List.class);
-        verify(events).onDecodeStatus(
-                org.mockito.Mockito.eq(endpoint), facts.capture());
+        verify(events).onDecodeStatus(org.mockito.Mockito.eq(endpoint),
+                facts.capture());
         assertEquals(1, facts.getValue().size());
-        DecodeEndpoint.WorkerStatusFact active = facts.getValue().getFirst();
-        assertEquals(DecodeEndpoint.WorkerStatusFact.Kind.ACTIVE, active.kind());
+        WorkerStatusFact active = facts.getValue().getFirst();
+        assertEquals(WorkerStatusFact.Kind.ACTIVE, active.kind());
         assertEquals(reservation, active.reservation());
         assertEquals(reservation, endpoint.reservationHandle("1"));
     }

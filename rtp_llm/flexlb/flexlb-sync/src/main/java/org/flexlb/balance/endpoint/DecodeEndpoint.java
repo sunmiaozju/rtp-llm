@@ -40,7 +40,8 @@ public class DecodeEndpoint extends WorkerEndpoint {
                    EndpointEventHandler endpointEvents,
                    PlacementAvailability placementAvailability) {
         super(status);
-        this.state = new DecodeState(status);
+        this.state = new DecodeState(status, endpointEvents.getConfigService(),
+                endpointEvents.getDecodeReservations(), endpointEvents.getRequestReporter());
         this.endpointEvents = endpointEvents;
         this.placementAvailability = placementAvailability;
     }
@@ -82,7 +83,9 @@ public class DecodeEndpoint extends WorkerEndpoint {
     /** LOCAL_ROLLBACK requires local ownership; other evidence may leave Engine/protocol ownership intact. */
     public ReservationReleaseResult release(ReservationHandle reservation, ReleaseReason reason) {
         ReservationReleaseResult result = state.release(reservation, reason);
-        if (result == ReservationReleaseResult.RELEASED) { publishCapacityRelease(); }
+        if (result == ReservationReleaseResult.RELEASED) {
+            publishCapacityRelease();
+        }
         return result;
     }
 
@@ -97,14 +100,10 @@ public class DecodeEndpoint extends WorkerEndpoint {
     }
 
     /**
-     * 该请求的 WorkerStatus 超时后释放占用；检查更新时间与清理在同一账本锁内完成。
+     * 发布成功后登记
      */
-    public boolean expireStaleRequest(ReservationHandle reservation, long publishedAtMs, long nowMs, long timeoutMs) {
-        boolean released = state.expireStaleRequest(reservation, publishedAtMs, nowMs, timeoutMs);
-        if (released) {
-            publishCapacityRelease();
-        }
-        return released;
+    public void registerPublished(ReservationHandle reservation, long publishedAtMs) {
+        state.registerPublished(reservation, publishedAtMs);
     }
 
     public boolean isAcceptedByEngine(ReservationHandle reservation) { return state.isAcceptedByEngine(reservation); }
@@ -444,7 +443,9 @@ public class DecodeEndpoint extends WorkerEndpoint {
             throw failure;
         }
         notifyEngineDispatchCapacityListeners();
-        if (result.capacityImproved()) { signalPlacementCapacityChanged(); }
+        if (result.capacityImproved()) {
+            signalPlacementCapacityChanged();
+        }
         return () -> endpointEvents.onDecodeStatus(this, result.facts());
     }
 
@@ -458,38 +459,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
         requireStatusGeneration(ws);
         List<WorkerStatusFact> facts = state.observeHeartbeat(observation);
         return () -> endpointEvents.onDecodeStatus(this, facts);
-    }
-
-    public record WorkerStatusFact(
-            Kind kind,
-            ReservationHandle reservation,
-            long errorCode) {
-        public WorkerStatusFact {
-            java.util.Objects.requireNonNull(kind, "kind");
-            if (kind != Kind.TERMINAL && errorCode != 0L) {
-                throw new IllegalArgumentException(
-                        "only a terminal Decode fact may carry an error code");
-            }
-        }
-
-        public static WorkerStatusFact active(ReservationHandle reservation) {
-            return new WorkerStatusFact(Kind.ACTIVE, reservation, 0L);
-        }
-
-        public static WorkerStatusFact accepted(ReservationHandle reservation) {
-            return new WorkerStatusFact(Kind.ACCEPTED, reservation, 0L);
-        }
-
-        public static WorkerStatusFact terminal(
-                ReservationHandle reservation, long errorCode) {
-            return new WorkerStatusFact(Kind.TERMINAL, reservation, errorCode);
-        }
-
-        public enum Kind {
-            ACTIVE,
-            ACCEPTED,
-            TERMINAL
-        }
     }
 
     // Read-only resource and capacity views.

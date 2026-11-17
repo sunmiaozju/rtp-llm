@@ -1146,7 +1146,7 @@ public final class RequestSlot {
         return ownsResourceTrackingLocked() && item == expected && expected.prefillEp() == source;
     }
 
-    void processDecodeStatus(DecodeEndpoint source, DecodeEndpoint.WorkerStatusFact fact) {
+    void processDecodeStatus(DecodeEndpoint source, org.flexlb.balance.endpoint.WorkerStatusFact fact) {
         EngineObservation observation;
         synchronized (this) {
             if (!currentGeneration) { return; }
@@ -1155,12 +1155,14 @@ public final class RequestSlot {
         executeEngineObservationEffects(observation);
     }
 
-    private EngineObservation applyDecodeStatusLocked(DecodeEndpoint source, DecodeEndpoint.WorkerStatusFact fact, long nowMs) {
+    private EngineObservation applyDecodeStatusLocked(DecodeEndpoint source,
+                                                      org.flexlb.balance.endpoint.WorkerStatusFact fact,
+                                                      long nowMs) {
         requireSlotLock("Decode fact reduction");
         if (!ownsDecodeFactLocked(source, fact.reservation())) { return EngineObservation.STALE; }
         lastWorkerStatusAtMs = Math.max(lastWorkerStatusAtMs, nowMs);
         engineStatusReceived = true;
-        if (fact.kind() == DecodeEndpoint.WorkerStatusFact.Kind.TERMINAL) {
+        if (fact.kind() == org.flexlb.balance.endpoint.WorkerStatusFact.Kind.TERMINAL) {
             if (cleanupProgress == null) {
                 advanceDecisionLocked(DecisionStage.ACCEPTED, OptionalLong.empty());
                 engineOwnership = EngineOwnership.DECODE_OWNED;
@@ -1612,7 +1614,7 @@ public final class RequestSlot {
         // Reconcile the exact reservation in this decision. Engine acceptance overrides the prediction.
         if (item.decodeEp() != null && item.decodeEp().isAcceptedByEngine(item.decodeReservation())) {
             return applyDecodeStatusLocked(item.decodeEp(),
-                    DecodeEndpoint.WorkerStatusFact.accepted(item.decodeReservation()), nowMs).obsoleteDeadline();
+                    org.flexlb.balance.endpoint.WorkerStatusFact.accepted(item.decodeReservation()), nowMs).obsoleteDeadline();
         }
         return null;
     }

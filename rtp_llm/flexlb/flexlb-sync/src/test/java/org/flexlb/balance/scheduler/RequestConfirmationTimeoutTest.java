@@ -58,8 +58,9 @@ class RequestConfirmationTimeoutTest {
         var reporter = mock(BatchSchedulerReporter.class);
         var requestReporter = mock(RequestSchedulerReporter.class);
         var requests = new RequestRegistry(service, reporter, requestReporter);
-        var eventHandler =
-                new EndpointEventHandler(requests, org.mockito.Mockito.mock(PrefillQueueRegistry.class), service);
+        var eventHandler = new EndpointEventHandler(requests, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
+                service, new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
+                org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         var queueCapacity = new QueueCapacity();
         var endpoints = new EndpointRegistry(service, eventHandler, reporter, EndpointTestSupport.parkedDelivery(),
                 new NonBatchTtftEstimator(), new PlacementAvailability(), queueCapacity, new PrefillQueueRegistry(),
@@ -159,7 +160,7 @@ class RequestConfirmationTimeoutTest {
                 decode.release(next, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
             }
             requests.processPrefillStatus(prefill, RoleType.PREFILL, WorkerStatusFact.active(item));
-            requests.processDecodeStatus(decode, DecodeEndpoint.WorkerStatusFact.active(reservation));
+            requests.processDecodeStatus(decode, org.flexlb.balance.endpoint.WorkerStatusFact.active(reservation));
             assertEquals(RequestState.Phase.TIMED_OUT, requests.getRequestState(Long.toString(REQUEST_ID), 0L).state());
             assertEquals(0, requests.trackedRequestCount());
             assertEquals(0L, prefill.observedRequestCount());

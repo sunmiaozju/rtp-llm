@@ -15,11 +15,15 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.PreemptionUpdate;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationHandle;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationReleaseResult;
-import org.flexlb.balance.endpoint.DecodeEndpoint.WorkerStatusFact;
 import org.flexlb.balance.preemption.PreemptionCancelPhase;
+import org.flexlb.balance.schedulev2.RequestStatusTimeout;
+import org.flexlb.balance.schedulev2.decode.DecodeReservations;
+import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
+import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.util.PriorityNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,8 +33,10 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,9 +49,18 @@ import java.util.function.Predicate;
  */
 final class DecodeState {
     private final WorkerStatus status;
+    private final ConfigService configService;
+    private final DecodeReservations decodeReservations;
+    private final RequestSchedulerReporter requestReporter;
 
-    DecodeState(WorkerStatus status) {
+    DecodeState(WorkerStatus status,
+                ConfigService configService,
+                DecodeReservations decodeReservations,
+                RequestSchedulerReporter requestReporter) {
         this.status = status;
+        this.configService = configService;
+        this.decodeReservations = decodeReservations;
+        this.requestReporter = requestReporter;
     }
 
     private static final Logger logger = LoggerFactory.getLogger("syncLogger");
@@ -213,8 +228,7 @@ final class DecodeState {
         try {
             DecodeRequestState current = requestState(reservation.requestId());
             return (isExactReservation(current, reservation)
-                    && (current.countsTowardCapacity() || current.waitingForWorkerFinishedReport
-                        || current.hasProtocolOwner()))
+                    && (current.countsTowardCapacity() || current.hasProtocolOwner()))
                     || hasExactIncomingAttemptLocked(reservation);
         } finally {
             lock.unlock();
@@ -262,20 +276,11 @@ final class DecodeState {
         }
     }
 
-    boolean expireStaleRequest(ReservationHandle reservation, long publishedAtMs, long nowMs, long timeoutMs) {
-        lock.lock();
-        try {
-            DecodeRequestState current = requestState(reservation.requestId());
-            if (!isExactReservation(current, reservation)) {
-                return false;
-            }
-            long lastUpdateAtMs = Math.max(publishedAtMs, current.lastSeenAtMs);
-            if (nowMs - lastUpdateAtMs < timeoutMs) {
-                return false;
-            }
-            return expireRequestLocked(reservation);
-        } finally {
-            lock.unlock();
+    void registerPublished(ReservationHandle reservation, long publishedAtMs) {
+        // 完成回调里的 Finished/下线可能已清掉记录，清掉时保护标记已一并移除
+        DecodeRequestState current = requestState(reservation.requestId());
+        if (current != null) {
+            current.setPublishedAtMs(publishedAtMs);
         }
     }
 
@@ -283,10 +288,9 @@ final class DecodeState {
         String requestId = reservation.requestId();
         DecodeRequestState current = requestState(requestId);
         boolean exact = isExactReservation(current, reservation);
-        boolean protectedOwner = hasExactIncomingAttemptLocked(reservation)
-                && (!exact || current.returnedPreemptionToken == 0L)
-                || exact && (current.confirmed() || current.waitingForWorkerFinishedReport
-                        || current.engineLifecycleOwned || current.hasProtocolOwner());
+        boolean protectedOwner =
+                hasExactIncomingAttemptLocked(reservation) && (!exact || current.returnedPreemptionToken == 0L)
+                        || exact && (current.confirmed() || current.engineLifecycleOwned || current.hasProtocolOwner());
         if (protectedOwner) {
             if (reason == ReleaseReason.LOCAL_ROLLBACK) {
                 throw localReleaseInvariant(reservation, "exact ownership is held by Engine/protocol lifecycle");
@@ -321,8 +325,7 @@ final class DecodeState {
         DecodeRequestState current = requestState(requestId);
         boolean exact = isExactReservation(current, reservation);
         PreemptionClaim claim = exact ? current.preemptionClaim : null;
-        if (exact && (current.confirmed() || current.waitingForWorkerFinishedReport
-                || claim != null && claim.owner == ClaimOwner.ENGINE_CONFIRMED)) {
+        if (exact && (current.confirmed() || claim != null && claim.owner == ClaimOwner.ENGINE_CONFIRMED)) {
             return ReservationReleaseResult.ENGINE_ACCEPTED;
         }
         if (claim != null) {
@@ -340,9 +343,7 @@ final class DecodeState {
     private boolean expireRequestLocked(ReservationHandle reservation) {
         String requestId = reservation.requestId();
         DecodeRequestState state = requestState(requestId);
-        if (!isExactReservation(state, reservation)
-                || (!state.countsTowardCapacity() && !state.waitingForWorkerFinishedReport && !state.hasProtocolOwner()
-                    && !hasExactIncomingAttemptLocked(reservation))) {
+        if (!isExactReservation(state, reservation)) {
             return false;
         }
 
@@ -390,6 +391,7 @@ final class DecodeState {
             confirmedEngineOwnedCount = Math.max(0, confirmedEngineOwnedCount - 1);
         }
         // Use a history-only entry, so no old exact token remains live.
+        decodeReservations.remove(requestId);
         decodeRequests.remove(requestId, state);
         rememberSettledLocked(requestId, System.currentTimeMillis());
         admissionVersion.incrementAndGet();
@@ -438,10 +440,6 @@ final class DecodeState {
                     && removeShadowExactLocked(requestId, request)) {
                 changed = true;
             }
-        }
-        if (exactState && state.waitingForWorkerFinishedReport) {
-            decodeRequests.remove(requestId, state);
-            changed = true;
         }
         if (!decodeRequests.containsKey(requestId) && retainTerminalRecord) {
             changed = rememberSettledLocked(requestId, settledAtMs) || changed;
@@ -649,8 +647,7 @@ final class DecodeState {
             // Engine status may consume the acquired permit before publication.
             // Only the same canonical reservation can satisfy this handoff.
             DecodeRequestState current = requestState(permit.requestId);
-            if (current == permit.reservation && (current.confirmed() || current.waitingForWorkerFinishedReport)
-                    && current.preemptionClaim == null) {
+            if (current == permit.reservation && current.confirmed() && current.preemptionClaim == null) {
                 return new DispatchResult(EngineDispatchPermitTransferStatus.TRANSFERRED, false);
             }
             int usageBefore = engineDispatchHardGateUsageLocked();
@@ -1309,33 +1306,6 @@ final class DecodeState {
         }
     }
 
-    private enum ClaimOwner {
-        SHADOW_IN_FLIGHT,
-        ENGINE_CONFIRMED
-    }
-
-    private static final class PreemptionClaim {
-        private final long attemptToken;
-        private ClaimOwner owner;
-        private final long requiredKvTokens;
-        private final long kvBudgetTokens;
-        private PreemptionCancelPhase phase = PreemptionCancelPhase.CLAIMED;
-        private boolean returnedInstruction;
-        private boolean kvHeldAfterWorkerRelease;
-
-        private PreemptionClaim(long attemptToken, ClaimOwner owner,
-                                long requiredKvTokens, long kvBudgetTokens) {
-            if (requiredKvTokens < 0L || kvBudgetTokens < requiredKvTokens) {
-                throw new IllegalArgumentException(
-                        "Priority preemption claim requires expected KV >= hard KV >= 0");
-            }
-            this.attemptToken = attemptToken;
-            this.owner = owner;
-            this.requiredKvTokens = requiredKvTokens;
-            this.kvBudgetTokens = kvBudgetTokens;
-        }
-    }
-
     private static final class EndpointPreemptionAttempt {
         private final String incomingRequestId;
         private final long incomingReservationToken;
@@ -1381,6 +1351,9 @@ final class DecodeState {
         }
     }
 
+    /**
+     * 同版本心跳只续期活跃时间；超时清理等下一次版本变化，不为每轮心跳遍历全量记录。
+     */
     List<WorkerStatusFact> observeHeartbeat(WorkerStatus.StatusObservation observation) {
         if (observation.owner() != status) {
             throw new IllegalArgumentException(
@@ -1390,26 +1363,26 @@ final class DecodeState {
                 observation.activeTasks().size());
         lock.lock();
         try {
-            for (WorkerStatus.TaskObservation task
-                    : observation.activeTasks().values()) {
+            long nowMs = System.currentTimeMillis();
+            for (WorkerStatus.TaskObservation task : observation.activeTasks().values()) {
                 DecodeRequestState current = requestState(task.requestId());
                 if (current != null) {
-                    current.lastSeenAtMs = System.currentTimeMillis();
+                    current.lastSeenAtMs = nowMs;
                 }
-                ReservationHandle active = workerStatusHandleLocked(
-                        task.requestId());
+                ReservationHandle active = workerStatusHandleLocked(task.requestId());
                 if (active != null) {
                     facts.add(WorkerStatusFact.active(active));
                 }
             }
+            return facts.isEmpty() ? List.of() : Collections.unmodifiableList(facts);
         } finally {
             lock.unlock();
         }
-        return facts.isEmpty() ? List.of() : Collections.unmodifiableList(facts);
     }
 
     private List<WorkerStatusFact> doCalibrate(WorkerStatus.EngineObservation engine,
                                                Map<String, WorkerStatus.TaskObservation> finishedTasks) {
+
         admissionVersion.incrementAndGet();
         List<WorkerStatusFact> facts = new ArrayList<>();
 
@@ -1426,13 +1399,11 @@ final class DecodeState {
         int actualConfirmed = 0;
         int retainedConfirmed = 0;
         long now = System.currentTimeMillis();
-        for (WorkerStatus.TaskObservation task
-                : engine.runningTaskList().values()) {
+        for (WorkerStatus.TaskObservation task : engine.runningTaskList().values()) {
             TaskPhase phase = task.phase();
             String requestId = task.requestId();
             DecodeRequestState current = requestState(requestId);
-            if (terminalNow.contains(requestId)
-                    || current != null && current.settledAtMs != 0L) {
+            if (terminalNow.contains(requestId) || current != null && current.settledAtMs != 0L) {
                 continue;
             }
             // Membership, allocation/running evidence and terminal evidence are distinct.
@@ -1483,8 +1454,7 @@ final class DecodeState {
 
         // Explicit terminal evidence settles the exact request identity and
         // notifies the scheduler independently of active-snapshot membership.
-        for (WorkerStatus.TaskObservation task
-                : finishedTasks.values()) {
+        for (WorkerStatus.TaskObservation task : finishedTasks.values()) {
             String requestId = task.requestId();
             DecodeRequestState current = requestState(requestId);
             if (current != null && current.settledAtMs != 0L) {
@@ -1511,8 +1481,7 @@ final class DecodeState {
                 continue;
             }
             if (terminal != null) {
-                facts.add(WorkerStatusFact.terminal(
-                        terminal, task.errorCode()));
+                facts.add(WorkerStatusFact.terminal(terminal, task.errorCode()));
             }
             if (terminal != null) {
                 settleAuthoritativeTerminalLocked(terminal, false, now);
@@ -1522,41 +1491,46 @@ final class DecodeState {
         }
 
         int syntheticallyHeldSlots = 0;
-        for (Map.Entry<String, DecodeRequestState> entry : decodeRequests.entrySet()) {
-            PreemptionClaim claim = entry.getValue().preemptionClaim;
-            if (claim == null) {
-                continue;
-            }
-            if (claim.owner == ClaimOwner.ENGINE_CONFIRMED
-                    && !confirmedNow.contains(entry.getKey())) {
-                syntheticallyHeldSlots++;
-                holdReleasedKv(claim);
-            }
-        }
-
-        // Requests missing from the Worker's active list no longer count toward capacity.
-        // Keep their request ID and reservation token until Finished arrives or the request expires.
-        // Requests being preempted keep their capacity until that operation completes.
-        java.util.Iterator<Map.Entry<String, DecodeRequestState>> trackedRequestsIterator =
-                decodeRequests.entrySet().iterator();
+        Iterator<Entry<String, DecodeRequestState>> trackedRequestsIterator = decodeRequests.entrySet().iterator();
         while (trackedRequestsIterator.hasNext()) {
             Map.Entry<String, DecodeRequestState> requestEntry = trackedRequestsIterator.next();
-            DecodeRequestState trackedRequest = requestEntry.getValue();
-            if (!trackedRequest.countsTowardCapacity() || !trackedRequest.confirmed()) {
+            DecodeRequestState decodeRequestState = requestEntry.getValue();
+            String requestId = requestEntry.getKey();
+            // 1. 已发布请求距发布或最近活跃已超时：直接上报并清理；本轮活跃上报已续期，不会超时。
+            long lastUpdateAtMs = Math.max(decodeRequestState.getPublishedAtMs(), decodeRequestState.lastSeenAtMs);
+            if (decodeRequestState.getPublishedAtMs() > 0L
+                    && now - lastUpdateAtMs >= RequestStatusTimeout.timeoutMs(configService)) {
+                reportStatusUpdateTimeout();
+                ReservationHandle reservation = workerStatusHandleLocked(requestId);
+                // token 0 的历史记录没有真实预留可终止，只上报不生成 fact
+                if (reservation != null) {
+                    facts.add(WorkerStatusFact.terminal(reservation, 0L));
+                    expireRequestLocked(reservation);
+                }
                 continue;
             }
-            String requestId = requestEntry.getKey();
+            PreemptionClaim claim = decodeRequestState.preemptionClaim;
+            // 2. 请求正在抢占：不按 active 列表清理；Worker 不再确认其 KV 分配或运行时，继续保留并发和 KV 容量。
+            if (claim != null) {
+                if (claim.owner == ClaimOwner.ENGINE_CONFIRMED && !confirmedNow.contains(requestId)) {
+                    syntheticallyHeldSlots++;
+                    holdReleasedKv(claim);
+                }
+                continue;
+            }
+            // 3. 请求已不计入容量，或 Worker 尚未确认接收：不在这里释放，仍由原有完成或预留清理流程处理。
+            if (!decodeRequestState.countsTowardCapacity() || !decodeRequestState.confirmed()) {
+                continue;
+            }
+            // 4. 请求仍在 Worker 的 active 列表中：保留当前容量记账和请求关联。
             if (requestIdsInWorkerActiveReport.contains(requestId)) {
                 continue;
             }
-            if (trackedRequest.preemptionClaim != null) {
-                continue;
-            }
-            // A positive token identifies a request reserved by this FlexLB instance.
-            if (trackedRequest.reservationToken() > 0L) {
-                trackedRequest.stopCountingTowardCapacity();
-                trackedRequest.waitingForWorkerFinishedReport = true;
+            // 5. 尚未登记发布的本实例预留缺少上报：保留关联和并发计数，等待 Finished 或原有调度器清理。
+            if (decodeRequestState.reservationToken() > 0L) {
+                retainedConfirmed++;
             } else {
+                // 6. 仅从 Worker 上报发现的请求已消失：没有本地预留关联需要保留，直接移除记录。
                 trackedRequestsIterator.remove();
                 rememberSettledLocked(requestId, now);
             }
@@ -1607,7 +1581,11 @@ final class DecodeState {
                 || after.realKvUsed() < before.realKvUsed();
     }
 
-    record CalibrationResult(List<WorkerStatusFact> facts, boolean capacityImproved) { }
+    record CalibrationResult(List<WorkerStatusFact> facts, boolean capacityImproved) {}
+
+    private void reportStatusUpdateTimeout() {
+        requestReporter.reportStatusUpdateTimeout(RoleType.DECODE, status.getLogicalIpPort());
+    }
 
     // Generation cleanup: drain resources and expire orphan/history records.
 
@@ -1657,7 +1635,10 @@ final class DecodeState {
 
         // Canonical retirement commit. The complete owner list and every
         // exact ReservationHandle have been validated above this line.
-        decodeRequests.values().forEach(DecodeRequestState::clearDispatchPermit);
+        decodeRequests.forEach((requestId, request) -> {
+            request.clearDispatchPermit();
+            decodeReservations.remove(requestId);
+        });
         activeEngineDispatchPermitCount = 0;
         engineDispatchPermitRequiredKvReservedTotal.set(0L);
         engineDispatchPermitKvBudgetReservedTotal.set(0L);
@@ -1709,6 +1690,7 @@ final class DecodeState {
                         && entry.getValue().lastSeenMs() < cutoff
                         && !retainForSchedulerCleanup.test(entry.getKey())
                         && entry.getValue().preemptionClaim == null) {
+                    decodeReservations.remove(entry.getKey());
                     trackedEvictIt.remove();
                     trackedPurged++;
                 }
@@ -1717,16 +1699,12 @@ final class DecodeState {
                 confirmedEngineOwnedCount = Math.max(
                         0, confirmedEngineOwnedCount - trackedPurged);
             }
-            boolean expiredWaitingRequestsRemoved = decodeRequests.entrySet()
-                    .removeIf(entry -> entry.getValue().waitingForWorkerFinishedReport
-                            && entry.getValue().lastSeenMs() < cutoff
-                            && !retainForSchedulerCleanup.test(entry.getKey()));
             boolean settledTerminalRecordsPurged = decodeRequests.entrySet()
                     .removeIf(entry -> !entry.getValue().countsTowardCapacity()
                             && !entry.getValue().hasProtocolOwner()
                             && entry.getValue().settledAtMs != 0L
                             && entry.getValue().settledAtMs < cutoff);
-            if (evicted > 0 || trackedPurged > 0 || expiredWaitingRequestsRemoved || settledTerminalRecordsPurged) {
+            if (evicted > 0 || trackedPurged > 0 || settledTerminalRecordsPurged) {
                 admissionVersion.incrementAndGet();
             }
             capacityChanged = evicted > 0 || trackedPurged > 0
@@ -2075,8 +2053,8 @@ final class DecodeState {
     }
 
     private void pruneRequestStateLocked(String requestId, DecodeRequestState state) {
-        if (state != null && !state.countsTowardCapacity() && !state.waitingForWorkerFinishedReport
-                && !state.hasProtocolOwner() && state.settledAtMs == 0L) {
+        if (state != null && !state.countsTowardCapacity() && !state.hasProtocolOwner() && state.settledAtMs == 0L) {
+            decodeReservations.remove(requestId);
             decodeRequests.remove(requestId, state);
         }
     }
@@ -2088,147 +2066,4 @@ final class DecodeState {
         return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
     }
 
-    private static final class DecodeRequestState {
-        static final int DEFAULT_PRIORITY = 0;
-
-        private long kvTokens;
-        /**
-         * Before WorkerStatus confirmation: input tokens plus max_new_tokens.
-         * After confirmation: actual KV tokens reported by the engine.
-         */
-        private long kvBudgetTokens;
-        private final long createdAtMs;
-        private int priority;
-        private final long reservationToken;
-        private boolean priorityKnown = true;
-        /**
-         * Request phase used for capacity accounting; null excludes the request from capacity.
-         */
-        private volatile DecodeTaskPhase phase = DecodeTaskPhase.ENGINE_MAY_HAVE_SEEN;
-        private long lastSeenAtMs;
-        private boolean queued;
-        /** True after dispatch crosses the Master rollback boundary. */
-        private boolean engineLifecycleOwned;
-        private DispatchLease dispatchPermit;
-        /** Incoming instruction owner until dispatch crosses the rollback boundary. */
-        private volatile long returnedPreemptionToken;
-        /** Current protocol owners for this exact request generation. */
-        private PreemptionClaim preemptionClaim;
-        /** Non-zero while stale WorkerStatus must not resurrect this request id. */
-        private long settledAtMs;
-        /**
-         * True when a previously active request is missing from the Worker's active report
-         * and its Finished report has not arrived. The request ID and reservation token remain
-         * available for scheduler completion, but the request no longer counts toward capacity.
-         * A RUNNING or KV_ALLOCATED report clears this flag; Finished, expiration, or endpoint
-         * removal clears the retained request record.
-         */
-        private boolean waitingForWorkerFinishedReport;
-
-        DecodeRequestState(long kvTokens, long kvBudgetTokens,
-                        int priority, long reservationToken) {
-            if (reservationToken < 0L) {
-                throw new IllegalArgumentException(
-                        "reservationToken must be non-negative");
-            }
-            this.kvTokens = kvTokens;
-            this.kvBudgetTokens = kvBudgetTokens;
-            this.createdAtMs = System.currentTimeMillis();
-            this.priority = priority;
-            this.reservationToken = reservationToken;
-        }
-
-        long kvTokens() { return kvTokens; }
-        long kvBudgetTokens() { return kvBudgetTokens; }
-        CapacityRelease capacityRelease() {
-            return new CapacityRelease(1L, kvTokens, kvBudgetTokens);
-        }
-        long createdAtMs() { return createdAtMs; }
-        int priority() { return priority; }
-        long reservationToken() { return reservationToken; }
-        boolean queued() { return queued; }
-        boolean countsTowardCapacity() { return phase != null; }
-        boolean confirmed() { return phase != null
-                && phase != DecodeTaskPhase.ENGINE_MAY_HAVE_SEEN; }
-        DecodeTaskPhase phase() { return phase; }
-        boolean priorityKnown() { return priorityKnown; }
-        long lastSeenAtMs() { return lastSeenAtMs; }
-
-        void confirm(long engineKvTokens, DecodeTaskPhase phase, long observedAtMs) {
-            kvTokens = Math.max(0L, engineKvTokens);
-            kvBudgetTokens = kvTokens;
-            this.phase = java.util.Objects.requireNonNull(phase, "phase");
-            lastSeenAtMs = observedAtMs;
-            waitingForWorkerFinishedReport = false;
-            queued = false;
-            engineLifecycleOwned = false;
-            dispatchPermit = null;
-        }
-
-        static DecodeRequestState untrackedConfirmed(
-                long engineKvTokens,
-                DecodeTaskPhase phase,
-                long observedAtMs) {
-            DecodeRequestState state = new DecodeRequestState(
-                    0L, 0L, DEFAULT_PRIORITY, 0L);
-            state.priorityKnown = false;
-            state.confirm(engineKvTokens, phase, observedAtMs);
-            return state;
-        }
-
-        void refresh(DecodeTaskPhase phase, long observedAtMs) {
-            if (!confirmed()) {
-                throw new IllegalStateException(
-                        "cannot refresh an unconfirmed Decode request");
-            }
-            this.phase = java.util.Objects.requireNonNull(phase, "phase");
-            lastSeenAtMs = observedAtMs;
-        }
-
-        long lastSeenMs() { return lastSeenAtMs; }
-
-        boolean markQueued() {
-            if (queued) {
-                return false;
-            }
-            queued = true;
-            return true;
-        }
-
-        boolean clearQueued() {
-            if (!queued) {
-                return false;
-            }
-            queued = false;
-            return true;
-        }
-
-        DispatchLease dispatchPermit() { return dispatchPermit; }
-
-        void installDispatchPermit(DispatchLease permit) {
-            if (dispatchPermit != null) {
-                throw new IllegalStateException(
-                        "Decode reservation already owns a dispatch permit");
-            }
-            dispatchPermit = java.util.Objects.requireNonNull(permit, "permit");
-        }
-
-        DispatchLease clearDispatchPermit() {
-            DispatchLease current = dispatchPermit;
-            dispatchPermit = null;
-            return current;
-        }
-
-        long releasableKvTokens() { return kvTokens; }
-
-        boolean hasProtocolOwner() { return preemptionClaim != null; }
-
-        /**
-         * Excludes this request from capacity accounting while preserving its ID and reservation token.
-         * Callers update the aggregate capacity counters under lock.
-         */
-        void stopCountingTowardCapacity() {
-            phase = null;
-        }
-    }
 }

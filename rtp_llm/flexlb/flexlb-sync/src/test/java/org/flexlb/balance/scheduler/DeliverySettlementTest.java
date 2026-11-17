@@ -50,6 +50,7 @@ import static org.mockito.Mockito.when;
 
 class DeliverySettlementTest {
     private FlexlbConfig config;
+    private ConfigService service;
     private RequestRegistry registry;
     private DeliverySettlementTestSupport ledger;
     private PrefillEndpoint prefill;
@@ -57,7 +58,7 @@ class DeliverySettlementTest {
     @BeforeEach
     void setUp() {
         config = SchedulingTestConfig.batchConfig();
-        ConfigService service = mock(ConfigService.class);
+        service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         registry = new RequestRegistry(service, mock(BatchSchedulerReporter.class),
                 mock(RequestSchedulerReporter.class));
@@ -93,8 +94,8 @@ class DeliverySettlementTest {
         Member member = member(1L, 11L);
         ledger.commit(11L, List.of(member.item()));
         member.slot().processDecodeStatus(member.item().decodeEp(), accepted
-                ? DecodeEndpoint.WorkerStatusFact.accepted(member.item().decodeReservation())
-                : DecodeEndpoint.WorkerStatusFact.active(member.item().decodeReservation()));
+                ? org.flexlb.balance.endpoint.WorkerStatusFact.accepted(member.item().decodeReservation())
+                : org.flexlb.balance.endpoint.WorkerStatusFact.active(member.item().decodeReservation()));
 
         reject(member);
 
@@ -110,7 +111,8 @@ class DeliverySettlementTest {
         var decode = spy(
                 new DecodeEndpoint(WorkerStatus.createDiscovered(RoleType.DECODE, null, "127.0.0.1", 8080, 8081, null),
                         new EndpointEventHandler(registry, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
-                                mock(org.flexlb.config.ConfigService.class))));
+                                service, new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
+                                org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class))));
         DecodeEndpoint.ReservationHandle reservation;
         try (var hold = decode.tryHold()) {
             reservation = decode.reserveUnqueued(hold, "2", 1L, 1L, 50);
@@ -168,7 +170,10 @@ class DeliverySettlementTest {
             member.claim().complete(DeliveryResult.delivered());
             assertTrue(member.item().future().get(5, TimeUnit.SECONDS).isSuccess());
             new EndpointEventHandler(registry, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
-                    mock(org.flexlb.config.ConfigService.class)).onPrefillStatus(prefill,
+                    mock(org.flexlb.config.ConfigService.class),
+                    new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
+                    org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class))
+                    .onPrefillStatus(prefill,
                             org.flexlb.balance.endpoint.EndpointTestSupport.statusObservation(RoleType.PREFILL),
                             ledger.finish(20L, member.item()));
             assertOccupancy(i == 15 ? 0 : 1, 15 - i);
@@ -377,7 +382,7 @@ class DeliverySettlementTest {
         assertFalse(claim.terminalObservation().toCompletableFuture().isDone());
         assertFalse(registry.removeExactTerminalRecord(member.slot(), Long.MAX_VALUE));
         member.slot().processDecodeStatus(member.item().decodeEp(),
-                DecodeEndpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 0L));
+                org.flexlb.balance.endpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 0L));
         assertSame(failure, member.item().future().join());
         assertTrue(claim.terminalObservation().toCompletableFuture().isDone());
         assertTrue(registry.removeExactTerminalRecord(member.slot(), Long.MAX_VALUE));
@@ -408,7 +413,7 @@ class DeliverySettlementTest {
                 Response failure = member.item().future().get(1, TimeUnit.SECONDS);
                 assertFalse(failure.isSuccess());
                 member.slot().processDecodeStatus(member.item().decodeEp(),
-                        DecodeEndpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 0L));
+                        org.flexlb.balance.endpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 0L));
                 assertFalse(registry.removeExactTerminalRecord(member.slot(), Long.MAX_VALUE));
             } finally {
                 resume.countDown();
@@ -468,7 +473,7 @@ class DeliverySettlementTest {
                     member.slot().expireInactiveRequest(expiredAt);
                     synchronized (member.slot()) {
                         org.springframework.test.util.ReflectionTestUtils.<RequestSlot.EngineObservation>invokeMethod(member.slot(), "applyDecodeStatusLocked", member.item().decodeEp(),
-                                DecodeEndpoint.WorkerStatusFact.active(member.item().decodeReservation()), expiredAt + 1L);
+                                org.flexlb.balance.endpoint.WorkerStatusFact.active(member.item().decodeReservation()), expiredAt + 1L);
                     }
                     assertFalse(registry.removeExactTerminalRecord(member.slot(), Long.MAX_VALUE));
                     return false;
@@ -492,8 +497,10 @@ class DeliverySettlementTest {
         }
         assertTrue(claim.applyPhase(PreemptionCancelPhase.CANCEL_IN_FLIGHT));
         new EndpointEventHandler(registry, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
-                mock(org.flexlb.config.ConfigService.class)).onPrefillStatus(prefill,
-                        org.flexlb.balance.endpoint.EndpointTestSupport.statusObservation(RoleType.PDFUSION),
+                mock(org.flexlb.config.ConfigService.class),
+                new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
+                org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class)).onPrefillStatus(
+                        prefill, org.flexlb.balance.endpoint.EndpointTestSupport.statusObservation(RoleType.PDFUSION),
                         ledger.finish(110L, member.item()));
         assertFalse(member.item().future().isDone());
         assertTrue(claim.applyPhase(PreemptionCancelPhase.CANCEL_UNKNOWN));
@@ -551,7 +558,7 @@ class DeliverySettlementTest {
                 member.item().decodeReservation(), DeliveryResult.Status.PREFILL_REJECTED))
                 .thenAnswer(invocation -> {
                     member.slot().processDecodeStatus(member.item().decodeEp(),
-                            DecodeEndpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 0L));
+                            org.flexlb.balance.endpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 0L));
                     assertFalse(claim.terminalObservation().toCompletableFuture().isDone(),
                             "cleanup is still executing outside the Slot lock");
                     return false; // Snapshot taken before the above completion.
@@ -619,7 +626,7 @@ class DeliverySettlementTest {
 
     private void decodeFinished(Member member) {
         member.slot().processDecodeStatus(member.item().decodeEp(),
-                DecodeEndpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 601L));
+                org.flexlb.balance.endpoint.WorkerStatusFact.terminal(member.item().decodeReservation(), 601L));
     }
 
     private void assertOccupancy(int batches, int members) {
