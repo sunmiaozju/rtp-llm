@@ -721,10 +721,6 @@ public class CostBasedPrefillStrategy {
         long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
-        if (cacheMatchResult.source() == CacheMatchSource.KVCM && cacheMatchResult.querySucceeded()) {
-            engineHealthReporter.reportKvcmPredictionTokens(ep.getStatus().getRole(), localHitTokens, remoteHitTokens,
-                    seqLen);
-        }
         RoutingConfig.ExecutionTimeEstimatorConfig estimatorConfig =
                 config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator();
 
