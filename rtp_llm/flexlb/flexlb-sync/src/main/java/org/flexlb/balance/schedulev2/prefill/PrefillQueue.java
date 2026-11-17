@@ -49,6 +49,7 @@ import java.util.concurrent.atomic.LongAdder;
 public final class PrefillQueue {
 
     private final PrefillEndpoint endpoint;
+    private final RequestSchedulerReporter reporter;
     private final LoopSignal signal = new LoopSignal();
     private final PrefillActiveTasks activeTasks = new PrefillActiveTasks();
     private volatile Runnable capacityChanged = () -> {};
@@ -78,8 +79,9 @@ public final class PrefillQueue {
      */
     private volatile long unknownRequestCount;
 
-    public PrefillQueue(PrefillEndpoint endpoint, boolean priorityOrdering) {
+    public PrefillQueue(PrefillEndpoint endpoint, boolean priorityOrdering, RequestSchedulerReporter reporter) {
         this.endpoint = endpoint;
+        this.reporter = reporter;
         this.waiting = new ConcurrentSkipListSet<>(RequestOrder.of(priorityOrdering));
     }
 
@@ -208,6 +210,15 @@ public final class PrefillQueue {
         return dispatched.size();
     }
 
+    /**
+     * 节点已关闭选路入口，移除它的 dispatch 跟踪并归还本地发布名额；waiting 由队列线程退回主队列。
+     */
+    public void removeDispatchedOnRetirement() {
+        for (DispatchedRequest record : dispatched.values()) {
+            removeDispatched(record.request());
+        }
+    }
+
     public long unknownRequestCount() {
         return unknownRequestCount;
     }
@@ -218,11 +229,11 @@ public final class PrefillQueue {
     public void initializeFromCachedStatus() {
         WorkerStatus.CommittedWorkerStatus status = endpoint.getStatus().committedWorkerStatus();
         if (status != null) {
-            updateActiveTasks(status.fields());
+            updateActiveTasks(status.fields(), Long.MAX_VALUE);
         }
     }
 
-    private void updateActiveTasks(WorkerStatus.EngineObservation engineObservation) {
+    private void updateActiveTasks(WorkerStatus.EngineObservation engineObservation, long statusTimeoutMs) {
 
         activeTasks.updateWorkerCapacity(engineObservation);
         long nowMs = System.currentTimeMillis();
@@ -264,9 +275,14 @@ public final class PrefillQueue {
                 unknown++;
             }
         }
-        for (DispatchedRequest record : dispatched.values()) {
-            if (record.seenByEngine() && !engineRequestIds.contains(record.request().requestId())) {
-                removeDispatched(record.request());
+        for (DispatchedRequest dispatchedRequest : dispatched.values()) {
+            if (dispatchedRequest.statusExpired(nowMs, statusTimeoutMs)) {
+                removeDispatched(dispatchedRequest.request());
+                reporter.reportStatusUpdateTimeout(endpoint.getStatus().getRole(), endpoint.ipPort());
+            }
+            if (dispatchedRequest.seenByEngine()
+                    && !engineRequestIds.contains(dispatchedRequest.request().requestId())) {
+                removeDispatched(dispatchedRequest.request());
             }
         }
         unknownRequestCount = unknown;
@@ -382,10 +398,10 @@ public final class PrefillQueue {
 
     /**
      * 状态提交时处理每次上报，避免独立队列轮询错过短暂的 waiting/running 或增量 finished。
-     * 活跃列表中消失的已上报请求和 Finished 请求都尝试清理；重复清理不再释放容量。
+     * 先更新引擎容量并检查请求状态超时，再处理完成通知。
      */
-    public void handlePrefillStatus(WorkerStatus.StatusObservation statusObservation) {
-        updateActiveTasks(statusObservation.engine());
+    public void handlePrefillStatus(WorkerStatus.StatusObservation statusObservation, long statusTimeoutMs) {
+        updateActiveTasks(statusObservation.engine(), statusTimeoutMs);
         removeFinishedTasks(statusObservation.finishedTasks());
         signal.wake();
     }
@@ -396,34 +412,6 @@ public final class PrefillQueue {
             if (record != null) {
                 removeDispatched(record.request());
             }
-        }
-    }
-
-    /**
-     * 移除发布后或最近一次请求状态更新后超过 statusTimeoutMs 的记录，并上报超时指标和日志。
-     * <p>
-     * 只有该请求的活跃上报续期；扫描判定超时后允许清理，即使随后收到该请求的新状态。
-     * 回收后若引擎迟到上报活跃请求，该请求仍计入引擎占用。
-     */
-    public void removeRequestStatusExpired(long nowMs, long statusTimeoutMs, RequestSchedulerReporter reporter) {
-        boolean removed = false;
-        for (DispatchedRequest dispatchedRequest : dispatched.values()) {
-            if (!dispatchedRequest.statusExpired(nowMs, statusTimeoutMs)) {
-                continue;
-            }
-            if (removeDispatchedRequest(dispatchedRequest)) {
-                activeTasks.releaseExpired(dispatchedRequest, nowMs, statusTimeoutMs);
-                removed = true;
-                Request request = dispatchedRequest.request();
-                reporter.reportStatusUpdateTimeout(endpoint.getStatus().getRole(), endpoint.ipPort());
-                Logger.warn(
-                        "Request worker status timeout: requestId={}, role=PREFILL, endpoint={}, publishedAgeMs={}, timeoutMs={}",
-                        request.requestId(), endpoint.ipPort(), nowMs - request.publishedAtMs(), statusTimeoutMs);
-            }
-        }
-        if (removed) {
-            signal.wake();
-            capacityChanged.run();
         }
     }
 

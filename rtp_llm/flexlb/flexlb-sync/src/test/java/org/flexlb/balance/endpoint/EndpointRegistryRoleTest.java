@@ -44,14 +44,10 @@ class EndpointRegistryRoleTest {
         Mockito.when(configService.loadBalanceConfig()).thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
         EndpointTestSupport.TestRequestRuntime requestRuntime =
                 EndpointTestSupport.requestRuntime();
-        registry = new EndpointRegistry(
-                configService,
-                requestRuntime.events(),
-                Mockito.mock(BatchSchedulerReporter.class),
-                EndpointTestSupport.routeStrategy(requestRuntime),
-                new NonBatchTtftEstimator(),
-                new PlacementAvailability(),
-                new QueueCapacity(), new PrefillQueueRegistry());
+        registry = new EndpointRegistry(configService, requestRuntime.events(),
+                Mockito.mock(BatchSchedulerReporter.class), EndpointTestSupport.routeStrategy(requestRuntime),
+                new NonBatchTtftEstimator(), new PlacementAvailability(), new QueueCapacity(),
+                new PrefillQueueRegistry(), Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
     }
 
     @AfterEach
@@ -69,10 +65,10 @@ class EndpointRegistryRoleTest {
         var queues = Mockito.spy(new PrefillQueueRegistry());
         var runtime = EndpointTestSupport.requestRuntime();
         var availability = Mockito.mock(PlacementAvailability.class);
-        var events = new EndpointEventHandler(runtime.requests(), queues);
+        var events = new EndpointEventHandler(runtime.requests(), queues, service);
         var localRegistry = new EndpointRegistry(service, events, Mockito.mock(BatchSchedulerReporter.class),
                 EndpointTestSupport.routeStrategy(runtime), new NonBatchTtftEstimator(), availability,
-                new QueueCapacity(), queues);
+                new QueueCapacity(), queues, Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         String address = "127.0.0.1:8001";
         Mockito.doAnswer(call -> {
             PrefillEndpoint endpoint = call.getArgument(0);
@@ -224,6 +220,25 @@ class EndpointRegistryRoleTest {
         assertEquals(address, after.address());
         assertEquals("group-b", after.topology().group());
         assertEquals("site-b", after.topology().site());
+    }
+
+    @Test
+    void decode_routing_snapshot_stays_read_only_across_registry_changes() {
+        String address = "127.0.0.1:8030";
+        WorkerStatus first = status(RoleType.DECODE, 8030);
+        EndpointTestSupport.publishEndpoint(registry, RoleType.DECODE, address, first);
+        var snapshots = registry.decodeRoutingSnapshot();
+        var firstView = snapshots.getFirst();
+
+        assertThrows(UnsupportedOperationException.class, () -> snapshots.removeFirst());
+        EndpointTestSupport.publishEndpoint(registry, RoleType.DECODE, "127.0.0.1:8031",
+                status(RoleType.DECODE, 8031));
+        retire(RoleType.DECODE, address, first);
+
+        assertEquals(List.of(firstView), snapshots);
+        assertNull(registry.holdDecodeEndpoint(firstView));
+        assertEquals(List.of("127.0.0.1:8031"),
+                registry.decodeRoutingSnapshot().stream().map(view -> view.address()).toList());
     }
 
     @Test
