@@ -699,9 +699,6 @@ public class CostBasedPrefillStrategy {
         long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
-        if (inputs.kvcmQuerySucceeded()) {
-            engineHealthReporter.reportKvcmPredictionTokens(status.getRole(), localHitTokens, remoteHitTokens, seqLen);
-        }
         long remoteWorkHitTokens = inputs.kvcmSource() ? inputs.globalHitTokens() - localHitTokens : remoteHitTokens;
 
         long computeHit =

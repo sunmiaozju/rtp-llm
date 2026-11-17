@@ -64,6 +64,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class CostBasedPrefillSelectionMetricTest {
@@ -357,7 +358,6 @@ class CostBasedPrefillSelectionMetricTest {
             commit(selected);
             verify(reporter).reportRoutingSelectedCacheMatchMetrics(RoleType.PREFILL, 320L);
         }
-        verify(reporter, times(2)).reportKvcmPredictionTokens(RoleType.PREFILL, 200L, 600L, 1_000L);
     }
 
     @ParameterizedTest
@@ -390,19 +390,12 @@ class CostBasedPrefillSelectionMetricTest {
     @ParameterizedTest
     @CsvSource({"KVCM,true,true", "KVCM,true,false", "KVCM,false,true", "LOCAL_SYNC,true,true",
             "LOCAL_STANDBY,true,true"})
-    void predictionTokenMetricsIncludeMissesButExcludeOtherSources(CacheMatchSource source,
-                                                                   boolean querySucceeded,
-                                                                   boolean hasMatch) {
+    void preparingCandidatesReportsNoMetrics(CacheMatchSource source, boolean querySucceeded, boolean hasMatch) {
         when(cache.findMatchingEngines(any())).thenReturn(
                 new CacheMatchResult(hasMatch ? Map.of("10.0.0.1:8080@0", new HostCacheMatch(2L, 8L)) : Map.of(),
                         source, 0L, 100L, querySucceeded));
         strategy.prepare(context, RoleType.PREFILL, null);
-        if (source == CacheMatchSource.KVCM && querySucceeded) {
-            verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, hasMatch ? 200L : 0L, hasMatch ? 600L : 0L,
-                    1_000L);
-        } else {
-            verify(reporter, never()).reportKvcmPredictionTokens(any(), anyLong(), anyLong(), anyLong());
-        }
+        verifyNoInteractions(reporter);
     }
 
     @ParameterizedTest
@@ -439,8 +432,6 @@ class CostBasedPrefillSelectionMetricTest {
             assertEquals(localHit, candidate.cacheHitTokens());
             assertEquals(localHit, candidate.routingCacheMatchTokens());
         }
-        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 200L, 0L, 1_000L);
-        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 0L, 0L, 1_000L);
         try (SelectedRole selected = select()) {
             assertEquals("10.0.0.1", selected.serverStatus().getServerIp());
             assertEquals(firstWork, selected.prefillWorkMs());
@@ -508,9 +499,6 @@ class CostBasedPrefillSelectionMetricTest {
         }
         verify(cache).findMatchingEngines(new CacheMatchQuery(context.getRequestId(),
                 context.getRequest().getBlockCacheKeys(), 2_304L, RoleType.PREFILL, null));
-        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 126_720L, 0L, 194_662L);
-        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 16_128L, 110_592L, 194_662L);
-        verify(reporter).reportKvcmPredictionTokens(RoleType.PREFILL, 0L, 0L, 194_662L);
     }
 
     @ParameterizedTest
@@ -581,7 +569,6 @@ class CostBasedPrefillSelectionMetricTest {
         assertEquals(expectedWork, candidate.predictedMs());
         assertEquals(200L, candidate.cacheHitTokens());
         assertEquals(200L, candidate.routingCacheMatchTokens());
-        verify(reporter, never()).reportKvcmPredictionTokens(any(), anyLong(), anyLong(), anyLong());
     }
 
     @Test

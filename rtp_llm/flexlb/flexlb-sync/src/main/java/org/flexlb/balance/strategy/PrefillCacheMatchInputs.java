@@ -15,14 +15,13 @@ record PrefillCacheMatchInputs(CacheMatchResult cacheMatchResult,
                                double localWeight,
                                double remoteWeight,
                                long globalHitTokens,
-                               boolean kvcmSource,
-                               boolean kvcmQuerySucceeded) {
+                               boolean kvcmSource) {
 
     static PrefillCacheMatchInputs build(BalanceContext context, CacheMatchResult cacheMatchResult) {
         Request request = context.getRequest();
         long seqLen = request == null ? 0L : request.getSeqLen();
         if (cacheMatchResult == null || seqLen <= 0L) {
-            return new PrefillCacheMatchInputs(cacheMatchResult, seqLen, 0L, 0.0, 0.0, 0.0, 0L, false, false);
+            return new PrefillCacheMatchInputs(cacheMatchResult, seqLen, 0L, 0.0, 0.0, 0.0, 0L, false);
         }
         var prefillConfig = context.getConfig().getRouter().getRoles().getPrefill();
         var affinity = prefillConfig.getCacheAffinity();
@@ -35,6 +34,6 @@ record PrefillCacheMatchInputs(CacheMatchResult cacheMatchResult,
         boolean kvcmSource = cacheMatchResult.source() == CacheMatchSource.KVCM;
         return new PrefillCacheMatchInputs(cacheMatchResult, seqLen, blockSize, remoteDiscount,
                 estimatorConfig.getLocalWeight(), estimatorConfig.getRemoteWeight(), context.getGlobalHitTokens(),
-                kvcmSource, kvcmSource && cacheMatchResult.querySucceeded());
+                kvcmSource);
     }
 }
