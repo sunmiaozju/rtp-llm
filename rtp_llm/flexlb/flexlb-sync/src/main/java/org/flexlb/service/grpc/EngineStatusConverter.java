@@ -73,11 +73,11 @@ public class EngineStatusConverter {
                 step.getTokenBudget(), step.getBudgetFillRatio());
     }
 
-    private static KvCacheGroupMode convertKvCacheGroupMode(
-            EngineRpcService.KvCacheGroupModePB mode) {
+    private static KvCacheGroupMode convertKvCacheGroupMode(EngineRpcService.KvCacheGroupModePB mode) {
         return switch (mode) {
             case KV_CACHE_GROUP_MODE_FULL_ATTENTION_ONLY -> KvCacheGroupMode.FULL_ATTENTION_ONLY;
             case KV_CACHE_GROUP_MODE_WITH_MAMBA -> KvCacheGroupMode.WITH_MAMBA;
+            case KV_CACHE_GROUP_MODE_WITH_SWA -> KvCacheGroupMode.WITH_SWA;
             default -> KvCacheGroupMode.UNSPECIFIED;
         };
     }
