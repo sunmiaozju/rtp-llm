@@ -49,7 +49,8 @@ import static org.mockito.Mockito.when;
 class V2QueueReporterTest {
 
     private final FlexMonitor monitor = mock(FlexMonitor.class);
-    private final AsyncRequestMetrics asyncRequestMetrics = new AsyncRequestMetrics(monitor);
+    private final AsyncRequestMetrics asyncRequestMetrics =
+            new AsyncRequestMetrics(monitor, mock(CacheMatchHistogram.class));
     private final V2QueueReporter reporter = new V2QueueReporter(monitor, asyncRequestMetrics);
     private final FlexlbConfig config = SchedulingTestConfig.newConfig();
     private final RequestTable table = new RequestTable();
