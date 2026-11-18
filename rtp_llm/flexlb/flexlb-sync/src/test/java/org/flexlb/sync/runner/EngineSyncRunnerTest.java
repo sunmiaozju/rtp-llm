@@ -87,6 +87,12 @@ class EngineSyncRunnerTest {
 
     @BeforeEach
     void setUp() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
         workerDirectory = new WorkerDirectory(endpointRegistry);
         engineSyncRunner = new EngineSyncRunner(
                 workerDirectory,

@@ -87,6 +87,7 @@ class EncoderSchedulingIntegrationTest {
             requests.closeExpiration();
             requests.closePublisher();
         }
+        EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).clear();
     }
 
     @Test
@@ -380,6 +381,7 @@ class EncoderSchedulingIntegrationTest {
                         new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                         org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class)));
         when(directory.holdEndpoint(eq(RoleType.ENCODER), eq(ip))).thenAnswer(invocation -> endpoint.tryHold());
+        EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).put(ip, endpoint);
         return endpoint;
     }
 

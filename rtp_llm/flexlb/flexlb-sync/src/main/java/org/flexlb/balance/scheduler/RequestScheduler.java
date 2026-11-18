@@ -2,6 +2,7 @@ package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
+import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.eviction.EvictionManager;
 import org.flexlb.balance.schedulev2.RequestSchedulerV2;
 import org.flexlb.config.ConfigService;
@@ -174,8 +175,10 @@ public final class RequestScheduler {
             return schedulerV2.queuedRequestCount() + (encoderQueue == null ? 0 : encoderQueue.size());
         }
         long queued = globalQueue.size() + (encoderQueue == null ? 0L : encoderQueue.size());
-        for (PrefillEndpoint endpoint
-                : endpointRegistry.snapshotPrefillEndpoints().values()) {
+        for (WorkerEndpoint worker : EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).values()) {
+            if (!(worker instanceof PrefillEndpoint endpoint)) {
+                continue;
+            }
             queued += endpoint.queuedRequestCount();
             if (queued >= Integer.MAX_VALUE) {
                 return Integer.MAX_VALUE;

@@ -12,7 +12,6 @@ FlexLB 是面向 AI 模型推理负载（RTP-LLM）的高性能智能负载均�
 | 文档 | 内容 |
 |---|---|
 | [01-routing-and-balancing](01-routing-and-balancing.md) | Router / LoadBalancer 模式、角色多阶段路由与 group 链、回滚机制、四种策略算法 |
-| [02-queue-scheduling](02-queue-scheduling.md) | PriorityScheduler / WorkerBatcher / RouteService、请求生命周期与取消 |
 | [03-resource-management](03-resource-management.md) | EndpointRegistry、worker 可用性与本地资源预留 |
 | [04-worker-sync-and-cache](04-worker-sync-and-cache.md) | Worker 状态 gRPC 同步、本地乐观预测、KV cache 三种匹配源（LOCAL_SYNC / KVCM / LOCAL_STANDBY） |
 | [05-lifecycle-and-consistency](05-lifecycle-and-consistency.md) | 生命周期 Hook 与 /hook/* 端点、ZooKeeper LeaderSelector 主选举、slave 转发 |

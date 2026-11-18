@@ -22,6 +22,7 @@ import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -38,6 +39,17 @@ import static org.mockito.Mockito.when;
 
 /** Prefill status must carry stage completion through the real endpoint and slot reducers. */
 class PrefillCompletionEventTest {
+
+    @BeforeEach
+    void clearEndpointRegistry() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
+    }
+
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void successfulPrefillCompletionReleasesTokensAndRecordsHandoffEvidence(boolean decodeAlreadyAccepted)

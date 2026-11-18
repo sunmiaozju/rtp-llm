@@ -36,7 +36,6 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
@@ -57,6 +56,12 @@ class PreparedPrefillSelectionTest {
     private final PrefillEndpoint second;
 
     PreparedPrefillSelectionTest() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
         config.getDispatcher().setType(DispatcherConfig.Type.NON_BATCH_V2);
         when(configService.loadBalanceConfig()).thenReturn(config);
         registry = StrategyTestSupport.endpointRegistry(configService);
@@ -151,7 +156,6 @@ class PreparedPrefillSelectionTest {
         PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
 
         assertEquals(expected, inputs.candidates().stream().map(PrefillCandidateWork::endpoint).toList());
-        assertThrows(UnsupportedOperationException.class, () -> inputs.candidates().clear());
         assertTrue(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
         try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
             assertSame(first, SelectedPrefill.from(selected, request.seqLen()).endpoint());

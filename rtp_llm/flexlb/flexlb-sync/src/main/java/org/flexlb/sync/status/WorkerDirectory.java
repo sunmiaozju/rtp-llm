@@ -108,9 +108,8 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     }
 
     /** Exact endpoint for a discovered generation, or {@code null}. */
-    public WorkerEndpoint exactEndpoint(
-            RoleType role, String address, WorkerStatus expectedStatus) {
-        return endpointRegistry.get(role, address, expectedStatus);
+    public WorkerEndpoint getEndpoint(RoleType role, String address, WorkerStatus workerStatus) {
+        return endpointRegistry.get(role, address, workerStatus);
     }
 
     /** Publish the first endpoint for one exact discovered generation. */
@@ -259,12 +258,11 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     public Collection<String> endpointAddressView(RoleType role) {
         return endpointRegistry.endpointAddressView(role);
     }
-
     /**
      * Prefill candidates whose reported DP group has every rank available for routing.
      * The winning address must still be held and identity-checked.
      */
-    public List<EndpointRegistry.PrefillRoutingEntry> prefillRoutingSnapshot(RoleType role) {
+    public List<EndpointRegistry.PrefillRoutingEntry> getPrefillCandidates(RoleType role) {
         List<EndpointRegistry.PrefillRoutingEntry> directory = endpointRegistry.prefillRoutingSnapshot(role);
         if (directory.isEmpty()) {
             return directory;
@@ -301,7 +299,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     /**
      * Decode candidates whose reported DP group has every rank available for routing.
      */
-    public List<DecodeEndpoint.DecodeRoutingView> decodeRoutingSnapshot(String group) {
+    public List<DecodeEndpoint.DecodeRoutingView> getDecodeCandidates(String group) {
         List<DecodeEndpoint.DecodeRoutingView> snapshots = endpointRegistry.decodeRoutingSnapshot();
         if (snapshots.isEmpty()) {
             return snapshots;

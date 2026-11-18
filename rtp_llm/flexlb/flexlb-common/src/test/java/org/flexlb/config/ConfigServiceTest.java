@@ -22,6 +22,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ConfigServiceTest {
 
     @Test
+    void decodeQueueThreadsDefaultToAvailableProcessorsAndAllowOverride() {
+        assertEquals(Runtime.getRuntime().availableProcessors(),
+                ConfigTestFixtures.parse("{}").getDispatcher().getDecodeQueueThreads());
+        assertEquals(4, ConfigTestFixtures.parse("""
+                {"dispatcher":{"decodeQueueThreads":4}}
+                """).getDispatcher().getDecodeQueueThreads());
+    }
+
+    @Test
     void configuresCacheHitFeedbackTimeoutWithDefault() {
         var defaults = JsonUtils.strictValueToTree(ConfigTestFixtures.parse("{}"));
         assertEquals(60_000L, defaults.at("/observability/cacheHit/feedbackTimeoutMs").longValue());

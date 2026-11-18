@@ -10,6 +10,7 @@ import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.service.grpc.EngineGrpcService;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.sync.status.WorkerDirectory;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -30,6 +31,16 @@ import static org.mockito.Mockito.when;
 
 class DpGroupHealthTest {
 
+    @BeforeEach
+    void clearRegisteredEndpoints() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
+    }
+
     @ParameterizedTest
     @CsvSource({"PREFILL,2,1", "PREFILL,2,2", "DECODE,4,1", "DECODE,4,2"})
     void aliveFalseRetiresEveryRankAndRecoveryNeedsAllRanks(RoleType role, int size, long version) {
@@ -46,7 +57,7 @@ class DpGroupHealthTest {
         assertEquals(List.of(other.getLogicalIpPort()), candidates(directory, role));
         for (WorkerStatus rank : ranks) {
             assertFalse(rank.isActiveGeneration());
-            assertNull(directory.exactEndpoint(role, rank.getLogicalIpPort(), rank));
+            assertNull(directory.getEndpoint(role, rank.getLogicalIpPort(), rank));
             assertNull(directory.getStatusBy(role).get(rank.getLogicalIpPort()));
             assertNull(rank.tryBeginStatusPoll());
         }
@@ -132,9 +143,9 @@ class DpGroupHealthTest {
 
     private List<String> candidates(WorkerDirectory directory, RoleType role) {
         if (role == RoleType.DECODE) {
-            return directory.decodeRoutingSnapshot("default").stream().map(view -> view.address()).toList();
+            return directory.getDecodeCandidates("default").stream().map(view -> view.address()).toList();
         }
-        return directory.prefillRoutingSnapshot(role)
+        return directory.getPrefillCandidates(role)
                 .stream()
                 .map(EndpointRegistry.PrefillRoutingEntry::address)
                 .toList();

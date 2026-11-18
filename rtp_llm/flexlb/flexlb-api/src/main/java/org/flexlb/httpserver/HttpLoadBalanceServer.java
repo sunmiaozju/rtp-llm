@@ -3,6 +3,7 @@ package org.flexlb.httpserver;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
+import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.scheduler.RequestScheduler;
 import org.flexlb.balance.scheduler.RequestState;
 import org.flexlb.config.ConfigService;
@@ -55,7 +56,6 @@ public class HttpLoadBalanceServer {
     private final LBStatusConsistencyService lbStatusConsistencyService;
     private final ConfigService configService;
     private final RequestScheduler requestScheduler;
-    private final EndpointRegistry endpointRegistry;
     private final WorkerDirectory workerDirectory;
     private final MasterEngineSynchronizer masterEngineSynchronizer;
     private final ServerScheduleLatencyRecorder serverLatencyRecorder;
@@ -63,7 +63,6 @@ public class HttpLoadBalanceServer {
     public HttpLoadBalanceServer(LBStatusConsistencyService lbStatusConsistencyService,
                                  ConfigService configService,
                                  RequestScheduler requestScheduler,
-                                 EndpointRegistry endpointRegistry,
                                  WorkerDirectory workerDirectory,
                                  @org.springframework.beans.factory.annotation.Autowired(required = false)
                                  MasterEngineSynchronizer masterEngineSynchronizer,
@@ -71,7 +70,6 @@ public class HttpLoadBalanceServer {
         this.lbStatusConsistencyService = lbStatusConsistencyService;
         this.configService = configService;
         this.requestScheduler = requestScheduler;
-        this.endpointRegistry = endpointRegistry;
         this.workerDirectory = workerDirectory;
         this.masterEngineSynchronizer = masterEngineSynchronizer;
         this.serverLatencyRecorder = serverLatencyRecorder;
@@ -258,14 +256,15 @@ public class HttpLoadBalanceServer {
                             .getDecode().getAvailability().getMaxEngineRequests());
 
             List<Map<String, Object>> prefillList = new ArrayList<>();
-            for (Map.Entry<String, PrefillEndpoint> entry
-                    : endpointRegistry.snapshotPrefillEndpoints().entrySet()) {
-                PrefillEndpoint endpoint = entry.getValue();
+            for (WorkerEndpoint worker : EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).values()) {
+                if (!(worker instanceof PrefillEndpoint endpoint)) {
+                    continue;
+                }
                 WorkerStatus.CacheIndexSnapshot cacheIndex =
                         endpoint.getStatus().cacheIndexSnapshot();
                 CacheStatus cacheStatus = cacheIndex.cacheStatus();
                 Map<String, Object> ep = new LinkedHashMap<>();
-                ep.put("ip_port", entry.getKey());
+                ep.put("ip_port", endpoint.ipPort());
                 ep.put("inflight_batches", endpoint.getInflightBatchCount());
                 ep.put("inflight_requests", endpoint.getCommittedRequestCount());
                 ep.put("inflight_route_requests", endpoint.getSingleRequestCount());
@@ -280,12 +279,13 @@ public class HttpLoadBalanceServer {
             result.put("prefill_endpoints", prefillList);
 
             List<Map<String, Object>> decodeList = new ArrayList<>();
-            for (Map.Entry<String, DecodeEndpoint> entry
-                    : endpointRegistry.snapshotDecodeEndpoints().entrySet()) {
-                DecodeEndpoint.LayeredAdmissionView view =
-                        entry.getValue().resourceSnapshot();
+            for (WorkerEndpoint worker : EndpointRegistry.getEndpointsByRole(RoleType.DECODE).values()) {
+                if (!(worker instanceof DecodeEndpoint decodeEndpoint)) {
+                    continue;
+                }
+                DecodeEndpoint.LayeredAdmissionView view = decodeEndpoint.resourceSnapshot();
                 Map<String, Object> ep = new LinkedHashMap<>();
-                ep.put("ip_port", entry.getKey());
+                ep.put("ip_port", decodeEndpoint.ipPort());
                 ep.put("reserved_total", view.reserved().size());
                 ep.put("master_queued", view.queuedCount());
                 ep.put("engine_may_have_seen",

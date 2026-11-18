@@ -19,7 +19,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InOrder;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -205,8 +204,6 @@ class RequestOrchestratorsTest {
                 new QueueCapacity(), new ModelMetaConfig(new ServiceRoute())).report();
 
         verify(lifecycle, never()).trackedRequestStats();
-        verify(registry, never()).snapshotPrefillEndpoints();
-        verify(registry, never()).snapshotDecodeEndpoints();
     }
 
     @Test
@@ -221,31 +218,36 @@ class RequestOrchestratorsTest {
         PrefillEndpoint healthyPrefill = mock(PrefillEndpoint.class);
         PrefillEndpoint pdFusion = mock(PrefillEndpoint.class);
         DecodeEndpoint decode = mock(DecodeEndpoint.class);
-        Map<String, PrefillEndpoint> prefill = new LinkedHashMap<>();
-        prefill.put("p1", failingPrefill);
-        prefill.put("p2", healthyPrefill);
+        when(failingPrefill.ipPort()).thenReturn("p1");
+        when(healthyPrefill.ipPort()).thenReturn("p2");
+        when(pdFusion.ipPort()).thenReturn("f1");
+        when(decode.ipPort()).thenReturn("d1");
         when(lifecycle.trackedRequestStats()).thenReturn(new RequestRegistry.TrackedRequestStats(7, 2, 300L));
-        when(registry.snapshotPrefillEndpoints()).thenReturn(prefill);
-        when(registry.snapshotPdFusionEndpoints()).thenReturn(Map.of("f1", pdFusion));
-        when(registry.snapshotDecodeEndpoints()).thenReturn(Map.of("d1", decode));
+        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).put("p1", failingPrefill);
+        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).put("p2", healthyPrefill);
+        EndpointRegistry.getEndpointsByRole(RoleType.PDFUSION).put("f1", pdFusion);
+        EndpointRegistry.getEndpointsByRole(RoleType.DECODE).put("d1", decode);
         doThrow(new RuntimeException("metrics unavailable"))
                 .when(failingPrefill).reportBatchMetrics(reporter);
+        try {
+            new SchedulerRuntime(lifecycle, registry, reporter, admissionReporter, mock(ConfigService.class),
+                    new QueueCapacity(), new ModelMetaConfig(new ServiceRoute())).report();
 
-        new SchedulerRuntime(lifecycle, registry, reporter, admissionReporter, mock(ConfigService.class),
-                new QueueCapacity(), new ModelMetaConfig(new ServiceRoute())).report();
-
-        verify(lifecycle).trackedRequestStats();
-        verify(reporter).reportSchedulerInflightMaxAgeMs(300L);
-        verify(reporter).reportTrackedRequestCount(7);
-        verify(reporter).reportTrackedRequestCount(RoleType.ENCODER, 2);
-        verify(failingPrefill).reportBatchMetrics(reporter);
-        verify(healthyPrefill).reportBatchMetrics(reporter);
-        verify(pdFusion).reportBatchMetrics(reporter);
-        verify(decode).reportBatchMetrics(reporter);
-        verify(admissionReporter).reportPrefillQueueDepth("p1", 0);
-        verify(admissionReporter).reportPrefillQueueDepth("p2", 0);
-        verify(admissionReporter, never()).reportPrefillQueueDepth("f1", 0);
-        verify(decode).reportAdmissionMetrics(admissionReporter);
+            verify(lifecycle).trackedRequestStats();
+            verify(reporter).reportSchedulerInflightMaxAgeMs(300L);
+            verify(reporter).reportTrackedRequestCount(7);
+            verify(reporter).reportTrackedRequestCount(RoleType.ENCODER, 2);
+            verify(failingPrefill).reportBatchMetrics(reporter);
+            verify(healthyPrefill).reportBatchMetrics(reporter);
+            verify(pdFusion).reportBatchMetrics(reporter);
+            verify(decode).reportBatchMetrics(reporter);
+            verify(admissionReporter).reportPrefillQueueDepth("p1", 0);
+            verify(admissionReporter).reportPrefillQueueDepth("p2", 0);
+            verify(admissionReporter, never()).reportPrefillQueueDepth("f1", 0);
+            verify(decode).reportAdmissionMetrics(admissionReporter);
+        } finally {
+            clearEndpointRegistry();
+        }
     }
 
     @Test
@@ -346,20 +348,24 @@ class RequestOrchestratorsTest {
         PrefillEndpoint second = mock(PrefillEndpoint.class);
         when(first.queuedRequestCountsByPriority()).thenReturn(Map.of(50, 2, 70, 1));
         when(second.queuedRequestCountsByPriority()).thenReturn(Map.of(50, 3));
-        when(endpoints.snapshotPrefillEndpoints()).thenReturn(Map.of("p1", first, "p2", second));
+        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).put("p1", first);
+        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).put("p2", second);
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
         SchedulerRuntime runtime = new SchedulerRuntime(mock(RequestRegistry.class), endpoints, reporter,
                 mock(RequestSchedulerReporter.class), mock(ConfigService.class), new QueueCapacity(),
                 new ModelMetaConfig(new ServiceRoute()));
-
-        runtime.report();
-        verify(reporter).reportBatcherQueueDepthByPriority("PREFILL", null, 50, 5);
-        verify(reporter).reportBatcherQueueDepthByPriority("PREFILL", null, 70, 1);
-        org.mockito.Mockito.clearInvocations(reporter);
-        when(endpoints.snapshotPrefillEndpoints()).thenReturn(Map.of());
-        runtime.report();
-        verify(reporter, never()).reportBatcherQueueDepthByPriority(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(), anyInt(), anyInt());
+        try {
+            runtime.report();
+            verify(reporter).reportBatcherQueueDepthByPriority("PREFILL", null, 50, 5);
+            verify(reporter).reportBatcherQueueDepthByPriority("PREFILL", null, 70, 1);
+            org.mockito.Mockito.clearInvocations(reporter);
+            EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).clear();
+            runtime.report();
+            verify(reporter, never()).reportBatcherQueueDepthByPriority(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.any(), anyInt(), anyInt());
+        } finally {
+            clearEndpointRegistry();
+        }
     }
 
     @Test
@@ -367,15 +373,24 @@ class RequestOrchestratorsTest {
         EndpointRegistry endpoints = mock(EndpointRegistry.class);
         PrefillEndpoint empty = mock(PrefillEndpoint.class);
         when(empty.queuedRequestCountsByPriority()).thenReturn(Map.of());
-        when(endpoints.snapshotPrefillEndpoints()).thenReturn(Map.of("p1", empty));
+        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).put("p1", empty);
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
         SchedulerRuntime runtime = new SchedulerRuntime(mock(RequestRegistry.class), endpoints, reporter,
                 mock(RequestSchedulerReporter.class), mock(ConfigService.class), new QueueCapacity(),
                 new ModelMetaConfig(new ServiceRoute()));
+        try {
+            runtime.report();
 
-        runtime.report();
+            verify(reporter, never()).reportBatcherQueueDepthByPriority(org.mockito.ArgumentMatchers.anyString(),
+                    org.mockito.ArgumentMatchers.any(), anyInt(), anyInt());
+        } finally {
+            clearEndpointRegistry();
+        }
+    }
 
-        verify(reporter, never()).reportBatcherQueueDepthByPriority(
-                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.any(), anyInt(), anyInt());
+    private static void clearEndpointRegistry() {
+        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).clear();
+        EndpointRegistry.getEndpointsByRole(RoleType.PDFUSION).clear();
+        EndpointRegistry.getEndpointsByRole(RoleType.DECODE).clear();
     }
 }

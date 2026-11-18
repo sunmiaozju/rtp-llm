@@ -3,6 +3,7 @@ package org.flexlb.balance.scheduler;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
+import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
@@ -174,40 +175,27 @@ final class SchedulerRuntime {
     }
 
     private void reportRoutingEndpoints(RoleType role) {
-        final Map<String, PrefillEndpoint> routingEndpoints;
-        try {
-            routingEndpoints = role == RoleType.PREFILL
-                    ? endpoints.snapshotPrefillEndpoints() : endpoints.snapshotPdFusionEndpoints();
-        } catch (RuntimeException failure) {
-            warnIsolated(
-                    "Failed to snapshot " + role + " endpoints for metrics",
-                    failure);
-            return;
-        }
         Map<Integer, Integer> queueSizes = new HashMap<>();
-        for (Map.Entry<String, PrefillEndpoint> entry : routingEndpoints.entrySet()) {
-            try {
-                Map<Integer, Integer> endpointQueueSizes = entry.getValue().queuedRequestCountsByPriority();
-                endpointQueueSizes.forEach((priority, size) -> queueSizes.merge(priority, size, Integer::sum));
-            } catch (RuntimeException failure) {
-                warnIsolated("Failed to read priority queue metrics: endpoint=" + entry.getKey(), failure);
+        for (WorkerEndpoint worker : EndpointRegistry.getEndpointsByRole(role).values()) {
+            if (!(worker instanceof PrefillEndpoint endpoint)) {
+                continue;
             }
             try {
-                entry.getValue().reportBatchMetrics(reporter);
+                Map<Integer, Integer> endpointQueueSizes = endpoint.queuedRequestCountsByPriority();
+                endpointQueueSizes.forEach((priority, size) -> queueSizes.merge(priority, size, Integer::sum));
             } catch (RuntimeException failure) {
-                warnIsolated(
-                        "Failed to report " + role + " endpoint metrics: endpoint="
-                                + entry.getKey(),
-                        failure);
+                warnIsolated("Failed to read priority queue metrics: endpoint=" + endpoint.ipPort(), failure);
+            }
+            try {
+                endpoint.reportBatchMetrics(reporter);
+            } catch (RuntimeException failure) {
+                warnIsolated("Failed to report " + role + " endpoint metrics: endpoint=" + endpoint.ipPort(), failure);
             }
             if (role == RoleType.PREFILL) {
                 try {
-                    admissionReporter.reportPrefillQueueDepth(
-                            entry.getKey(), entry.getValue().queuedRequestCount());
+                    admissionReporter.reportPrefillQueueDepth(endpoint.ipPort(), endpoint.queuedRequestCount());
                 } catch (RuntimeException failure) {
-                    warnIsolated(
-                            "Failed to report Prefill admission metrics: endpoint="
-                                    + entry.getKey(), failure);
+                    warnIsolated("Failed to report Prefill admission metrics: endpoint=" + endpoint.ipPort(), failure);
                 }
             }
         }
@@ -222,31 +210,19 @@ final class SchedulerRuntime {
     }
 
     private void reportDecodeEndpoints() {
-        final Map<String, DecodeEndpoint> endpoints;
-        try {
-            endpoints = this.endpoints.snapshotDecodeEndpoints();
-        } catch (RuntimeException failure) {
-            warnIsolated(
-                    "Failed to snapshot Decode endpoints for metrics",
-                    failure);
-            return;
-        }
-        for (Map.Entry<String, DecodeEndpoint> entry : endpoints.entrySet()) {
-            try {
-                entry.getValue().reportBatchMetrics(reporter);
-            } catch (RuntimeException failure) {
-                warnIsolated(
-                        "Failed to report Decode endpoint metrics: endpoint="
-                                + entry.getKey(),
-                        failure);
+        for (WorkerEndpoint worker : EndpointRegistry.getEndpointsByRole(RoleType.DECODE).values()) {
+            if (!(worker instanceof DecodeEndpoint endpoint)) {
+                continue;
             }
             try {
-                entry.getValue().reportAdmissionMetrics(admissionReporter);
+                endpoint.reportBatchMetrics(reporter);
             } catch (RuntimeException failure) {
-                warnIsolated(
-                        "Failed to report Decode admission metrics: endpoint="
-                                + entry.getKey(),
-                        failure);
+                warnIsolated("Failed to report Decode endpoint metrics: endpoint=" + endpoint.ipPort(), failure);
+            }
+            try {
+                endpoint.reportAdmissionMetrics(admissionReporter);
+            } catch (RuntimeException failure) {
+                warnIsolated("Failed to report Decode admission metrics: endpoint=" + endpoint.ipPort(), failure);
             }
         }
     }

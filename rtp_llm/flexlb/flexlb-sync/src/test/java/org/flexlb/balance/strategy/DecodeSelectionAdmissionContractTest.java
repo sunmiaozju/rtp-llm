@@ -14,6 +14,7 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.sync.status.WorkerDirectory;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -36,6 +37,16 @@ class DecodeSelectionAdmissionContractTest {
     private static final String FREE_IP = "127.0.0.2";
     private static final long PROMPT_TOKENS = 100L;
     private static final long EXPECTED_TOKENS = 300L;
+
+    @BeforeEach
+    void clearEndpointRegistry() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
+    }
 
     @ParameterizedTest
     @MethodSource("preemptionCases")

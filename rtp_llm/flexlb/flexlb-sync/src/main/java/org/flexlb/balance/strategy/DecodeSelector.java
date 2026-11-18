@@ -47,7 +47,7 @@ public class DecodeSelector {
                                                           DecodeRequirement request,
                                                           String group) {
         for (int attempt = 0; attempt < MAX_SELECTION_ATTEMPTS; attempt++) {
-            List<DecodeRoutingView> decodeWorkerViews = workerDirectory.decodeRoutingSnapshot(group);
+            List<DecodeRoutingView> decodeWorkerViews = workerDirectory.getDecodeCandidates(group);
             if (decodeWorkerViews.isEmpty()) {
                 return PlacementResult.blocked(RoleType.DECODE);
             }

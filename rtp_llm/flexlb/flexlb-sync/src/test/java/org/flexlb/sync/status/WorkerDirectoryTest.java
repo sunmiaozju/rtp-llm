@@ -42,6 +42,12 @@ class WorkerDirectoryTest {
 
     @BeforeEach
     void setUp() {
+        for (RoleType role : RoleType.values()) {
+            var endpoints = EndpointRegistry.getEndpointsByRole(role);
+            if (endpoints != null) {
+                endpoints.clear();
+            }
+        }
         ConfigService configService = Mockito.mock(ConfigService.class);
         Mockito.when(configService.loadBalanceConfig())
                 .thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
@@ -105,7 +111,7 @@ class WorkerDirectoryTest {
                 RoleType.PREFILL, first.getLogicalIpPort(), first);
 
         assertEquals(List.of(first.getLogicalIpPort()),
-                workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL)
+                workerDirectory.getPrefillCandidates(RoleType.PREFILL)
                         .stream()
                         .map(EndpointRegistry.PrefillRoutingEntry::address)
                         .toList());
@@ -117,12 +123,12 @@ class WorkerDirectoryTest {
         DecodeMember rankOne = decodeMember("routing-a", "10.0.0.1", 1, 2, 8401);
         publishDecode(rankZero);
 
-        assertTrue(workerDirectory.decodeRoutingSnapshot("routing-a").isEmpty());
+        assertTrue(workerDirectory.getDecodeCandidates("routing-a").isEmpty());
         assertEquals(2, workerDirectory.getWorkerStatuses(RoleType.DECODE, "routing-a").size());
 
         publishDecode(rankOne);
 
-        assertEquals(2, workerDirectory.decodeRoutingSnapshot("routing-a").size());
+        assertEquals(2, workerDirectory.getDecodeCandidates("routing-a").size());
     }
 
     @Test
@@ -134,8 +140,8 @@ class WorkerDirectoryTest {
         Mockito.when(fixedRegistry.decodeRoutingSnapshot()).thenReturn(snapshots);
         WorkerDirectory directory = new WorkerDirectory(fixedRegistry);
 
-        assertSame(snapshots, directory.decodeRoutingSnapshot("routing-a"));
-        assertSame(snapshots, directory.decodeRoutingSnapshot(null));
+        assertSame(snapshots, directory.getDecodeCandidates("routing-a"));
+        assertSame(snapshots, directory.getDecodeCandidates(null));
         assertThrows(UnsupportedOperationException.class, () -> snapshots.removeFirst());
     }
 
@@ -148,14 +154,14 @@ class WorkerDirectoryTest {
         }
         var expected = registry.decodeRoutingSnapshot().stream()
                 .filter(view -> "routing-a".equals(view.topology().group())).toList();
-        var snapshots = workerDirectory.decodeRoutingSnapshot("routing-a");
+        var snapshots = workerDirectory.getDecodeCandidates("routing-a");
 
         assertEquals(expected, snapshots);
         assertThrows(UnsupportedOperationException.class, () -> snapshots.removeFirst());
         publishDecode(decodeMember("routing-a", null, 0, 1, 8463));
         assertEquals(expected, snapshots);
-        assertEquals(3, workerDirectory.decodeRoutingSnapshot("routing-a").size());
-        assertTrue(workerDirectory.decodeRoutingSnapshot("missing-group").isEmpty());
+        assertEquals(3, workerDirectory.getDecodeCandidates("routing-a").size());
+        assertTrue(workerDirectory.getDecodeCandidates("missing-group").isEmpty());
     }
 
     @Test
@@ -179,7 +185,7 @@ class WorkerDirectoryTest {
         detached.retireAndAwait();
 
         assertEquals(List.of(independent.status().getLogicalIpPort()),
-                workerDirectory.decodeRoutingSnapshot("routing-a").stream().map(view -> view.address()).toList());
+                workerDirectory.getDecodeCandidates("routing-a").stream().map(view -> view.address()).toList());
         assertEquals(3, workerDirectory.getWorkerStatuses(RoleType.DECODE, "routing-a").size());
         assertSame(rankOne.status(), workerDirectory.getStatusBy(RoleType.DECODE)
                 .get(rankOne.status().getLogicalIpPort()));
@@ -196,11 +202,11 @@ class WorkerDirectoryTest {
         publishDecode(completeOne);
         publishDecode(otherPolicy);
 
-        List<String> eligibleAddresses = workerDirectory.decodeRoutingSnapshot("routing-a")
-                .stream().map(view -> view.address()).sorted().toList();
+        List<String> eligibleAddresses =
+                workerDirectory.getDecodeCandidates("routing-a").stream().map(view -> view.address()).sorted().toList();
         assertEquals(List.of(completeZero.status().getLogicalIpPort(), completeOne.status().getLogicalIpPort())
                 .stream().sorted().toList(), eligibleAddresses);
-        assertEquals(3, workerDirectory.decodeRoutingSnapshot(null).size());
+        assertEquals(3, workerDirectory.getDecodeCandidates(null).size());
     }
 
     @Test
@@ -209,7 +215,7 @@ class WorkerDirectoryTest {
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 2, 8431));
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 2, 8432));
 
-        assertTrue(workerDirectory.decodeRoutingSnapshot("routing-a").isEmpty());
+        assertTrue(workerDirectory.getDecodeCandidates("routing-a").isEmpty());
     }
 
     @Test
@@ -218,7 +224,7 @@ class WorkerDirectoryTest {
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 3, 8441));
         publishDecode(decodeMember("routing-a", "10.0.0.1", 2, 3, 8442));
 
-        assertTrue(workerDirectory.decodeRoutingSnapshot("routing-a").isEmpty());
+        assertTrue(workerDirectory.getDecodeCandidates("routing-a").isEmpty());
     }
 
     @Test
@@ -227,12 +233,12 @@ class WorkerDirectoryTest {
         PrefillMember rankOne = prefillMember("routing-a", "10.0.1.1", 1, 2, 8501);
         publishPrefill(rankZero);
 
-        assertTrue(workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL).isEmpty());
+        assertTrue(workerDirectory.getPrefillCandidates(RoleType.PREFILL).isEmpty());
         assertEquals(2, workerDirectory.getWorkerStatuses(RoleType.PREFILL, "routing-a").size());
 
         publishPrefill(rankOne);
 
-        assertEquals(2, workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL).size());
+        assertEquals(2, workerDirectory.getPrefillCandidates(RoleType.PREFILL).size());
     }
 
     @Test
@@ -244,7 +250,7 @@ class WorkerDirectoryTest {
         publishPrefill(rankOne);
         publishPrefill(independent);
 
-        assertEquals(3, workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL).size());
+        assertEquals(3, workerDirectory.getPrefillCandidates(RoleType.PREFILL).size());
 
         EndpointRegistry.DetachedGeneration detached;
         rankOne.status().lock.lock();
@@ -261,16 +267,18 @@ class WorkerDirectoryTest {
                 LoggerFactory.getLogger(WorkerDirectoryTest.class));
 
         assertEquals(List.of(independent.status().getLogicalIpPort()),
-                workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL).stream()
-                        .map(EndpointRegistry.PrefillRoutingEntry::address).toList());
+                workerDirectory.getPrefillCandidates(RoleType.PREFILL)
+                        .stream()
+                        .map(EndpointRegistry.PrefillRoutingEntry::address)
+                        .toList());
 
         publishPrefill(prefillMember("routing-a", "10.0.1.2", 1, 2, 8511));
 
-        assertEquals(1, workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL).size());
+        assertEquals(1, workerDirectory.getPrefillCandidates(RoleType.PREFILL).size());
 
         publishPrefill(prefillMember("routing-a", "10.0.1.2", 0, 2, 8510));
 
-        assertEquals(3, workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL).size());
+        assertEquals(3, workerDirectory.getPrefillCandidates(RoleType.PREFILL).size());
     }
 
     @ParameterizedTest
@@ -297,7 +305,7 @@ class WorkerDirectoryTest {
             groupRetiringBeforeDrain.set(List.of(first, second, third)
                     .stream()
                     .allMatch(member -> !member.isActiveGeneration()
-                            && workerDirectory.exactEndpoint(role, member.getLogicalIpPort(), member) == null
+                            && workerDirectory.getEndpoint(role, member.getLogicalIpPort(), member) == null
                             && workerDirectory.getStatusBy(role).get(member.getLogicalIpPort()) == member
                             && !member.lock.isHeldByCurrentThread()));
             return invocation.callRealMethod();
@@ -314,7 +322,7 @@ class WorkerDirectoryTest {
                 workerDirectory.getStatusBy(role));
         assertEquals(2, workerDirectory.routingCapacity(role));
         assertTrue(otherRole.isActiveGeneration());
-        assertNotNull(workerDirectory.exactEndpoint(otherRole.getRole(), otherRole.getLogicalIpPort(), otherRole));
+        assertNotNull(workerDirectory.getEndpoint(otherRole.getRole(), otherRole.getLogicalIpPort(), otherRole));
         if (role.requiresCacheKeys()) {
             for (WorkerStatus member : List.of(first, second, third)) {
                 Mockito.verify(cache).removeEngineBlockCache(member.getLogicalIpPort());
@@ -354,8 +362,11 @@ class WorkerDirectoryTest {
         publishPrefill(completeZero);
         publishPrefill(completeOne);
 
-        List<String> routableAddresses = workerDirectory.prefillRoutingSnapshot(RoleType.PREFILL)
-                .stream().map(EndpointRegistry.PrefillRoutingEntry::address).sorted().toList();
+        List<String> routableAddresses = workerDirectory.getPrefillCandidates(RoleType.PREFILL)
+                .stream()
+                .map(EndpointRegistry.PrefillRoutingEntry::address)
+                .sorted()
+                .toList();
         assertEquals(List.of(completeZero.status().getLogicalIpPort(), completeOne.status().getLogicalIpPort())
                 .stream().sorted().toList(), routableAddresses);
     }

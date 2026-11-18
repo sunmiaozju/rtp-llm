@@ -25,6 +25,10 @@ public final class DispatcherConfig {
     }
 
     private Type type = Type.BATCH;
+    /**
+     * Decode 队列消费者线程数，默认 JVM 当前可用的 CPU 核数，只在启动时读取，修改后需重启。
+     */
+    private int decodeQueueThreads = Runtime.getRuntime().availableProcessors();
     private int maxInflightPerPrefillWorker = DEFAULT_MAX_INFLIGHT_PER_PREFILL_WORKER;
     /** Shared waiting capacity = endpoint count * in-flight limit * this multiplier. */
     private int prefillSubqueueLimitMultiplier = DEFAULT_PREFILL_SUBQUEUE_LIMIT_MULTIPLIER;
@@ -32,9 +36,9 @@ public final class DispatcherConfig {
     /** BATCH only: engine wait for FetchResponse attachment, not generation duration. */
     private int fetchAttachTimeoutMs = DEFAULT_FETCH_ATTACH_TIMEOUT_MS;
     /**
-     * NON_BATCH_V2：Prefill 因 KV 不够、或 Decode 放不下队头时，后面放得下的请求可以先走。
-     * 队头在当前阶段等到这个时间后改为严格按顺序。Prefill 从进入机器队列起算，Decode 从 Prefill dispatch 起算。
-     * 0 表示一直严格按顺序。支持热更新，Prefill 和 Decode 队列每一轮都读最新值。
+     * NON_BATCH_V2：Prefill 因 KV 不够时，后面放得下的请求可以先走。
+     * 队头从进入机器队列起等到这个时间后改为严格按顺序。
+     * 0 表示一直严格按顺序。支持热更新，Prefill 队列每一轮都读最新值。
      */
     private long dispatchStarvationThresholdMs = DEFAULT_DISPATCH_STARVATION_THRESHOLD_MS;
     /**
@@ -60,6 +64,9 @@ public final class DispatcherConfig {
     void validate() {
         if (type == null) {
             throw new ConfigValidationException("dispatcher.type", "is required");
+        }
+        if (decodeQueueThreads <= 0) {
+            throw new ConfigValidationException("dispatcher.decodeQueueThreads", "must be greater than zero");
         }
         if (maxInflightPerPrefillWorker <= 0) {
             throw new ConfigValidationException("dispatcher.maxInflightPerPrefillWorker",

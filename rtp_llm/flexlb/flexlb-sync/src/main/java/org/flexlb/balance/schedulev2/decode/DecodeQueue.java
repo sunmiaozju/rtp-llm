@@ -2,61 +2,90 @@ package org.flexlb.balance.schedulev2.decode;
 
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestOrder;
+import org.flexlb.balance.schedulev2.request.Stage;
 
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 
 /**
- * 全局 Decode 队列，保存 Prefill dispatch 后尚未发布的请求，分两部分：
- * <ul>
- * <li>waiting：还没选 Decode 的请求（DECODE_WAITING）；</li>
- * <li>reserved：已经在某台 Decode 上 reserve、等这台 Decode 给 permit 的请求（DECODE_RESERVED）；</li>
- * </ul>
- * waiting 和 reserved 按 {@link RequestOrder} 排序。只有 Decode 队列线程会出队，其他线程只会加入或移除 waiting。
- * <p>
- * reserved 里的请求结束时，别的线程不把它移出 reserved，由 Decode 队列线程扫到后归还 reserve 再移除。
- * 这样 V2 对 Decode reserve 的操作（reserve、拿 permit、dispatch、归还）都在 Decode 队列线程里，互相不会撞上。
+ * 全局 Decode 等待队列，按 {@link RequestOrder} 排序。
+ * 原子 remove 成功的消费者负责检查 Prefill 名额；名额不足就按原顺序放回，并继续尝试后面的请求。
+ * 已取得名额的请求不在集合中，由该消费者负责选 Decode、预占、发布或归还。
+ * 无可消费请求时阻塞等待通知；队列扫描和容量检查不持有通知锁。
  */
 public final class DecodeQueue {
 
     private final ConcurrentSkipListSet<Request> waiting;
-    private final ConcurrentSkipListSet<Request> reserved;
+    private volatile long changeVersion;
 
     public DecodeQueue(boolean priorityOrdering) {
         this.waiting = new ConcurrentSkipListSet<>(RequestOrder.of(priorityOrdering));
-        this.reserved = new ConcurrentSkipListSet<>(RequestOrder.of(priorityOrdering));
     }
 
     public void addWaiting(Request request) {
-        waiting.add(request);
+        addBack(request);
+        wake();
     }
 
     public void removeWaiting(Request request) {
         waiting.remove(request);
     }
 
-    public Iterator<Request> waitingIterator() {
-        return waiting.iterator();
-    }
-
     public int waitingCount() {
         return waiting.size();
     }
 
-    public void addReserved(Request request) {
-        reserved.add(request);
+    public Request take(Predicate<Request> tryAcquirePrefill, BooleanSupplier running) throws InterruptedException {
+        while (running.getAsBoolean()) {
+            // 1. 扫描前记下通知版本，扫描期间资源变化后不应再睡眠。
+            long version = changeVersion;
+            Iterator<Request> iterator = waiting.iterator();
+            while (running.getAsBoolean() && iterator.hasNext()) {
+                Request request = iterator.next();
+                // 2. remove 成功才认领；其他消费者已经取走的请求不能再获取 Prefill 名额。
+                if (!waiting.remove(request)) {
+                    continue;
+                }
+                // 3. Prefill 名额已取得才交给消费者等待 Decode，名额不足的请求不阻塞后续请求。
+                if (tryAcquirePrefill.test(request)) {
+                    return request;
+                }
+                // 4. 排序键不变，放回原位置；本轮迭代器继续向后，不重新读取这个队头。
+                addBack(request);
+            }
+            if (running.getAsBoolean()) {
+                // 5. 一整轮没有可消费请求才等待，不持有集合锁或临时 Prefill 名额。
+                awaitChange(version);
+            }
+        }
+        return null;
     }
 
-    public void removeReserved(Request request) {
-        reserved.remove(request);
+    private void addBack(Request request) {
+        if (request.stage() != Stage.DECODE_WAITING) {
+            return;
+        }
+        waiting.add(request);
     }
 
-    public Iterator<Request> reservedIterator() {
-        return reserved.iterator();
+    public long changeVersion() {
+        return changeVersion;
     }
 
-    public int reservedCount() {
-        return reserved.size();
+    public synchronized void wake() {
+        changeVersion++;
+        notifyAll();
+    }
+
+    /**
+     * 版本检查避免检查容量与开始等待之间丢通知；50ms 兜底未发送通知的变化。
+     */
+    public synchronized void awaitChange(long version) throws InterruptedException {
+        if (version == changeVersion) {
+            wait(50L);
+        }
     }
 
 }
