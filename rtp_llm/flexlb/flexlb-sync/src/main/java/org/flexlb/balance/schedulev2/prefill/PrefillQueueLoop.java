@@ -198,16 +198,7 @@ public final class PrefillQueueLoop {
         }
         queue.removeWaiting(request);
         request.setPrefillDecidedAtMs(System.currentTimeMillis());
-        reportSelection(choice);
         sendToDecodeQueue.accept(request);
-    }
-
-    private static void reportSelection(SelectedPrefill choice) {
-        try {
-            choice.commitTelemetry().run();
-        } catch (RuntimeException failure) {
-            Logger.warn("V2 prefill selection telemetry failed: engine={}", choice.endpoint().ipPort(), failure);
-        }
     }
 
     /**

@@ -17,6 +17,7 @@ import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.RoutingConfig;
+import org.flexlb.dao.BalanceMetrics.PrefillRouteMetrics;
 import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.service.monitor.EngineHealthReporter;
@@ -118,6 +119,38 @@ class PreparedPrefillSelectionTest {
         assertSame(second, b.selectedPrefill().endpoint());
         assertEquals(15L, b.selectedPrefill().serverStatus().getPrefillTime());
         verify(cache, times(2)).findMatchingEngines(any());
+    }
+
+    @Test
+    void reselectionReplacesBothRoutingHitCountsAndAffinityDiagnostics() {
+        RoutingConfig.CacheAffinityConfig affinity = new RoutingConfig.CacheAffinityConfig();
+        affinity.setMaxExtraTtftMs(0L);
+        affinity.setMinPrefixHitPercent(0.0);
+        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        when(cache.findMatchingEngines(any())).thenReturn(
+                new CacheMatchResult(Map.of(first.ipPort(), new HostCacheMatch(2L, 2L),
+                        second.ipPort(), new HostCacheMatch(8L, 8L)), CacheMatchSource.KVCM, 0L, 100L),
+                new CacheMatchResult(Map.of(second.ipPort(), new HostCacheMatch(10L, 10L)),
+                        CacheMatchSource.KVCM, 0L, 100L));
+        Request request = request("1");
+        request.ctx().getRequest().setSeqLen(1_000L);
+
+        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
+            assertSame(first, SelectedPrefill.from(selected, request.seqLen()).endpoint());
+        }
+        assertEquals(new PrefillRouteMetrics(200L, 800L, "OVER_CAP", 5L),
+                request.ctx().getMetrics().getPrefillRouteMetrics());
+
+        first.close();
+        PrefillInputs refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", refreshed).value()) {
+            SelectedPrefill choice = SelectedPrefill.from(selected, request.seqLen());
+            assertSame(second, choice.endpoint());
+            assertEquals(900L, choice.hitCacheTokens());
+        }
+        assertEquals(new PrefillRouteMetrics(1_000L, 1_000L, "FASTEST_IS_CACHE_BEST", null),
+                request.ctx().getMetrics().getPrefillRouteMetrics());
     }
 
     @Test

@@ -9,6 +9,7 @@ import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.dao.BalanceMetrics;
+import org.flexlb.dao.BalanceMetrics.PrefillRouteMetrics;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.enums.DecodeTaskPhase;
@@ -34,6 +35,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_VICTIM_COUNT;
+import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_DECISION;
+import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
+import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
 
 /**
  * V2 的实际等待人数与出队检查结果。人数按请求阶段采样，不把共享名额当作 Prefill 队列长度。
@@ -144,8 +149,9 @@ public class V2QueueReporter {
         int priority = request.priority();
         String reason = rejectionReason(request, response, progress.stage());
         BalanceMetrics metrics = request.ctx().getMetrics();
+        boolean succeeded = response != null && response.isSuccess();
         try {
-            reportExecutor.execute(() -> reportCompletion(progress, priority, reason, metrics));
+            reportExecutor.execute(() -> reportCompletion(progress, priority, reason, metrics, succeeded));
         } catch (RejectedExecutionException rejected) {
             if (!reportExecutor.isShutdown()) {
                 reportsDroppedQueueFull.incrementAndGet();
@@ -170,7 +176,11 @@ public class V2QueueReporter {
         return stage == Stage.CANCELLED ? "REQUEST_CANCELLED" : "UNKNOWN";
     }
 
-    private void reportCompletion(QueueProgress progress, int priority, String reason, BalanceMetrics metrics) {
+    private void reportCompletion(QueueProgress progress,
+                                  int priority,
+                                  String reason,
+                                  BalanceMetrics metrics,
+                                  boolean succeeded) {
         reportBlockCounts(metrics, priority);
         if (reason != null) {
             report(REJECTED, blockTags(queueName(progress.previousStage()), reason, priority), 1L);
@@ -179,6 +189,24 @@ public class V2QueueReporter {
         report(WAIT, FlexMetricTags.of("queue", "main", "result", result), progress.mainMs());
         report(WAIT, FlexMetricTags.of("queue", "prefill", "result", result), progress.prefillMs());
         report(WAIT, FlexMetricTags.of("queue", "decode", "result", result), progress.decodeMs());
+        if (succeeded) {
+            PrefillRouteMetrics sample = metrics.getPrefillRouteMetrics();
+            if (sample != null) {
+                reportPrefillRouteMetrics(sample);
+            }
+        }
+    }
+
+    private void reportPrefillRouteMetrics(PrefillRouteMetrics sample) {
+        FlexMetricTags tags = FlexMetricTags.of();
+        report(CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS, tags, sample.selectedHitTokens());
+        report(CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS, tags, sample.candidateMaxHitTokens());
+        if (sample.affinityDecision() != null) {
+            report(CACHE_AFFINITY_DECISION, FlexMetricTags.of("decision", sample.affinityDecision()), 1L);
+        }
+        if (sample.overCapMs() != null) {
+            report(CACHE_AFFINITY_OVER_CAP_MS, tags, sample.overCapMs());
+        }
     }
 
     private void reportBlockCounts(BalanceMetrics metrics, int priority) {

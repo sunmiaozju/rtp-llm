@@ -10,6 +10,7 @@ import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
+import org.flexlb.dao.BalanceMetrics.PrefillRouteMetrics;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
@@ -23,6 +24,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_DECISION;
+import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
+import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -242,6 +247,45 @@ class V2QueueReporterTest {
     }
 
     @Test
+    void successfulCompletionReportsOnlyLatestPrefillSampleWithoutRoleTags() throws Exception {
+        Request request = add("1");
+        var metrics = request.ctx().getMetrics();
+        metrics.setPrefillRouteMetrics(new PrefillRouteMetrics(900L, 1_000L, "CACHE_LEADER", null));
+        metrics.setPrefillRouteMetrics(new PrefillRouteMetrics(128L, 256L, "OVER_CAP", 15L));
+        request.future().thenAccept(response -> reporter.completed(request, response));
+        assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
+        assertTrue(request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING));
+        assertTrue(request.publish(Stage.DECODE_WAITING, List.of()));
+        finishReports();
+
+        verify(monitor).report(CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS, FlexMetricTags.of(), 128.0);
+        verify(monitor).report(CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS, FlexMetricTags.of(), 256.0);
+        verify(monitor).report(CACHE_AFFINITY_DECISION, FlexMetricTags.of("decision", "OVER_CAP"), 1.0);
+        verify(monitor).report(CACHE_AFFINITY_OVER_CAP_MS, FlexMetricTags.of(), 15.0);
+        verify(monitor, times(3)).report(eq(V2QueueReporter.WAIT), any(), anyDouble());
+        org.mockito.Mockito.verifyNoMoreInteractions(monitor);
+    }
+
+    @Test
+    void failedCancelledAndTimedOutRequestsDoNotReportPrefillSamples() throws Exception {
+        Request failed = add("1");
+        Request cancelled = add("2");
+        Request timedOut = add("3");
+        for (Request request : List.of(failed, cancelled, timedOut)) {
+            request.ctx().getMetrics().setPrefillRouteMetrics(new PrefillRouteMetrics(128L, 256L, "OVER_CAP", 15L));
+            request.future().thenAccept(response -> reporter.completed(request, response));
+        }
+        assertTrue(failed.fail(StrategyErrorType.DISPATCH_FAILED, "test failure"));
+        assertTrue(cancelled.cancel(CancelReason.CLIENT_CANCELLED));
+        assertTrue(timedOut.cancel(CancelReason.DEADLINE_EXCEEDED));
+        finishReports();
+
+        verify(monitor, times(3)).report(eq(V2QueueReporter.REJECTED), any(), anyDouble());
+        verify(monitor, times(9)).report(eq(V2QueueReporter.WAIT), any(), anyDouble());
+        org.mockito.Mockito.verifyNoMoreInteractions(monitor);
+    }
+
+    @Test
     void monitoringFailureDoesNotFailScheduling() {
         doThrow(new IllegalStateException("monitor unavailable")).when(monitor).report(any(), any(), anyDouble());
         reporter.blocked(add("1"), Stage.MAIN_WAITING, QueueBlockReason.NO_AVAILABLE_PREFILL, "all");
@@ -304,6 +348,12 @@ class V2QueueReporterTest {
         clearInvocations(monitor);
         reporter.samplePrefillInflight(List.of(), 8);
         verify(monitor, never()).report(eq(V2QueueReporter.PREFILL_INFLIGHT), eq(tags), anyDouble());
+    }
+
+    private void finishReports() throws InterruptedException {
+        reporter.closeReportExecutor();
+        var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(reporter, "reportExecutor");
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
     }
 
     private void reportSuccessfulCompletion(String id) {

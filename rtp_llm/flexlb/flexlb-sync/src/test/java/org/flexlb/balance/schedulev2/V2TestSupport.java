@@ -137,7 +137,6 @@ public final class V2TestSupport {
         when(selected.takeEndpointHold()).thenReturn(hold);
         when(selected.serverStatus()).thenReturn(serverStatus);
         when(selected.prefillWorkMs()).thenReturn(predictedMs);
-        when(selected.takeCommitTelemetry()).thenReturn(() -> {});
         return selected;
     }
 
@@ -145,7 +144,7 @@ public final class V2TestSupport {
      * 直接给请求设置选好的 Prefill，跳过主队列。
      */
     public static SelectedPrefill choose(Request request, PrefillEndpoint endpoint, long hitCache, long predictedMs) {
-        SelectedPrefill choice = new SelectedPrefill(endpoint, new ServerStatus(), hitCache, predictedMs, () -> {});
+        SelectedPrefill choice = new SelectedPrefill(endpoint, new ServerStatus(), hitCache, predictedMs);
         request.setSelectedPrefill(choice);
         return choice;
     }

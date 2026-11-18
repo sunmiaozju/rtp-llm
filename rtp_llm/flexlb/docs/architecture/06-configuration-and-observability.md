@@ -176,10 +176,6 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 Prefill 请求自身的工作量抵扣使用
 `localHitTokens * localWeight + (globalHitTokens - localHitTokens) * remoteWeight`。
 
-候选缓存计算时上报 `app.cache.kvcm.predicted.{local,remote,input}.tokens` 三个 COUNTER，
-仅包含成功的 KVCM 查询，按 role 聚合，包含未命中候选的 input。local/remote 是加权前的命中；
-用同一时间窗口的累计增量除以 input 增量计算命中率。这是候选预测口径，重试会重复计入，不等于最终选中请求口径。
-
 ### Nacos 连接
 
 | 环境变量 | 默认值 | 说明 |
@@ -425,7 +421,7 @@ Prefill 包含选中、最短 TTFT、最高有效缓存命中候选。`estimated
 最低命中率的候选，记录其中 TTFT 最短的节点地址、TTFT 和命中 Tokens。`OVER_CAP` 的
 `overCapMs` 等于该候选 TTFT 减去上限，表示至少还需增加多少毫秒预算才能使用缓存亲和。
 没有已建模的更高命中候选时省略超出量。`app.cache.affinity.over.cap.ms` 以 TIMER
-记录该超出量，仅在 `OVER_CAP` 路由提交时上报
+记录 `OVER_CAP` 决策的超出量。
 Prometheus 导出为 `flexlb_app_cache_affinity_over_cap_ms_seconds` 的分布系列，值单位为秒；
 展示毫秒时乘以 1000。选路重试及放弃的选择不产生该指标样本。
 

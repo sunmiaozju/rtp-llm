@@ -16,6 +16,7 @@ import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.RoutingConfig;
 import org.flexlb.dao.BalanceContext;
+import org.flexlb.dao.BalanceMetrics.PrefillRouteMetrics;
 import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.loadbalance.DebugInfo;
 import org.flexlb.dao.loadbalance.RejectReason;
@@ -265,6 +266,19 @@ public class CostBasedPrefillStrategy {
                 selectedIndex, balanceContext.selectionReason(roleType), cacheMatchResult);
         if (selectedTtft >= 0L) {
             reportSelectedEstimates(roleType, best, config, selectedTtft, selectedPrefillMs);
+        }
+        if (config.getDispatcher().getType() == DispatcherConfig.Type.NON_BATCH_V2) {
+            String decision = survivors.affinityDecision();
+            Long overCapMs = "OVER_CAP".equals(decision) ? survivors.cacheAffinity().overCapMs() : null;
+            if (decision != null && best.getStatus().getMetricIpPort() == null) {
+                decision = null;
+            }
+            balanceContext.getMetrics().setPrefillRouteMetrics(new PrefillRouteMetrics(
+                    survivors.routingCacheMatchTokens(selectedIndex),
+                    survivors.maximumRoutingCacheMatchTokens,
+                    decision,
+                    overCapMs));
+            return PlacementResult.success(selectedRole);
         }
         return PlacementResult.success(selectedRole.onCommit(commitTelemetry(
                 roleType, best, seqLen,
@@ -728,9 +742,6 @@ public class CostBasedPrefillStrategy {
         long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
-        if (inputs.kvcmQuerySucceeded()) {
-            engineHealthReporter.reportKvcmPredictionTokens(status.getRole(), localHitTokens, remoteHitTokens, seqLen);
-        }
         long remoteWorkHitTokens = inputs.kvcmSource() ? inputs.globalHitTokens() - localHitTokens : remoteHitTokens;
 
         long computeHit =

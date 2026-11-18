@@ -1,6 +1,7 @@
 package org.flexlb.dao;
 
 import lombok.Getter;
+import lombok.Setter;
 
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -11,6 +12,12 @@ public final class BalanceMetrics {
     public record QueueBlockMetricKey(String queue, String reason) {
     }
 
+    public record PrefillRouteMetrics(long selectedHitTokens,
+                                      long candidateMaxHitTokens,
+                                      String affinityDecision,
+                                      Long overCapMs) {
+    }
+
     @Getter
     public static final class BlockCounts {
         private final AtomicLong attemptCount = new AtomicLong();
@@ -18,4 +25,7 @@ public final class BalanceMetrics {
     }
 
     private final ConcurrentHashMap<QueueBlockMetricKey, BlockCounts> blockedCounts = new ConcurrentHashMap<>();
+
+    @Setter
+    private PrefillRouteMetrics prefillRouteMetrics;
 }
