@@ -50,6 +50,7 @@ import org.flexlb.schedule.grpc.FlexlbScheduleProtocol;
 import org.flexlb.schedule.grpc.FlexlbServiceGrpc;
 import org.flexlb.service.RouteService;
 import org.flexlb.service.TheoryCacheHitReporter;
+import org.flexlb.service.monitor.AsyncRequestMetrics;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
@@ -358,9 +359,9 @@ class MasterBatchEndToEndPerformanceTest extends FlexLBMockTestBase {
         simulatedStatusThread.setDaemon(true);
         simulatedStatusThread.start();
 
-        RouteService routeService = new RouteService(
-                scheduler,
-                mock(TheoryCacheHitReporter.class, withSettings().stubOnly()));
+        RouteService routeService =
+                new RouteService(scheduler, mock(TheoryCacheHitReporter.class, withSettings().stubOnly()),
+                        mock(AsyncRequestMetrics.class, withSettings().stubOnly()));
 
         latencyRecorder = new CompletionCoverageRecorder();
         EngineHealthReporter engineHealthReporter = createNoOpEngineHealthReporter();

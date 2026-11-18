@@ -11,6 +11,7 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RequestPhase;
+import org.flexlb.service.monitor.AsyncRequestMetrics;
 import org.flexlb.telemetry.FlexlbTrace;
 import org.flexlb.util.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,10 +26,14 @@ public class RouteService {
     @Autowired
     private DefaultRouter router;
     private final TheoryCacheHitReporter theoryCacheHitReporter;
+    private final AsyncRequestMetrics asyncRequestMetrics;
 
-    public RouteService(RequestScheduler requestScheduler, TheoryCacheHitReporter theoryCacheHitReporter) {
+    public RouteService(RequestScheduler requestScheduler,
+                        TheoryCacheHitReporter theoryCacheHitReporter,
+                        AsyncRequestMetrics asyncRequestMetrics) {
         this.requestScheduler = requestScheduler;
         this.theoryCacheHitReporter = theoryCacheHitReporter;
+        this.asyncRequestMetrics = asyncRequestMetrics;
     }
 
     /**
@@ -57,6 +62,10 @@ public class RouteService {
         // dependent stage. Returning the exact source preserves external
         // cancel propagation and keeps one publication owner end to end.
         resultFuture.whenComplete((result, throwable) -> {
+            Long lastCacheMatchUs = balanceContext.getMetrics().getLastCacheMatchUs();
+            if (lastCacheMatchUs != null) {
+                asyncRequestMetrics.reportCacheMatch(lastCacheMatchUs);
+            }
             if (throwable != null) {
                 return;
             }

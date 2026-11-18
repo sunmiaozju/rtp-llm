@@ -477,19 +477,6 @@ public class CacheMetricsReporter {
     }
 
     /**
-     * Report cache-match lookup time in microseconds.
-     *
-     * @param roleType  Role type
-     * @param startTime Start time in microseconds
-     * @param success   Whether successful
-     */
-    public void reportFindMatchingEnginesRT(RoleType roleType, long startTime, String success) {
-        FlexMetricTags tags = FlexMetricTags.of("role", roleType.name(), "success", success);
-
-        monitor.report(CACHE_FIND_MATCHING_ENGINES_RT, tags, ((double) System.nanoTime() / 1000) - startTime);
-    }
-
-    /**
      * Report local cache metadata update time in microseconds.
      *
      * @param ipIndex   metrics identity in {@code ip:port@engineIndex} format

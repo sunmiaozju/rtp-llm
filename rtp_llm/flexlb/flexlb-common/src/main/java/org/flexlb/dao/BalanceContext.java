@@ -236,8 +236,8 @@ public class BalanceContext {
 
     public void recordCacheQuery(String source, long queryTimeUs) {
         routingTelemetryState.cacheSource = source;
-        routingTelemetryState.cacheQueryUs += Math.max(0L, queryTimeUs);
         routingTelemetryState.cacheQueryCount++;
+        metrics.setLastCacheMatchUs(queryTimeUs);
     }
 
     public void recordCacheSelection(RoleType role, String selectedIp, long hitCacheTokens) {
@@ -271,19 +271,14 @@ public class BalanceContext {
     }
 
     public RoutingTelemetry getRoutingTelemetry() {
-        return new RoutingTelemetry(
-                routingTelemetryState.cacheSource,
-                routingTelemetryState.cacheQueryUs,
-                routingTelemetryState.cacheQueryCount,
-                routingTelemetryState.cacheSelections,
-                routingTelemetryState.selectionReasons,
-                routingTelemetryState.routingDecisions,
+        return new RoutingTelemetry(routingTelemetryState.cacheSource, metrics.getLastCacheMatchUs(),
+                routingTelemetryState.cacheQueryCount, routingTelemetryState.cacheSelections,
+                routingTelemetryState.selectionReasons, routingTelemetryState.routingDecisions,
                 routingTelemetryState.routingAttempts);
     }
 
     private static final class RoutingTelemetryState {
         private String cacheSource;
-        private long cacheQueryUs;
         private int cacheQueryCount;
         private final EnumMap<RoleType, CacheMatchSelection> cacheSelections =
                 new EnumMap<>(RoleType.class);
@@ -295,14 +290,13 @@ public class BalanceContext {
                 new EnumMap<>(RoleType.class);
     }
 
-    public record RoutingTelemetry(
-            String cacheSource,
-            long cacheQueryUs,
-            int cacheQueryCount,
-            Map<RoleType, CacheMatchSelection> cacheSelections,
-            Map<RoleType, String> selectionReasons,
-            Map<RoleType, RoutingDecision> routingDecisions,
-            Map<RoleType, Integer> routingAttempts) {
+    public record RoutingTelemetry(String cacheSource,
+                                   Long cacheQueryUs,
+                                   int cacheQueryCount,
+                                   Map<RoleType, CacheMatchSelection> cacheSelections,
+                                   Map<RoleType, String> selectionReasons,
+                                   Map<RoleType, RoutingDecision> routingDecisions,
+                                   Map<RoleType, Integer> routingAttempts) {
     }
 
     public record CacheMatchSelection(

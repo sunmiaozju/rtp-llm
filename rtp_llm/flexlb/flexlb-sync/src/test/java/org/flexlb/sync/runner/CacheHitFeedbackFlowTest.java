@@ -135,7 +135,7 @@ class CacheHitFeedbackFlowTest {
         when(failover.activeSource()).thenReturn(CacheMatchSource.KVCM);
         var query = new CacheMatchQueryOrchestrator(mock(LocalSyncCacheMatchProvider.class), kvcm, standby,
                 mock(LocalStandbyCacheManager.class), failover, comparison, cacheMetrics, cacheConfig);
-        cache = new CacheAwareService(cacheMetrics, query, new CacheHitFeedbackTracker(comparison, configs),
+        cache = new CacheAwareService(query, new CacheHitFeedbackTracker(comparison, configs),
                 mock(CacheMetadataUpdateOrchestrator.class));
         EngineGrpcClient engineClient = mock(EngineGrpcClient.class);
         LoopResources loops = mock(LoopResources.class);

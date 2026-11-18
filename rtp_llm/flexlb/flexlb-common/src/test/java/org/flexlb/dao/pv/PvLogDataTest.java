@@ -325,7 +325,7 @@ class PvLogDataTest {
         assertEquals(500, data.getArrivalMs());
         assertEquals(9, data.getReqParseUs());
         assertEquals("KVCM", data.getCacheMatchSource());
-        assertEquals(144, data.getCacheMatchUs());
+        assertEquals(10L, data.getCacheMatchUs());
         assertEquals(3, data.getCacheMatchCount());
         assertEquals(1, data.getCacheMatchSelections().size());
         assertTrue(data.getSelectionReasons().isEmpty());
@@ -340,7 +340,7 @@ class PvLogDataTest {
         assertFalse(json.contains("\"hashWaitUs\""));
         assertFalse(json.contains("\"hashUs\""));
         assertTrue(json.contains("\"cacheMatchSource\":\"KVCM\""));
-        assertTrue(json.contains("\"cacheMatchUs\":144"));
+        assertTrue(json.contains("\"cacheMatchUs\":10"));
         assertTrue(json.contains("\"cacheMatchCount\":3"));
         assertTrue(json.contains("\"cacheMatchSelections\":[{\"role\":\"DECODE\""));
         assertFalse(json.contains("\"selectionReasons\""));
@@ -350,6 +350,17 @@ class PvLogDataTest {
         assertFalse(json.contains("trackedTasks"));
         assertFalse(json.contains("waitingTasks"));
         assertFalse(json.contains("runningTasks"));
+    }
+
+    @Test
+    void cacheMatchDurationIsAbsentOnlyBeforeTheFirstQuery() {
+        BalanceContext context = new BalanceContext();
+        String beforeQuery = JsonUtils.toStringOrEmpty(new PvLogData(context));
+        assertFalse(beforeQuery.contains("\"cacheMatchUs\""));
+
+        context.recordCacheQuery("LOCAL_SYNC", 0L);
+        String afterQuery = JsonUtils.toStringOrEmpty(new PvLogData(context));
+        assertTrue(afterQuery.contains("\"cacheMatchUs\":0"));
     }
 
     @Test
@@ -402,7 +413,7 @@ class PvLogDataTest {
             var writer = executor.submit(() -> {
                 for (int attempt = 0; attempt < 1_000; attempt++) {
                     context.beginRoutingAttempt(RoleType.PREFILL);
-                    context.recordCacheQuery("LOCAL_SYNC", 2);
+                    context.recordCacheQuery("LOCAL_SYNC", attempt + 1L);
                     context.recordRoutingDecision(new RoutingDecision(RoleType.PREFILL, "default",
                             "CostBasedPrefill", "attempt-" + attempt, null, null, null, attempt, attempt + 1, "worker:8080",
                             1, 0, false, java.util.Map.of(), List.of(), null));
@@ -423,7 +434,7 @@ class PvLogDataTest {
                 writer.get(5, java.util.concurrent.TimeUnit.SECONDS);
                 for (int i = 0; i < 1_000; i++) {
                     PvLogData snapshot = new PvLogData(context);
-                    assertEquals(snapshot.getCacheMatchCount() * 2L, snapshot.getCacheMatchUs());
+                    assertEquals(1_000L, snapshot.getCacheMatchUs());
                     for (RoutingDecision decision : snapshot.getRoutingDecisions()) {
                         assertFalse(snapshot.getSelectionReasons().containsKey(decision.role()));
                     }
@@ -432,6 +443,7 @@ class PvLogDataTest {
                 writer.get(5, java.util.concurrent.TimeUnit.SECONDS);
                 assertEquals(terminalJson, JsonUtils.toStringOrEmpty(terminalPv));
                 assertEquals(1, terminalPv.getCacheMatchCount());
+                assertEquals(1L, terminalPv.getCacheMatchUs());
                 assertEquals(1_000, new PvLogData(context).getCacheMatchCount());
             } finally {
                 resume.countDown();
@@ -445,13 +457,13 @@ class PvLogDataTest {
         try (var executor = java.util.concurrent.Executors.newSingleThreadExecutor()) {
             executor.submit(() -> {
                 for (int i = 1; i <= 5_000; i++) {
-                    context.recordCacheQuery("KVCM", 2);
+                    context.recordCacheQuery("KVCM", i);
                 }
             }).get(5, java.util.concurrent.TimeUnit.SECONDS);
         }
         PvLogData result = new PvLogData(context);
         assertEquals(5_000, result.getCacheMatchCount());
-        assertEquals(10_000, result.getCacheMatchUs());
+        assertEquals(5_000L, result.getCacheMatchUs());
     }
 
 }

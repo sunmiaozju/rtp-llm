@@ -13,6 +13,7 @@ import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.pv.PvLogData;
 import org.flexlb.service.RouteService;
 import org.flexlb.service.TheoryCacheHitReporter;
+import org.flexlb.service.monitor.AsyncRequestMetrics;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -215,7 +216,8 @@ class SchedulingErrorCodeMatrixTest {
             config.getDispatcher().setMaxInflightPerPrefillWorker(100);
             harness = new AutoTpmE2EHarness(61_500, 1, 1, prefillFormulaMs, 1.0, true,
                     false, decision, true, config);
-            service = new RouteService(harness.scheduler, mock(TheoryCacheHitReporter.class));
+            service = new RouteService(harness.scheduler, mock(TheoryCacheHitReporter.class),
+                    mock(AsyncRequestMetrics.class));
         }
 
         BalanceContext context() { return harness.context(REQUEST_ID, 50); }

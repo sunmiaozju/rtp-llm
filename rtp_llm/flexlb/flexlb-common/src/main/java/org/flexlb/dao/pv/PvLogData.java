@@ -66,7 +66,8 @@ public class PvLogData {
     @JsonIgnoreProperties("prefillPolicy")
     private List<RoutingDecision> routingDecisions;
     private String cacheMatchSource;
-    private long cacheMatchUs;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Long cacheMatchUs;
     private int cacheMatchCount;
     @JsonInclude(JsonInclude.Include.NON_EMPTY)
     private List<BalanceContext.CacheMatchSelection> cacheMatchSelections;

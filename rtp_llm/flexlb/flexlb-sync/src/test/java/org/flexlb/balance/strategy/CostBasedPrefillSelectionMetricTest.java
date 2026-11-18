@@ -130,7 +130,7 @@ class CostBasedPrefillSelectionMetricTest {
         }
         assertEquals("KVCM", context.getRoutingTelemetry().cacheSource());
         assertEquals(2, context.getRoutingTelemetry().cacheQueryCount());
-        assertEquals(74L, context.getRoutingTelemetry().cacheQueryUs());
+        assertEquals(37L, context.getRoutingTelemetry().cacheQueryUs());
         assertEquals("10.0.0.1", context.getRoutingTelemetry().cacheSelections().get(RoleType.PREFILL).selectedIp());
         assertEquals(1, context.getRoutingTelemetry().routingDecisions().size());
         assertEquals(2, context.getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL).routingAttempt());

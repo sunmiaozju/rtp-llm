@@ -1,6 +1,5 @@
 package org.flexlb.service.monitor;
 
-import io.micrometer.core.instrument.util.NamedThreadFactory;
 import org.flexlb.balance.scheduler.RequestState;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
@@ -18,21 +17,14 @@ import org.flexlb.enums.FlexPriorityType;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
 import org.flexlb.util.Logger;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_VICTIM_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_DECISION;
@@ -55,22 +47,15 @@ public class V2QueueReporter {
     public static final String WAIT = "schedule_v2.queue.wait_ms";
     public static final String PREFILL_INFLIGHT = "schedule_v2.prefill.inflight";
     public static final String PREFILL_INFLIGHT_LIMIT = "schedule_v2.prefill.inflight_limit";
-    static final String DROPPED_REPORTS = "schedule_v2.metrics_report.dropped";
-    private static final int REPORT_QUEUE_CAPACITY = 40960;
-    private static final int REPORT_THREADS = Runtime.getRuntime().availableProcessors();
-
-    private final AtomicLong reportsDroppedQueueFull = new AtomicLong();
-    private final ThreadPoolExecutor reportExecutor = new ThreadPoolExecutor(REPORT_THREADS, REPORT_THREADS * 3, 60L,
-            TimeUnit.SECONDS, new ArrayBlockingQueue<>(REPORT_QUEUE_CAPACITY),
-            new NamedThreadFactory("flexlb-v2-metrics-reporter"),
-            new ThreadPoolExecutor.AbortPolicy());
 
     private Set<String> previousPrefillEndpoints = Set.of();
     private final FlexMonitor monitor;
+    private final AsyncRequestMetrics asyncRequestMetrics;
     private Set<QueueKey> previousQueues = Set.of();
 
-    public V2QueueReporter(FlexMonitor monitor) {
+    public V2QueueReporter(FlexMonitor monitor, AsyncRequestMetrics asyncRequestMetrics) {
         this.monitor = monitor;
+        this.asyncRequestMetrics = asyncRequestMetrics;
     }
 
     @PostConstruct
@@ -79,7 +64,6 @@ public class V2QueueReporter {
         monitor.register(OLDEST, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(PREFILL_INFLIGHT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(PREFILL_INFLIGHT_LIMIT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(DROPPED_REPORTS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(WAIT, FlexMetricType.TIMER, FlexPriorityType.NORMAL);
         for (String metric : new String[]{BLOCKED, ATTEMPTS, REJECTED}) {
             monitor.register(metric, FlexMetricType.QPS, FlexPriorityType.NORMAL);
@@ -150,13 +134,7 @@ public class V2QueueReporter {
         String reason = rejectionReason(request, response, progress.stage());
         BalanceMetrics metrics = request.ctx().getMetrics();
         boolean succeeded = response != null && response.isSuccess();
-        try {
-            reportExecutor.execute(() -> reportCompletion(progress, priority, reason, metrics, succeeded));
-        } catch (RejectedExecutionException rejected) {
-            if (!reportExecutor.isShutdown()) {
-                reportsDroppedQueueFull.incrementAndGet();
-            }
-        }
+        asyncRequestMetrics.submit(() -> reportCompletion(progress, priority, reason, metrics, succeeded));
     }
 
     private static String rejectionReason(Request request, Response response, Stage stage) {
@@ -295,16 +273,6 @@ public class V2QueueReporter {
 
     private static FlexMetricTags blockTags(String queue, String reason, int priority) {
         return FlexMetricTags.of("queue", queue, "reason", reason, "priority", String.valueOf(priority));
-    }
-
-    @Scheduled(fixedRate = 20_000L, initialDelay = 20_000L)
-    void reportDroppedQueueFull() {
-        report(DROPPED_REPORTS, FlexMetricTags.of("reason", "queue_full"), reportsDroppedQueueFull.getAndSet(0L));
-    }
-
-    @PreDestroy
-    void closeReportExecutor() {
-        reportExecutor.shutdown();
     }
 
     private void report(String metric, FlexMetricTags tags, long value) {

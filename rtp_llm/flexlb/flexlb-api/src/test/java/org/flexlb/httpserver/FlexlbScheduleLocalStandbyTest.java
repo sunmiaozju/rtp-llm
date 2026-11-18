@@ -66,10 +66,9 @@ class FlexlbScheduleLocalStandbyTest {
         }).when(manager).addRoutedRequestBlocks(any(), any());
         LocalStandbyCacheMatchProvider provider = new LocalStandbyCacheMatchProvider(
                 configuration, manager, metrics);
-        CacheAwareService cache =
-                new CacheAwareService(metrics, null, new CacheHitFeedbackTracker(null, new ConfigService("""
-                        {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":100000}}}
-                        """)), new CacheMetadataUpdateOrchestrator(configuration, null, provider));
+        CacheAwareService cache = new CacheAwareService(null, new CacheHitFeedbackTracker(null, new ConfigService("""
+                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":100000}}}
+                """)), new CacheMetadataUpdateOrchestrator(configuration, null, provider));
         RouteService router = mock(RouteService.class);
         CompletableFuture<Response> routed = new CompletableFuture<>();
         when(router.route(any())).thenReturn(routed);

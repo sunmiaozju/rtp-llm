@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_DECISION;
 import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
+import static org.flexlb.constant.MetricConstant.CACHE_FIND_MATCHING_ENGINES_RT;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,7 +49,8 @@ import static org.mockito.Mockito.when;
 class V2QueueReporterTest {
 
     private final FlexMonitor monitor = mock(FlexMonitor.class);
-    private final V2QueueReporter reporter = new V2QueueReporter(monitor);
+    private final AsyncRequestMetrics asyncRequestMetrics = new AsyncRequestMetrics(monitor);
+    private final V2QueueReporter reporter = new V2QueueReporter(monitor, asyncRequestMetrics);
     private final FlexlbConfig config = SchedulingTestConfig.newConfig();
     private final RequestTable table = new RequestTable();
     private final ConfigService service = mock(ConfigService.class);
@@ -61,7 +63,7 @@ class V2QueueReporterTest {
 
     @AfterEach
     void stopReporter() {
-        reporter.closeReportExecutor();
+        asyncRequestMetrics.closeReportExecutor();
     }
 
     @Test
@@ -204,7 +206,7 @@ class V2QueueReporterTest {
 
     @Test
     void blockedMetricsWorkerDoesNotBlockCompletionAndDropsAreVisible() throws Exception {
-        var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(reporter, "reportExecutor");
+        var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(asyncRequestMetrics, "reportExecutor");
         int processors = Runtime.getRuntime().availableProcessors();
         assertEquals(processors, executor.getCorePoolSize());
         assertEquals(processors * 3, executor.getMaximumPoolSize());
@@ -232,18 +234,34 @@ class V2QueueReporterTest {
             reportSuccessfulCompletion("extra-worker-2");
             assertEquals(3, executor.getPoolSize());
             reportSuccessfulCompletion("queue-full");
-            reportSuccessfulCompletion("also-queue-full");
-            verify(monitor, never()).report(eq(V2QueueReporter.DROPPED_REPORTS), any(), anyDouble());
-            reporter.reportDroppedQueueFull();
-            verify(monitor).report(V2QueueReporter.DROPPED_REPORTS, tags, 2.0);
+            asyncRequestMetrics.reportCacheMatch(1_500L);
+            verify(monitor, never()).report(eq(CACHE_FIND_MATCHING_ENGINES_RT), any(), anyDouble());
+            verify(monitor, never()).report(eq(AsyncRequestMetrics.DROPPED_REPORTS), any(), anyDouble());
+            asyncRequestMetrics.reportDroppedQueueFull();
+            verify(monitor).report(AsyncRequestMetrics.DROPPED_REPORTS, tags, 2.0);
 
-            reporter.closeReportExecutor();
+            asyncRequestMetrics.closeReportExecutor();
             reportSuccessfulCompletion("shutdown");
-            reporter.reportDroppedQueueFull();
-            verify(monitor).report(V2QueueReporter.DROPPED_REPORTS, tags, 0.0);
+            asyncRequestMetrics.reportDroppedQueueFull();
+            verify(monitor).report(AsyncRequestMetrics.DROPPED_REPORTS, tags, 0.0);
         } finally {
             releaseReport.countDown();
         }
+    }
+
+    @Test
+    void cacheMatchReportsRawMicrosecondsWithoutTagsOnMetricsWorker() throws Exception {
+        var reportThread = new CompletableFuture<Thread>();
+        doAnswer(invocation -> {
+            reportThread.complete(Thread.currentThread());
+            return null;
+        }).when(monitor).report(CACHE_FIND_MATCHING_ENGINES_RT, FlexMetricTags.of(), 1_750.0);
+
+        asyncRequestMetrics.reportCacheMatch(1_750L);
+        assertNotSame(Thread.currentThread(), reportThread.get(5L, TimeUnit.SECONDS));
+        finishReports();
+        verify(monitor).report(CACHE_FIND_MATCHING_ENGINES_RT, FlexMetricTags.of(), 1_750.0);
+        org.mockito.Mockito.verifyNoMoreInteractions(monitor);
     }
 
     @Test
@@ -294,6 +312,7 @@ class V2QueueReporterTest {
 
     @Test
     void allQueueMetricsUseTwentySecondAggregation() {
+        asyncRequestMetrics.init();
         reporter.init();
         int registered = 0;
         for (var invocation : org.mockito.Mockito.mockingDetails(monitor).getInvocations()) {
@@ -351,8 +370,8 @@ class V2QueueReporterTest {
     }
 
     private void finishReports() throws InterruptedException {
-        reporter.closeReportExecutor();
-        var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(reporter, "reportExecutor");
+        asyncRequestMetrics.closeReportExecutor();
+        var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(asyncRequestMetrics, "reportExecutor");
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
     }
 

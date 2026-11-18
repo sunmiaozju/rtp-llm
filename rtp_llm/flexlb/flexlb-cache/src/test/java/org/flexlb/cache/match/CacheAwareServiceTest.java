@@ -5,7 +5,6 @@ import org.flexlb.cache.domain.CacheMatchResult;
 import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.cache.domain.WorkerCacheUpdateResult;
 import org.flexlb.cache.match.localstandby.LocalStandbyComparisonService;
-import org.flexlb.cache.telemetry.CacheMetricsReporter;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.master.WorkerStatus;
@@ -22,18 +21,17 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class CacheAwareServiceTest {
 
-    private final CacheMetricsReporter metricsReporter = mock(CacheMetricsReporter.class);
     private final CacheMatchQueryOrchestrator queryOrchestrator =
             mock(CacheMatchQueryOrchestrator.class);
     private final CacheMetadataUpdateOrchestrator updateOrchestrator =
             mock(CacheMetadataUpdateOrchestrator.class);
     private final LocalStandbyComparisonService comparisonService = mock(LocalStandbyComparisonService.class);
-    private final CacheAwareService service = new CacheAwareService(metricsReporter, queryOrchestrator,
+    private final CacheAwareService service = new CacheAwareService(queryOrchestrator,
             new CacheHitFeedbackTracker(comparisonService, new ConfigService("""
                     {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":100000}}}
                     """)), updateOrchestrator);
@@ -52,14 +50,10 @@ class CacheAwareServiceTest {
 
         assertSame(expected, actual);
         verify(queryOrchestrator).findMatchingEngines(query);
-        verify(metricsReporter).reportFindMatchingEnginesRT(
-                org.mockito.ArgumentMatchers.eq(RoleType.PREFILL),
-                org.mockito.ArgumentMatchers.anyLong(),
-                org.mockito.ArgumentMatchers.eq("0"));
     }
 
     @Test
-    void reportsFailedCacheQueryResultAsFailure() {
+    void preservesFailedCacheQueryResult() {
         CacheMatchQuery query = new CacheMatchQuery(
                 "failed-request", List.of(11L), 2192L,
                 RoleType.PREFILL, "default");
@@ -68,10 +62,6 @@ class CacheAwareServiceTest {
 
         assertSame(failed, service.findMatchingEngines(query));
 
-        verify(metricsReporter).reportFindMatchingEnginesRT(
-                org.mockito.ArgumentMatchers.eq(RoleType.PREFILL),
-                org.mockito.ArgumentMatchers.anyLong(),
-                org.mockito.ArgumentMatchers.eq("1"));
     }
 
     @Test
@@ -109,7 +99,8 @@ class CacheAwareServiceTest {
         service.trackRoutingPrediction("short-request", RoleType.PREFILL, "default", worker,
                 100, 0, CacheMatchResult.empty(CacheMatchSource.KVCM), CompletableFuture.completedFuture(null));
 
-        verifyNoInteractions(metricsReporter);
+        verify(comparisonService).captureComparison("short-request", RoleType.PREFILL);
+        verifyNoMoreInteractions(comparisonService);
     }
 
     @Test
@@ -119,7 +110,8 @@ class CacheAwareServiceTest {
         service.trackRoutingPrediction("request-1", RoleType.PREFILL, "default", worker,
                 100, 0, CacheMatchResult.failed(CacheMatchSource.KVCM, 10), CompletableFuture.completedFuture(null));
 
-        verifyNoInteractions(metricsReporter);
+        verify(comparisonService).captureComparison("request-1", RoleType.PREFILL);
+        verifyNoMoreInteractions(comparisonService);
     }
 
 }

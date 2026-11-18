@@ -27,5 +27,8 @@ public final class BalanceMetrics {
     private final ConcurrentHashMap<QueueBlockMetricKey, BlockCounts> blockedCounts = new ConcurrentHashMap<>();
 
     @Setter
+    private volatile Long lastCacheMatchUs;
+
+    @Setter
     private PrefillRouteMetrics prefillRouteMetrics;
 }

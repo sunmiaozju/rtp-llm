@@ -3,6 +3,7 @@ package org.flexlb.balance.scheduler;
 import com.google.protobuf.ByteString;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.context.Context;
+import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
@@ -10,10 +11,13 @@ import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.service.RouteService;
 import org.flexlb.service.TheoryCacheHitReporter;
+import org.flexlb.service.monitor.AsyncRequestMetrics;
 import org.flexlb.telemetry.FlexlbTrace;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -25,6 +29,7 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 class RouteServiceTraceTest {
@@ -51,8 +56,8 @@ class RouteServiceTraceTest {
             RequestScheduler scheduler = mock(RequestScheduler.class);
             CompletableFuture<Response> pending = new CompletableFuture<>();
             when(scheduler.submit(any())).thenReturn(pending);
-            RouteService service = new RouteService(scheduler,
-                    mock(TheoryCacheHitReporter.class));
+            RouteService service =
+                    new RouteService(scheduler, mock(TheoryCacheHitReporter.class), mock(AsyncRequestMetrics.class));
             BalanceContext ctx = new BalanceContext(config);
             Request request = new Request();
             request.setRequestId("700");
@@ -74,8 +79,8 @@ class RouteServiceTraceTest {
     void missingBatchInputStillRejectsWithoutDirectFallback() {
         FlexlbConfig config = SchedulingTestConfig.batchConfig();
         RequestScheduler scheduler = mock(RequestScheduler.class);
-        RouteService service = new RouteService(scheduler,
-                mock(TheoryCacheHitReporter.class));
+        AsyncRequestMetrics metrics = mock(AsyncRequestMetrics.class);
+        RouteService service = new RouteService(scheduler, mock(TheoryCacheHitReporter.class), metrics);
         BalanceContext ctx = new BalanceContext(config);
         Request request = new Request();
         request.setRequestId("701");
@@ -87,6 +92,51 @@ class RouteServiceTraceTest {
         assertFalse(response.isSuccess());
         assertEquals(StrategyErrorType.INVALID_REQUEST.getErrorCode(), response.getCode());
         verify(span).setAttribute(FlexlbTrace.SCHEDULE_MODE, "BATCH");
-        verifyNoInteractions(scheduler);
+        verifyNoInteractions(scheduler, metrics);
+    }
+
+    @ParameterizedTest
+    @EnumSource(DispatcherConfig.Type.class)
+    void reportsOnlyLastCacheMatchAfterSchedulingCompletes(DispatcherConfig.Type dispatcherType) {
+        FlexlbConfig config = SchedulingTestConfig.newConfig();
+        config.getDispatcher().setType(dispatcherType);
+        BalanceContext context = new BalanceContext(config);
+        context.setRequest(new Request());
+        context.setGenerateInputPb(ByteString.copyFromUtf8("input"));
+        RequestScheduler scheduler = mock(RequestScheduler.class);
+        AsyncRequestMetrics metrics = mock(AsyncRequestMetrics.class);
+        RouteService service = new RouteService(scheduler, mock(TheoryCacheHitReporter.class), metrics);
+        CompletableFuture<Response> pending = new CompletableFuture<>();
+        when(scheduler.submit(context)).thenReturn(pending);
+
+        assertSame(pending, service.route(context));
+        context.recordCacheQuery("KVCM", 56L);
+        context.recordCacheQuery("LOCAL_STANDBY", 10L);
+        verifyNoInteractions(metrics);
+        Response response = new Response();
+        response.setSuccess(true);
+        pending.complete(response);
+
+        verify(metrics).reportCacheMatch(10L);
+        verifyNoMoreInteractions(metrics);
+    }
+
+    @Test
+    void cancelledRequestStillReportsMeasuredZero() {
+        BalanceContext context = new BalanceContext(SchedulingTestConfig.newConfig());
+        context.setRequest(new Request());
+        context.setGenerateInputPb(ByteString.copyFromUtf8("input"));
+        RequestScheduler scheduler = mock(RequestScheduler.class);
+        AsyncRequestMetrics metrics = mock(AsyncRequestMetrics.class);
+        RouteService service = new RouteService(scheduler, mock(TheoryCacheHitReporter.class), metrics);
+        CompletableFuture<Response> pending = new CompletableFuture<>();
+        when(scheduler.submit(context)).thenReturn(pending);
+
+        assertSame(pending, service.route(context));
+        context.recordCacheQuery("LOCAL_SYNC", 0L);
+        assertTrue(pending.cancel(false));
+
+        verify(metrics).reportCacheMatch(0L);
+        verifyNoMoreInteractions(metrics);
     }
 }
