@@ -198,7 +198,7 @@ public final class PrefillQueueLoop {
     private void dispatch(PrefillQueue queue, Request request, long kvTokens) {
         SelectedPrefill choice = request.selectedPrefill();
         // 先加记录再推进阶段：推进成功后请求随时可能结束，结束时的清理要能找到这条记录
-        queue.addDispatched(new DispatchedRequest(request, kvTokens, choice.predictedMs()));
+        queue.addDispatched(new DispatchedRequest(request, kvTokens, choice.predictedMs(), configService));
         if (!request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING)) {
             queue.removeDispatched(request);
             queue.removeWaiting(request);

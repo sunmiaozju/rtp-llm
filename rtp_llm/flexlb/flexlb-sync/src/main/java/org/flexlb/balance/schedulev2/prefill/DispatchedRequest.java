@@ -3,6 +3,7 @@ package org.flexlb.balance.schedulev2.prefill;
 import lombok.Data;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.schedulev2.request.Request;
+import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
 
 import java.util.Objects;
@@ -19,6 +20,7 @@ import java.util.Objects;
 public final class DispatchedRequest {
 
     private final Request request;
+    private final ConfigService configService;
     /**
      * 这个请求在引擎上要新占的 KV token 数（输入 token 数减去命中缓存的部分）。
      */
@@ -41,8 +43,9 @@ public final class DispatchedRequest {
     private volatile long lastStatusUpdatedAtMs;
     private volatile WorkView.Phase phase = WorkView.Phase.COMMITTED;
 
-    public DispatchedRequest(Request request, long kvTokens, long predictedMs) {
+    public DispatchedRequest(Request request, long kvTokens, long predictedMs, ConfigService configService) {
         this.request = request;
+        this.configService = configService;
         this.kvTokens = kvTokens;
         this.predictedMs = predictedMs;
     }
@@ -60,6 +63,10 @@ public final class DispatchedRequest {
     }
 
     boolean isWorkLoadChanged(WorkerStatus.TaskObservation newWorkerStatus) {
+        if (!configService.loadBalanceConfig().getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()) {
+            return false;
+        }
+
         WorkerStatus.TaskObservation oldWorkerStatus = workerStatus;
         return oldWorkerStatus == null || oldWorkerStatus.prefixLengthValid() != newWorkerStatus.prefixLengthValid()
                 || oldWorkerStatus.prefixLength() != newWorkerStatus.prefixLength()

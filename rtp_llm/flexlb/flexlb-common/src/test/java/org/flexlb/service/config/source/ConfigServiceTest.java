@@ -229,6 +229,31 @@ class ConfigServiceTest {
     }
 
     @Test
+    void runtimeUpdatesEnableAndDisablePrefillWorkloadWithoutChangingExistingSnapshots() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, "{\"schemaVersion\":3}");
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        FlexlbConfig initial = service.loadBalanceConfig();
+        assertThat(initial.getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()).isFalse();
+
+        source.emit("{\"schemaVersion\":3,\"router\":{\"roles\":{\"prefill\":{\"enableWorkloadUpdate\":true}}}}");
+        FlexlbConfig enabled = service.loadBalanceConfig();
+        assertThat(enabled).isNotSameAs(initial);
+        assertThat(enabled.getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()).isTrue();
+        assertThat(initial.getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()).isFalse();
+
+        source.emit("{\"schemaVersion\":3,\"router\":{\"roles\":{\"prefill\":{\"enableWorkloadUpdate\":false}}}}");
+        FlexlbConfig disabled = service.loadBalanceConfig();
+        assertThat(disabled.getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()).isFalse();
+        assertThat(enabled.getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()).isTrue();
+
+        for (String value : List.of("\"true\"", "1", "null")) {
+            source.emit("{\"schemaVersion\":3,\"router\":{\"roles\":{\"prefill\":{\"enableWorkloadUpdate\":" + value
+                    + "}}}}");
+            assertThat(service.loadBalanceConfig()).isSameAs(disabled);
+        }
+    }
+
+    @Test
     void runtimeUpdateReplacesDecodeLimitsWithoutChangingExistingSnapshot() {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},

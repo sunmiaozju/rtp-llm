@@ -15,6 +15,7 @@ import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.balance.schedulev2.prefill.DispatchedRequest;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
+import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.RoutingConfig;
@@ -67,11 +68,13 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class PrefillEndpointTest {
 
     private PrefillEndpoint endpoint;
     private FlexlbConfig config;
+    private final ConfigService configService = mock(ConfigService.class);
     private BatchSchedulerReporter endpointReporter;
     private EndpointTestSupport.TestRequestRuntime requestRuntime;
 
@@ -81,6 +84,7 @@ class PrefillEndpointTest {
                 RoleType.PREFILL, "127.0.0.1", 8080, 8090);
 
         config = org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig();
+        when(configService.loadBalanceConfig()).thenReturn(config);
         configureBatch(config, config.fixedWindowDecision().getMaxRequests(), 300, null);
         setFormula(config, "10 + 0.1*sum(computeTokens) + 5*batchSize");
 
@@ -104,7 +108,7 @@ class PrefillEndpointTest {
     void finishedOnlyStatusReleasesV2PrefillClaim() {
         var queue = createV2Queue();
         var request = V2TestSupport.request(SchedulingTestConfig.newConfig(), "901", 50, 10);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 10L, 5L));
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 10L, 5L, configService));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertEquals(1L, queue.inflightCount());
         WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
@@ -122,7 +126,7 @@ class PrefillEndpointTest {
         var request = V2TestSupport.request(SchedulingTestConfig.newConfig(), "902", 50, 10);
         org.springframework.test.util.ReflectionTestUtils.setField(request, "publishedAtMs",
                 System.currentTimeMillis() - 10_000L);
-        var record = new DispatchedRequest(request, 10L, 5L);
+        var record = new DispatchedRequest(request, 10L, 5L, configService);
         V2TestSupport.dispatch(queue, record);
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(record.statusExpired(System.currentTimeMillis(), 1000L));

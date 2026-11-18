@@ -241,7 +241,7 @@ class DecodeQueueLoopTest {
         for (int i = 1; i <= 6; i++) {
             Request request = V2TestSupport.request(config, Integer.toString(i), 50, 16L);
             request.setQueueSeq(i);
-            V2TestSupport.dispatch(queue, new DispatchedRequest(request, 16L, 0L));
+            V2TestSupport.dispatch(queue, new DispatchedRequest(request, 16L, 0L, configService));
             requestTable.add(request);
             decodeQueue.addWaiting(request);
             requests.add(request);
