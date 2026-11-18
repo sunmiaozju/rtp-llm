@@ -31,9 +31,11 @@ public class AsyncRequestMetrics {
             TimeUnit.SECONDS, new ArrayBlockingQueue<>(REPORT_QUEUE_CAPACITY),
             new NamedThreadFactory("flexlb-request-metrics-reporter"), new ThreadPoolExecutor.AbortPolicy());
     private final FlexMonitor monitor;
+    private final CacheMatchHistogram cacheMatchHistogram;
 
-    public AsyncRequestMetrics(FlexMonitor monitor) {
+    public AsyncRequestMetrics(FlexMonitor monitor, CacheMatchHistogram cacheMatchHistogram) {
         this.monitor = monitor;
+        this.cacheMatchHistogram = cacheMatchHistogram;
     }
 
     @PostConstruct
@@ -42,7 +44,10 @@ public class AsyncRequestMetrics {
     }
 
     public void reportCacheMatch(long cacheMatchUs) {
-        submit(() -> report(CACHE_FIND_MATCHING_ENGINES_RT, FlexMetricTags.of(), cacheMatchUs));
+        submit(() -> {
+            report(CACHE_FIND_MATCHING_ENGINES_RT, FlexMetricTags.of(), cacheMatchUs);
+            cacheMatchHistogram.record(cacheMatchUs);
+        });
     }
 
     void submit(Runnable reportTask) {
