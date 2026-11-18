@@ -472,6 +472,9 @@ Top5 展示 `shortestTtftDecisions` 的 token-work 估计。预测耗时与 Engi
 - 线程池、graceful lifecycle；
 - request payload、optimizer trace 与 PV decision 数据。
 
+新增请求级指标在选路、重试和返回响应的主链路上只做本地记录，请求结束后统一异步上报。
+响应不等待指标，队列满时也不回退到请求线程执行。已有同步上报按链路逐步迁移。
+
 `app.engine.balancing.master.all.qps` 与 `app.engine.balancing.master.all.rt` 使用相同的
 `phase`、`code`、`priority` 标签，分别记录调度完成速率与包含排队的调度响应耗时（毫秒）。
 `phase=ENCODER` 表示 Encoder 独立调度，`GENERATION` 表示 Prefill、Decode 或 PDFusion 调度，

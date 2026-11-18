@@ -13,20 +13,29 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -43,6 +52,11 @@ class V2QueueReporterTest {
     V2QueueReporterTest() {
         config.getDispatcher().setType(org.flexlb.config.DispatcherConfig.Type.NON_BATCH_V2);
         when(service.loadBalanceConfig()).thenReturn(config);
+    }
+
+    @AfterEach
+    void stopReporter() {
+        reporter.closeReportExecutor();
     }
 
     @Test
@@ -128,12 +142,27 @@ class V2QueueReporterTest {
         for (int i = 0; i < 10; i++) {
             reporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL, "p1:8000");
         }
-        verify(monitor, times(10)).report(eq(V2QueueReporter.ATTEMPTS), any(), eq(1.0));
-        verify(monitor).report(eq(V2QueueReporter.BLOCKED), any(), eq(1.0));
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         request.moveTo(Stage.PREFILL_WAITING, Stage.MAIN_WAITING);
         reporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL, "p1:8000");
-        verify(monitor, times(2)).report(eq(V2QueueReporter.BLOCKED), any(), eq(1.0));
+
+        request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
+        reporter.blocked(request, Stage.PREFILL_WAITING, QueueBlockReason.PREFILL_INFLIGHT_FULL, "p1:8000");
+        verify(monitor, never()).report(eq(V2QueueReporter.ATTEMPTS), any(), anyDouble());
+        verify(monitor, never()).report(eq(V2QueueReporter.BLOCKED), any(), anyDouble());
+        request.fail(StrategyErrorType.DISPATCH_FAILED, "test failure");
+        reporter.completed(request, request.future().join());
+
+        verify(monitor, timeout(5000)).report(V2QueueReporter.WAIT,
+                FlexMetricTags.of("queue", "decode", "result", "failed"), 0.0);
+        verify(monitor, times(2)).report(eq(V2QueueReporter.ATTEMPTS), any(), anyDouble());
+        verify(monitor, times(2)).report(eq(V2QueueReporter.BLOCKED), any(), anyDouble());
+        var main = FlexMetricTags.of("queue", "main", "reason", "SHARED_QUEUE_FULL", "priority", "50");
+        var prefill = FlexMetricTags.of("queue", "prefill", "reason", "PREFILL_INFLIGHT_FULL", "priority", "50");
+        verify(monitor).report(V2QueueReporter.ATTEMPTS, main, 11.0);
+        verify(monitor).report(V2QueueReporter.ATTEMPTS, prefill, 1.0);
+        verify(monitor).report(V2QueueReporter.BLOCKED, main, 2.0);
+        verify(monitor).report(V2QueueReporter.BLOCKED, prefill, 1.0);
     }
 
     @Test
@@ -149,7 +178,7 @@ class V2QueueReporterTest {
         Thread.sleep(10L);
         request.fail(StrategyErrorType.QUEUE_FULL_LOW_PRIORITY_REJECTED, "queue full");
         observed.join();
-        verify(monitor).report(V2QueueReporter.REJECTED,
+        verify(monitor, timeout(5000)).report(V2QueueReporter.REJECTED,
                 FlexMetricTags.of("queue", "prefill", "reason", "QUEUE_FULL_LOW_PRIORITY_REJECTED", "priority", "50"),
                 1.0);
         assertTrue(request.ctx().getGlobalQueueMs() > 0);
@@ -162,8 +191,54 @@ class V2QueueReporterTest {
         reporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL, "p1:8000");
         reporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL, "p2:8000");
         FlexMetricTags tags = FlexMetricTags.of("queue", "main", "reason", "SHARED_QUEUE_FULL", "priority", "50");
-        verify(monitor, times(2)).report(V2QueueReporter.BLOCKED, tags, 1.0);
-        verify(monitor, times(2)).report(V2QueueReporter.ATTEMPTS, tags, 1.0);
+        request.fail(StrategyErrorType.DISPATCH_FAILED, "test failure");
+        reporter.completed(request, request.future().join());
+        verify(monitor, timeout(5000)).report(V2QueueReporter.BLOCKED, tags, 2.0);
+        verify(monitor).report(V2QueueReporter.ATTEMPTS, tags, 2.0);
+    }
+
+    @Test
+    void blockedMetricsWorkerDoesNotBlockCompletionAndDropsAreVisible() throws Exception {
+        var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(reporter, "reportExecutor");
+        int processors = Runtime.getRuntime().availableProcessors();
+        assertEquals(processors, executor.getCorePoolSize());
+        assertEquals(processors * 3, executor.getMaximumPoolSize());
+        executor.setCorePoolSize(1);
+        executor.setMaximumPoolSize(3);
+
+        var reportThread = new CompletableFuture<Thread>();
+        var releaseReport = new CountDownLatch(1);
+        doAnswer(invocation -> {
+            reportThread.complete(Thread.currentThread());
+            releaseReport.await(10, TimeUnit.SECONDS);
+            return null;
+        }).when(monitor).report(eq(V2QueueReporter.WAIT), any(), anyDouble());
+
+        var tags = FlexMetricTags.of("reason", "queue_full");
+        try {
+            reportSuccessfulCompletion("active");
+            assertNotSame(Thread.currentThread(), reportThread.get(5, TimeUnit.SECONDS));
+            int queueCapacity = executor.getQueue().remainingCapacity();
+            Runnable queuedTask = () -> {};
+            for (int i = 0; i < queueCapacity; i++) {
+                executor.getQueue().add(queuedTask);
+            }
+            reportSuccessfulCompletion("extra-worker-1");
+            reportSuccessfulCompletion("extra-worker-2");
+            assertEquals(3, executor.getPoolSize());
+            reportSuccessfulCompletion("queue-full");
+            reportSuccessfulCompletion("also-queue-full");
+            verify(monitor, never()).report(eq(V2QueueReporter.DROPPED_REPORTS), any(), anyDouble());
+            reporter.reportDroppedQueueFull();
+            verify(monitor).report(V2QueueReporter.DROPPED_REPORTS, tags, 2.0);
+
+            reporter.closeReportExecutor();
+            reportSuccessfulCompletion("shutdown");
+            reporter.reportDroppedQueueFull();
+            verify(monitor).report(V2QueueReporter.DROPPED_REPORTS, tags, 0.0);
+        } finally {
+            releaseReport.countDown();
+        }
     }
 
     @Test
@@ -183,7 +258,7 @@ class V2QueueReporterTest {
                 registered++;
             }
         }
-        assertEquals(8, registered);
+        assertEquals(9, registered);
     }
 
     @Test
@@ -196,13 +271,13 @@ class V2QueueReporterTest {
         assertTrue(request.cancel(CancelReason.DEADLINE_EXCEEDED));
         assertFalse(request.cancel(CancelReason.DEADLINE_EXCEEDED));
         observed.join();
-        verify(monitor).report(V2QueueReporter.REJECTED,
+        verify(monitor, timeout(5000)).report(V2QueueReporter.REJECTED,
                 FlexMetricTags.of("queue", "decode_reserved", "reason", "REQUEST_TIMEOUT", "priority", "50"), 1.0);
 
         Request cancelled = add("2");
         cancelled.cancel(CancelReason.CLIENT_CANCELLED);
         reporter.completed(cancelled, null);
-        verify(monitor).report(V2QueueReporter.REJECTED,
+        verify(monitor, timeout(5000)).report(V2QueueReporter.REJECTED,
                 FlexMetricTags.of("queue", "main", "reason", "REQUEST_CANCELLED", "priority", "50"), 1.0);
     }
 
@@ -229,6 +304,14 @@ class V2QueueReporterTest {
         clearInvocations(monitor);
         reporter.samplePrefillInflight(List.of(), 8);
         verify(monitor, never()).report(eq(V2QueueReporter.PREFILL_INFLIGHT), eq(tags), anyDouble());
+    }
+
+    private void reportSuccessfulCompletion(String id) {
+        Request request = add(id);
+        request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
+        request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING);
+        assertTrue(request.publish(Stage.DECODE_WAITING, List.of()));
+        reporter.completed(request, request.future().join());
     }
 
     private Request add(String id) {

@@ -1,9 +1,11 @@
 package org.flexlb.dao;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.google.protobuf.ByteString;
 import io.opentelemetry.context.Context;
 import lombok.AccessLevel;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -61,6 +63,11 @@ public class BalanceContext {
     private final CompletableFuture<Long> theoryHitTokens = new CompletableFuture<>();
 
     //======================== Meters =======================//
+
+    @JsonIgnore
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
+    private final BalanceMetrics metrics = new BalanceMetrics();
 
     private long startTime = System.currentTimeMillis();
 
