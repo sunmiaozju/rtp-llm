@@ -18,11 +18,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.flexlb.constant.MetricConstant.CACHE_FIND_MATCHING_ENGINES_RT;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_METRICS_REPORT_DROPPED;
 
 @Component
 public class AsyncRequestMetrics {
 
-    static final String DROPPED_REPORTS = "schedule_v2.metrics_report.dropped";
     private static final int REPORT_QUEUE_CAPACITY = 40960;
     private static final int REPORT_THREADS = Runtime.getRuntime().availableProcessors();
 
@@ -40,7 +40,7 @@ public class AsyncRequestMetrics {
 
     @PostConstruct
     void init() {
-        monitor.register(DROPPED_REPORTS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_METRICS_REPORT_DROPPED, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
     }
 
     public void reportCacheMatch(long cacheMatchUs) {
@@ -62,7 +62,8 @@ public class AsyncRequestMetrics {
 
     @Scheduled(fixedRate = 20_000L, initialDelay = 20_000L)
     void reportDroppedQueueFull() {
-        report(DROPPED_REPORTS, FlexMetricTags.of("reason", "queue_full"), reportsDroppedQueueFull.getAndSet(0L));
+        report(SCHEDULE_V2_METRICS_REPORT_DROPPED, FlexMetricTags.of("reason", "queue_full"),
+                reportsDroppedQueueFull.getAndSet(0L));
     }
 
     @PreDestroy

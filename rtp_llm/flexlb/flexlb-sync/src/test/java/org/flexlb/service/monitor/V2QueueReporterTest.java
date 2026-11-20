@@ -29,6 +29,14 @@ import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
 import static org.flexlb.constant.MetricConstant.CACHE_FIND_MATCHING_ENGINES_RT;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_METRICS_REPORT_DROPPED;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_BLOCKED_QPS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_DEPTH;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_REJECTED_QPS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_WAIT_MS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -138,9 +146,9 @@ class V2QueueReporterTest {
         reporter.sample(table, List.of());
         depth("decode_waiting", "all", 0);
         depth("decode_reserved", "all", 0);
-        verify(monitor, never()).report(eq(V2QueueReporter.DEPTH),
+        verify(monitor, never()).report(eq(SCHEDULE_V2_QUEUE_DEPTH),
                 eq(FlexMetricTags.of("queue", "prefill", "endpoint", "p1:8000")), anyDouble());
-        verify(monitor, never()).report(eq(V2QueueReporter.DEPTH),
+        verify(monitor, never()).report(eq(SCHEDULE_V2_QUEUE_DEPTH),
                 eq(FlexMetricTags.of("queue", "prefill", "endpoint", "p2:8000")), anyDouble());
     }
 
@@ -156,21 +164,21 @@ class V2QueueReporterTest {
 
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         reporter.blocked(request, Stage.PREFILL_WAITING, QueueBlockReason.PREFILL_INFLIGHT_FULL, "p1:8000");
-        verify(monitor, never()).report(eq(V2QueueReporter.ATTEMPTS), any(), anyDouble());
-        verify(monitor, never()).report(eq(V2QueueReporter.BLOCKED), any(), anyDouble());
+        verify(monitor, never()).report(eq(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS), any(), anyDouble());
+        verify(monitor, never()).report(eq(SCHEDULE_V2_QUEUE_BLOCKED_QPS), any(), anyDouble());
         request.fail(StrategyErrorType.DISPATCH_FAILED, "test failure");
         reporter.completed(request, request.future().join());
 
-        verify(monitor, timeout(5000)).report(V2QueueReporter.WAIT,
+        verify(monitor, timeout(5000)).report(SCHEDULE_V2_QUEUE_WAIT_MS,
                 FlexMetricTags.of("queue", "decode", "result", "failed"), 0.0);
-        verify(monitor, times(2)).report(eq(V2QueueReporter.ATTEMPTS), any(), anyDouble());
-        verify(monitor, times(2)).report(eq(V2QueueReporter.BLOCKED), any(), anyDouble());
+        verify(monitor, times(2)).report(eq(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS), any(), anyDouble());
+        verify(monitor, times(2)).report(eq(SCHEDULE_V2_QUEUE_BLOCKED_QPS), any(), anyDouble());
         var main = FlexMetricTags.of("queue", "main", "reason", "SHARED_QUEUE_FULL", "priority", "50");
         var prefill = FlexMetricTags.of("queue", "prefill", "reason", "PREFILL_INFLIGHT_FULL", "priority", "50");
-        verify(monitor).report(V2QueueReporter.ATTEMPTS, main, 11.0);
-        verify(monitor).report(V2QueueReporter.ATTEMPTS, prefill, 1.0);
-        verify(monitor).report(V2QueueReporter.BLOCKED, main, 2.0);
-        verify(monitor).report(V2QueueReporter.BLOCKED, prefill, 1.0);
+        verify(monitor).report(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS, main, 11.0);
+        verify(monitor).report(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS, prefill, 1.0);
+        verify(monitor).report(SCHEDULE_V2_QUEUE_BLOCKED_QPS, main, 2.0);
+        verify(monitor).report(SCHEDULE_V2_QUEUE_BLOCKED_QPS, prefill, 1.0);
     }
 
     @Test
@@ -186,7 +194,7 @@ class V2QueueReporterTest {
         Thread.sleep(10L);
         request.fail(StrategyErrorType.QUEUE_FULL_LOW_PRIORITY_REJECTED, "queue full");
         observed.join();
-        verify(monitor, timeout(5000)).report(V2QueueReporter.REJECTED,
+        verify(monitor, timeout(5000)).report(SCHEDULE_V2_QUEUE_REJECTED_QPS,
                 FlexMetricTags.of("queue", "prefill", "reason", "QUEUE_FULL_LOW_PRIORITY_REJECTED", "priority", "50"),
                 1.0);
         assertTrue(request.ctx().getGlobalQueueMs() > 0);
@@ -201,8 +209,8 @@ class V2QueueReporterTest {
         FlexMetricTags tags = FlexMetricTags.of("queue", "main", "reason", "SHARED_QUEUE_FULL", "priority", "50");
         request.fail(StrategyErrorType.DISPATCH_FAILED, "test failure");
         reporter.completed(request, request.future().join());
-        verify(monitor, timeout(5000)).report(V2QueueReporter.BLOCKED, tags, 2.0);
-        verify(monitor).report(V2QueueReporter.ATTEMPTS, tags, 2.0);
+        verify(monitor, timeout(5000)).report(SCHEDULE_V2_QUEUE_BLOCKED_QPS, tags, 2.0);
+        verify(monitor).report(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS, tags, 2.0);
     }
 
     @Test
@@ -220,7 +228,7 @@ class V2QueueReporterTest {
             reportThread.complete(Thread.currentThread());
             releaseReport.await(10, TimeUnit.SECONDS);
             return null;
-        }).when(monitor).report(eq(V2QueueReporter.WAIT), any(), anyDouble());
+        }).when(monitor).report(eq(SCHEDULE_V2_QUEUE_WAIT_MS), any(), anyDouble());
 
         var tags = FlexMetricTags.of("reason", "queue_full");
         try {
@@ -237,14 +245,14 @@ class V2QueueReporterTest {
             reportSuccessfulCompletion("queue-full");
             asyncRequestMetrics.reportCacheMatch(1_500L);
             verify(monitor, never()).report(eq(CACHE_FIND_MATCHING_ENGINES_RT), any(), anyDouble());
-            verify(monitor, never()).report(eq(AsyncRequestMetrics.DROPPED_REPORTS), any(), anyDouble());
+            verify(monitor, never()).report(eq(SCHEDULE_V2_METRICS_REPORT_DROPPED), any(), anyDouble());
             asyncRequestMetrics.reportDroppedQueueFull();
-            verify(monitor).report(AsyncRequestMetrics.DROPPED_REPORTS, tags, 2.0);
+            verify(monitor).report(SCHEDULE_V2_METRICS_REPORT_DROPPED, tags, 2.0);
 
             asyncRequestMetrics.closeReportExecutor();
             reportSuccessfulCompletion("shutdown");
             asyncRequestMetrics.reportDroppedQueueFull();
-            verify(monitor).report(AsyncRequestMetrics.DROPPED_REPORTS, tags, 0.0);
+            verify(monitor).report(SCHEDULE_V2_METRICS_REPORT_DROPPED, tags, 0.0);
         } finally {
             releaseReport.countDown();
         }
@@ -281,7 +289,7 @@ class V2QueueReporterTest {
         verify(monitor).report(CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS, FlexMetricTags.of(), 256.0);
         verify(monitor).report(CACHE_AFFINITY_DECISION, FlexMetricTags.of("decision", "OVER_CAP"), 1.0);
         verify(monitor).report(CACHE_AFFINITY_OVER_CAP_MS, FlexMetricTags.of(), 15.0);
-        verify(monitor, times(3)).report(eq(V2QueueReporter.WAIT), any(), anyDouble());
+        verify(monitor, times(3)).report(eq(SCHEDULE_V2_QUEUE_WAIT_MS), any(), anyDouble());
         org.mockito.Mockito.verifyNoMoreInteractions(monitor);
     }
 
@@ -299,8 +307,8 @@ class V2QueueReporterTest {
         assertTrue(timedOut.cancel(CancelReason.DEADLINE_EXCEEDED));
         finishReports();
 
-        verify(monitor, times(3)).report(eq(V2QueueReporter.REJECTED), any(), anyDouble());
-        verify(monitor, times(9)).report(eq(V2QueueReporter.WAIT), any(), anyDouble());
+        verify(monitor, times(3)).report(eq(SCHEDULE_V2_QUEUE_REJECTED_QPS), any(), anyDouble());
+        verify(monitor, times(9)).report(eq(SCHEDULE_V2_QUEUE_WAIT_MS), any(), anyDouble());
         org.mockito.Mockito.verifyNoMoreInteractions(monitor);
     }
 
@@ -335,13 +343,13 @@ class V2QueueReporterTest {
         assertTrue(request.cancel(CancelReason.DEADLINE_EXCEEDED));
         assertFalse(request.cancel(CancelReason.DEADLINE_EXCEEDED));
         observed.join();
-        verify(monitor, timeout(5000)).report(V2QueueReporter.REJECTED,
+        verify(monitor, timeout(5000)).report(SCHEDULE_V2_QUEUE_REJECTED_QPS,
                 FlexMetricTags.of("queue", "decode_reserved", "reason", "REQUEST_TIMEOUT", "priority", "50"), 1.0);
 
         Request cancelled = add("2");
         cancelled.cancel(CancelReason.CLIENT_CANCELLED);
         reporter.completed(cancelled, null);
-        verify(monitor, timeout(5000)).report(V2QueueReporter.REJECTED,
+        verify(monitor, timeout(5000)).report(SCHEDULE_V2_QUEUE_REJECTED_QPS,
                 FlexMetricTags.of("queue", "main", "reason", "REQUEST_CANCELLED", "priority", "50"), 1.0);
     }
 
@@ -353,21 +361,21 @@ class V2QueueReporterTest {
                 java.util.Map.of("running", org.flexlb.enums.TaskPhase.RUNNING));
         FlexMetricTags tags = FlexMetricTags.of("endpoint", endpoint.ipPort());
         reporter.samplePrefillInflight(List.of(queue), 4);
-        verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT, tags, 1.0);
-        verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 4.0);
+        verify(monitor).report(SCHEDULE_V2_PREFILL_INFLIGHT, tags, 1.0);
+        verify(monitor).report(SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 4.0);
         clearInvocations(monitor);
 
         reporter.samplePrefillInflight(List.of(queue), 8);
-        verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 8.0);
+        verify(monitor).report(SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 8.0);
         clearInvocations(monitor);
 
         reporter.samplePrefillInflight(List.of(), 8);
-        verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT, tags, 0.0);
-        verify(monitor).report(V2QueueReporter.PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 8.0);
+        verify(monitor).report(SCHEDULE_V2_PREFILL_INFLIGHT, tags, 0.0);
+        verify(monitor).report(SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), 8.0);
 
         clearInvocations(monitor);
         reporter.samplePrefillInflight(List.of(), 8);
-        verify(monitor, never()).report(eq(V2QueueReporter.PREFILL_INFLIGHT), eq(tags), anyDouble());
+        verify(monitor, never()).report(eq(SCHEDULE_V2_PREFILL_INFLIGHT), eq(tags), anyDouble());
     }
 
     private void finishReports() throws InterruptedException {
@@ -391,6 +399,6 @@ class V2QueueReporterTest {
     }
 
     private void depth(String queue, String endpoint, double value) {
-        verify(monitor).report(V2QueueReporter.DEPTH, FlexMetricTags.of("queue", queue, "endpoint", endpoint), value);
+        verify(monitor).report(SCHEDULE_V2_QUEUE_DEPTH, FlexMetricTags.of("queue", queue, "endpoint", endpoint), value);
     }
 }

@@ -31,6 +31,14 @@ import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_DECISION;
 import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_BLOCKED_QPS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_DEPTH;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_OLDEST_WAIT_MS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_REJECTED_QPS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_WAIT_MS;
 
 /**
  * V2 的实际等待人数与出队检查结果。人数按请求阶段采样，不把共享名额当作 Prefill 队列长度。
@@ -38,15 +46,6 @@ import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HI
  */
 @Component
 public class V2QueueReporter {
-
-    public static final String DEPTH = "schedule_v2.queue.depth";
-    public static final String OLDEST = "schedule_v2.queue.oldest_wait_ms";
-    public static final String BLOCKED = "schedule_v2.queue.blocked.qps";
-    public static final String ATTEMPTS = "schedule_v2.queue.blocked_attempt.qps";
-    public static final String REJECTED = "schedule_v2.queue.rejected.qps";
-    public static final String WAIT = "schedule_v2.queue.wait_ms";
-    public static final String PREFILL_INFLIGHT = "schedule_v2.prefill.inflight";
-    public static final String PREFILL_INFLIGHT_LIMIT = "schedule_v2.prefill.inflight_limit";
 
     private Set<String> previousPrefillEndpoints = Set.of();
     private final FlexMonitor monitor;
@@ -60,14 +59,14 @@ public class V2QueueReporter {
 
     @PostConstruct
     public void init() {
-        monitor.register(DEPTH, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(OLDEST, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(PREFILL_INFLIGHT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(PREFILL_INFLIGHT_LIMIT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(WAIT, FlexMetricType.TIMER, FlexPriorityType.NORMAL);
-        for (String metric : new String[]{BLOCKED, ATTEMPTS, REJECTED}) {
-            monitor.register(metric, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        }
+        monitor.register(SCHEDULE_V2_QUEUE_DEPTH, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_QUEUE_OLDEST_WAIT_MS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_PREFILL_INFLIGHT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricType.TIMER, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_QUEUE_BLOCKED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_QUEUE_REJECTED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
     }
 
     public void blocked(Request request, Stage stage, QueueBlockReason reason, String endpoint) {
@@ -161,12 +160,12 @@ public class V2QueueReporter {
                                   boolean succeeded) {
         reportBlockCounts(metrics, priority);
         if (reason != null) {
-            report(REJECTED, blockTags(queueName(progress.previousStage()), reason, priority), 1L);
+            report(SCHEDULE_V2_QUEUE_REJECTED_QPS, blockTags(queueName(progress.previousStage()), reason, priority), 1L);
         }
         String result = progress.stage() == Stage.PUBLISHED ? "success" : "failed";
-        report(WAIT, FlexMetricTags.of("queue", "main", "result", result), progress.mainMs());
-        report(WAIT, FlexMetricTags.of("queue", "prefill", "result", result), progress.prefillMs());
-        report(WAIT, FlexMetricTags.of("queue", "decode", "result", result), progress.decodeMs());
+        report(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricTags.of("queue", "main", "result", result), progress.mainMs());
+        report(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricTags.of("queue", "prefill", "result", result), progress.prefillMs());
+        report(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricTags.of("queue", "decode", "result", result), progress.decodeMs());
         if (succeeded) {
             PrefillRouteMetrics sample = metrics.getPrefillRouteMetrics();
             if (sample != null) {
@@ -193,10 +192,10 @@ public class V2QueueReporter {
             long attempts = counts.getAttemptCount().get();
             FlexMetricTags tags = blockTags(key.queue(), key.reason(), priority);
             if (attempts > 0L) {
-                report(ATTEMPTS, tags, attempts);
+                report(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS, tags, attempts);
             }
             if (blocks > 0L) {
-                report(BLOCKED, tags, blocks);
+                report(SCHEDULE_V2_QUEUE_BLOCKED_QPS, tags, blocks);
             }
         });
     }
@@ -233,8 +232,8 @@ public class V2QueueReporter {
         keys.addAll(counts.keySet());
         for (QueueKey key : keys) {
             FlexMetricTags tags = FlexMetricTags.of("queue", key.queue(), "endpoint", key.endpoint());
-            report(DEPTH, tags, counts.getOrDefault(key, 0L));
-            report(OLDEST, tags, oldest.getOrDefault(key, 0L));
+            report(SCHEDULE_V2_QUEUE_DEPTH, tags, counts.getOrDefault(key, 0L));
+            report(SCHEDULE_V2_QUEUE_OLDEST_WAIT_MS, tags, oldest.getOrDefault(key, 0L));
         }
         keys.retainAll(counts.keySet());
         previousQueues = keys;
@@ -249,15 +248,15 @@ public class V2QueueReporter {
             String endpoint = queue.endpoint().ipPort();
             endpoints.add(endpoint);
             FlexMetricTags tags = FlexMetricTags.of("endpoint", endpoint);
-            report(PREFILL_INFLIGHT, tags, queue.inflightCount());
+            report(SCHEDULE_V2_PREFILL_INFLIGHT, tags, queue.inflightCount());
         }
         for (String endpoint : previousPrefillEndpoints) {
             if (!endpoints.contains(endpoint)) {
                 FlexMetricTags tags = FlexMetricTags.of("endpoint", endpoint);
-                report(PREFILL_INFLIGHT, tags, 0L);
+                report(SCHEDULE_V2_PREFILL_INFLIGHT, tags, 0L);
             }
         }
-        report(PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), limit);
+        report(SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT, FlexMetricTags.of(), limit);
         previousPrefillEndpoints = endpoints;
     }
 

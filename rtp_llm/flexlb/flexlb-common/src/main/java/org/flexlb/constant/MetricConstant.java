@@ -659,6 +659,18 @@ public class MetricConstant {
      */
     public static final String ROUTING_RETRY_QPS = "app.routing.retry.qps";
 
+    /* ------------------------ V2 Scheduling Monitoring -------------------------- */
+
+    public static final String SCHEDULE_V2_QUEUE_DEPTH = "schedule_v2.queue.depth";
+    public static final String SCHEDULE_V2_QUEUE_OLDEST_WAIT_MS = "schedule_v2.queue.oldest_wait_ms";
+    public static final String SCHEDULE_V2_QUEUE_BLOCKED_QPS = "schedule_v2.queue.blocked.qps";
+    public static final String SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS = "schedule_v2.queue.blocked_attempt.qps";
+    public static final String SCHEDULE_V2_QUEUE_REJECTED_QPS = "schedule_v2.queue.rejected.qps";
+    public static final String SCHEDULE_V2_QUEUE_WAIT_MS = "schedule_v2.queue.wait_ms";
+    public static final String SCHEDULE_V2_PREFILL_INFLIGHT = "schedule_v2.prefill.inflight";
+    public static final String SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT = "schedule_v2.prefill.inflight_limit";
+    public static final String SCHEDULE_V2_METRICS_REPORT_DROPPED = "schedule_v2.metrics_report.dropped";
+
     /* ------------------------ Resource Monitoring -------------------------- */
 
     /**
