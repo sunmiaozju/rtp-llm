@@ -90,13 +90,15 @@ class HttpLoadBalanceServerTest {
 
     @Test
     void inflightStatusExposesObservedAndIndexedCacheVersions() {
+        String address = "127.0.0.1:8080";
+        String endpointPath = "$.prefill_endpoints[?(@.ip_port == '%s')]".formatted(address);
         ConfigService configService = mock(ConfigService.class);
         RequestScheduler scheduler = mock(RequestScheduler.class);
         PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
         WorkerStatus status = mock(WorkerStatus.class);
         when(configService.loadBalanceConfig()).thenReturn(new FlexlbConfig());
         when(endpoint.getStatus()).thenReturn(status);
-        when(endpoint.ipPort()).thenReturn("127.0.0.1:8080");
+        when(endpoint.ipPort()).thenReturn(address);
         when(status.cacheIndexSnapshot()).thenReturn(
                 new WorkerStatus.CacheIndexSnapshot(
                         CacheStatus.builder()
@@ -105,7 +107,8 @@ class HttpLoadBalanceServerTest {
                                 .build(),
                         true,
                         8L));
-        EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).put("127.0.0.1:8080", endpoint);
+        var endpoints = EndpointRegistry.getEndpointsByRole(RoleType.PREFILL);
+        endpoints.put(address, endpoint);
         try {
             HttpLoadBalanceServer server = new HttpLoadBalanceServer(mock(LBStatusConsistencyService.class),
                     configService, scheduler, mock(WorkerDirectory.class), mock(MasterEngineSynchronizer.class),
@@ -118,18 +121,12 @@ class HttpLoadBalanceServerTest {
                     .expectStatus()
                     .isOk()
                     .expectBody()
-                    .jsonPath("$.prefill_endpoints[0].ip_port")
-                    .isEqualTo("127.0.0.1:8080")
-                    .jsonPath("$.prefill_endpoints[0].cache_version")
-                    .isEqualTo(9)
-                    .jsonPath("$.prefill_endpoints[0].cache_indexed")
-                    .isEqualTo(true)
-                    .jsonPath("$.prefill_endpoints[0].cache_indexed_version")
-                    .isEqualTo(8)
-                    .jsonPath("$.prefill_endpoints[0].cache_key_size")
-                    .isEqualTo(4);
+                    .jsonPath(endpointPath + ".cache_version").isEqualTo(9)
+                    .jsonPath(endpointPath + ".cache_indexed").isEqualTo(true)
+                    .jsonPath(endpointPath + ".cache_indexed_version").isEqualTo(8)
+                    .jsonPath(endpointPath + ".cache_key_size").isEqualTo(4);
         } finally {
-            EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).clear();
+            endpoints.remove(address, endpoint);
         }
     }
 

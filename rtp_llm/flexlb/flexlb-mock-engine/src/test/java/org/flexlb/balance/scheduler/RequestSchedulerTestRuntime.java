@@ -52,6 +52,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
     private final QueueCapacity queueCapacity = new QueueCapacity();
     private final BindingRouter router;
     private final EndpointRegistry registry;
+    private final List<WorkerEndpoint> publishedEndpoints = new ArrayList<>();
     private final EvictionManager evictionManager;
     private final RequestScheduler scheduler;
     private final SchedulerRuntime runtime;
@@ -105,6 +106,11 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
 
     public RequestScheduler scheduler() {
         return scheduler;
+    }
+
+    public void publishEndpoint(WorkerStatus status, WorkerStatus.PreparedStatus prepared) {
+        WorkerEndpoint endpoint = registry.publishPreparedEndpoint(status.getIpPort(), status, prepared).endpoint();
+        publishedEndpoints.add(endpoint);
     }
 
     /**
@@ -231,7 +237,16 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
     @Override
     public void close() {
         evictionManager.shutdown();
-        runtime.shutdown();
+        try {
+            runtime.shutdown();
+        } finally {
+            // Test JVMs reuse the static address maps across scheduler instances.
+            for (WorkerEndpoint endpoint : publishedEndpoints) {
+                WorkerStatus status = endpoint.getStatus();
+                EndpointRegistry.getEndpointsByRole(status.getRole()).remove(status.getIpPort(), endpoint);
+            }
+            publishedEndpoints.clear();
+        }
     }
 
     private static final class BindingRouter extends DefaultRouter {

@@ -34,6 +34,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -52,6 +53,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
             new PlacementAvailability();
     private final QueueCapacity queueCapacity = new QueueCapacity();
     private final EndpointRegistry registry;
+    private final ConcurrentLinkedQueue<WorkerEndpoint> publishedEndpoints = new ConcurrentLinkedQueue<>();
     private final RequestScheduler scheduler;
     private final SchedulerRuntime runtime;
     private final BindingRouter router;
@@ -117,6 +119,12 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
 
     public EndpointRegistry endpointRegistry() {
         return registry;
+    }
+
+    public WorkerEndpoint publishEndpoint(WorkerStatus status, WorkerStatus.PreparedStatus prepared) {
+        WorkerEndpoint endpoint = registry.publishPreparedEndpoint(status.getLogicalIpPort(), status, prepared).endpoint();
+        publishedEndpoints.add(endpoint);
+        return endpoint;
     }
 
     public PlacementAvailability placementAvailability() {
@@ -259,7 +267,15 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
 
     @Override
     public void close() {
-        runtime.shutdown();
+        try {
+            runtime.shutdown();
+        } finally {
+            // Test JVMs reuse the static address maps across scheduler instances.
+            for (WorkerEndpoint endpoint : publishedEndpoints) {
+                EndpointRegistry.getEndpointsByRole(endpoint.getStatus().getRole()).remove(endpoint.ipPort(), endpoint);
+            }
+            publishedEndpoints.clear();
+        }
     }
 
     private static final class BindingRouter extends DefaultRouter {

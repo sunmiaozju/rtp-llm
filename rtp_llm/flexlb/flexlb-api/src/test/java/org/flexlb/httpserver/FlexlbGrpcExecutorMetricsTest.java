@@ -73,7 +73,7 @@ class FlexlbGrpcExecutorMetricsTest {
     @Timeout(15)
     void registersAndRunsExecutorMetricsThroughSpringScheduling() throws Exception {
         assertTrue(Application.class.isAnnotationPresent(EnableScheduling.class));
-        assertEquals(2_000L, FlexlbGrpcServer.class.getDeclaredMethod("reportExecutorMetrics")
+        assertEquals(20_000L, FlexlbGrpcServer.class.getDeclaredMethod("reportExecutorMetrics")
                 .getAnnotation(Scheduled.class).fixedRate());
         try (Fixture fixture = new Fixture();
              AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
@@ -81,9 +81,9 @@ class FlexlbGrpcExecutorMetricsTest {
             doNothing().when(scheduledServer).start();
             context.register(SchedulingConfiguration.class);
             context.registerBean(FlexlbGrpcServer.class, () -> scheduledServer);
+            fixture.blockFirstTaskAndQueueSecond();
             context.refresh();
 
-            fixture.blockFirstTaskAndQueueSecond();
             long timeoutAt = System.nanoTime() + TimeUnit.SECONDS.toNanos(6);
             while (!(fixture.hasValue(MetricConstant.GRPC_SERVER_EXECUTOR_ACTIVE_THREADS, 1)
                     && fixture.hasValue(MetricConstant.GRPC_SERVER_EXECUTOR_QUEUE_SIZE, 1)

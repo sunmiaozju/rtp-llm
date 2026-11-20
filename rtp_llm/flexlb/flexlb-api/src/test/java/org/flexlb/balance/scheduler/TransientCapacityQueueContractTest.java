@@ -7,7 +7,6 @@ import org.flexlb.balance.delivery.BatchDeliveryStrategy;
 import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.scheduler.decode.DecodeMode;
@@ -748,7 +747,7 @@ class TransientCapacityQueueContractTest {
                         RoleType.DECODE, "127.0.0.2", 18_082);
                 DecodeEndpoint spareEndpoint = (DecodeEndpoint)
                         publishEndpoint(
-                                fixture.runtime.endpointRegistry(),
+                                fixture.runtime,
                                 RoleType.DECODE,
                                 "127.0.0.2:18082",
                                 spareStatus);
@@ -948,7 +947,7 @@ class TransientCapacityQueueContractTest {
                     RoleType.DECODE, "127.0.0.2", 18_082);
             DecodeEndpoint spareEndpoint = (DecodeEndpoint)
                     publishEndpoint(
-                            fixture.runtime.endpointRegistry(),
+                            fixture.runtime,
                             RoleType.DECODE,
                             "127.0.0.2:18082",
                             spareStatus);
@@ -1039,12 +1038,12 @@ class TransientCapacityQueueContractTest {
             decodeStatus = initializedStatus(
                     RoleType.DECODE, "127.0.0.1", 18_081);
             prefillEndpoint = (PrefillEndpoint) publishEndpoint(
-                    runtime.endpointRegistry(),
+                    runtime,
                     RoleType.PREFILL,
                     PREFILL_ADDRESS,
                     prefillStatus);
             decodeEndpoint = (DecodeEndpoint) publishEndpoint(
-                    runtime.endpointRegistry(),
+                    runtime,
                     RoleType.DECODE,
                     DECODE_ADDRESS,
                     decodeStatus);
@@ -1108,7 +1107,7 @@ class TransientCapacityQueueContractTest {
                         RoleType.PREFILL, ip, port);
                 PrefillEndpoint endpoint = (PrefillEndpoint)
                         publishEndpoint(
-                                runtime.endpointRegistry(),
+                                runtime,
                                 RoleType.PREFILL,
                                 ip + ":" + port,
                                 status);
@@ -1121,7 +1120,7 @@ class TransientCapacityQueueContractTest {
                         RoleType.DECODE, ip, port);
                 DecodeEndpoint endpoint = (DecodeEndpoint)
                         publishEndpoint(
-                                runtime.endpointRegistry(),
+                                runtime,
                                 RoleType.DECODE,
                                 ip + ":" + port,
                                 status);
@@ -1440,7 +1439,7 @@ class TransientCapacityQueueContractTest {
                 role, "capacity-contract", ip, port, port + 1, null);
     }
 
-    private static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+    private static WorkerEndpoint publishEndpoint(RequestSchedulerTestRuntime runtime,
                                                   RoleType role,
                                                   String physicalAddress,
                                                   WorkerStatus status) {
@@ -1450,10 +1449,7 @@ class TransientCapacityQueueContractTest {
         try {
             WorkerStatus.PreparedStatus prepared =
                     status.prepareNewStatus(EngineStatusConverter.convertToStatusObservation(status, response.build()));
-            WorkerEndpoint endpoint = registry
-                    .publishPreparedEndpoint(
-                            status.getLogicalIpPort(), status, prepared)
-                    .endpoint();
+            WorkerEndpoint endpoint = runtime.publishEndpoint(status, prepared);
             status.recordSuccessfulPoll(true);
             return endpoint;
         } finally {

@@ -10,6 +10,7 @@ import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
 import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.PrefillTtftEstimator;
+import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.planner.GroupPlanner;
 import org.flexlb.balance.prediction.PrefillTimePredictor;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
@@ -25,6 +26,7 @@ import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.pv.DecisionGroup;
 import org.flexlb.dao.route.RoleType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -52,7 +54,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -429,29 +433,32 @@ class WorkerBatcherSchedulingTest {
             decision.setMaxCollectionWaitMs(windowMs);
         }
         PrefillEndpoint endpoint = stableEndpoint(stableStatus());
-        when(endpoint.reserveSingle(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyLong()))
+        when(endpoint.reserveSingle(any(), anyLong()))
                 .thenAnswer(ignored -> ReservationResult.success(mock(SingleReservation.class)));
         DeliveryStrategy delivery = mock(DeliveryStrategy.class);
-        List<org.flexlb.dao.pv.DecisionGroup> published = new CopyOnWriteArrayList<>();
-        when(delivery.prepare(org.mockito.ArgumentMatchers.any())).thenAnswer(invocation -> {
-            List<ScheduledRequest> members = List.copyOf(((DeliveryGroup) invocation.getArgument(0)).requests());
-                    var transaction = mock(DeliveryTransaction.class);
-                    when(transaction.requests()).thenReturn(members);
-                    org.mockito.Mockito.doAnswer(ignored -> {
-                        for (ScheduledRequest member : members) {
-                            published.add(member.ctx().getDecisionGroup());
-                            member.future().complete(new Response());
-                        }
-                        return null;
-                    })
-                            .when(transaction)
-                            .deliver(
-                    org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt(),
-                    org.mockito.ArgumentMatchers.any());
+        WorkerBatcher runtime = runningRuntime(config, endpoint, delivery, mock(PrefillTtftEstimator.class));
+        List<DecisionGroup> published = new CopyOnWriteArrayList<>();
+        when(delivery.prepare(any())).thenAnswer(invocation -> {
+            DeliveryGroup group = invocation.getArgument(0);
+            List<ScheduledRequest> members = List.copyOf(group.requests());
+            var transaction = mock(DeliveryTransaction.class);
+            when(transaction.requests()).thenReturn(members);
+            when(transaction.commit()).thenAnswer(ignored -> {
+                // The batcher calls commit with the queue lock held. A committed request must not be selected again.
+                for (ScheduledRequest member : members) {
+                    assertTrue(runtime.ownedState().removeQueuedRequest(member));
+                }
+                return new WorkView(System.currentTimeMillis(), List.of(), List.of(), 0L);
+            });
+            doAnswer(ignored -> {
+                for (ScheduledRequest member : members) {
+                    published.add(member.ctx().getDecisionGroup());
+                    member.future().complete(new Response());
+                }
+                return null;
+            }).when(transaction).deliver(anyString(), anyInt(), any());
             return transaction;
         });
-        WorkerBatcher runtime = runningRuntime(config, endpoint, delivery, mock(PrefillTtftEstimator.class));
         List<ScheduledRequest> requests = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             ScheduledRequest request = item(config, endpoint, 100L + i, 50, System.currentTimeMillis());
@@ -461,6 +468,7 @@ class WorkerBatcherSchedulingTest {
         for (ScheduledRequest request : requests) {
             request.future().get(5, TimeUnit.SECONDS);
         }
+        assertEquals(0, runtime.queueSize(), "committed requests must leave the waiting queue");
         assertEquals(count, published.size());
         String id = published.getFirst().id();
         assertNotNull(id);

@@ -393,6 +393,7 @@ class ComprehensiveFaultInjectionTest {
         int basePort = startClusterWithGrpc(model, 1, 2);
         int prefillPort = basePort;
         JavaMockEngineCluster.FastRpcService prefill = prefillServices.get(0);
+        Server prefillServer = serversByPort.get(prefillPort);
 
         try {
             // Inject crash_after with n=3 via HTTP
@@ -424,11 +425,14 @@ class ComprehensiveFaultInjectionTest {
             assertEquals(8, emptyAfter,
                     "8 requests should get empty response after crash, got " + emptyAfter);
             assertTrue(prefill.isStopped(), "engine should be stopped after crash");
+            assertTrue(prefillServer.awaitTermination(5, TimeUnit.SECONDS),
+                    "crash should shut down the original prefill gRPC server before restart");
 
             // Restart via /start_engine — this now auto-clears fault config
             // and resets enqueueCount, so no /clear_inject needed
-            httpPost(controlServer.getPort(), "/start_engine",
+            var restart = MockEngineTestSupport.httpPostResponse(controlServer.getPort(), "/start_engine",
                     "{\"port\":" + prefillPort + "}");
+            assertEquals(200, restart.statusCode(), restart::body);
             assertFalse(prefill.isStopped(), "engine should be running after /start_engine");
             assertEquals(0, prefill.getFaultConfig().getCrashAfterNRequests(),
                     "start_engine should have cleared crash_after fault config");
@@ -684,6 +688,7 @@ class ComprehensiveFaultInjectionTest {
                     .build()
                     .start();
             serversByPort.put(port, server);
+            service.setGrpcServer(server);
         }
         for (int i = 0; i < nDecode; i++) {
             int port = basePort + nPrefill + i;
@@ -703,6 +708,7 @@ class ComprehensiveFaultInjectionTest {
                     .build()
                     .start();
             serversByPort.put(port, server);
+            service.setGrpcServer(server);
         }
 
         controlServer = new MockControlServer(services, serversByPort, bossGroup, workerGroup, "127.0.0.1", 0);
