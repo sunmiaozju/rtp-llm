@@ -12,7 +12,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.io.BufferedWriter;
 import java.io.IOException;
@@ -35,7 +34,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class TheoryCacheHitReporter {
 
     private static final int THEORY_HIT_REPORT_QUEUE_CAPACITY = 100_000;
-    private static final Object THEORY_LOG_LOCK = new Object();
     private static final DateTimeFormatter THEORY_LOG_TIME_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX").withZone(ZoneId.systemDefault());
 
@@ -45,8 +43,8 @@ public class TheoryCacheHitReporter {
     @Autowired(required = false)
     private CacheMetricsReporter cacheMetricsReporter;
 
-    @Autowired
-    private ConfigService configService;
+    private final ConfigService configService;
+    private final Object theoryLogLock = new Object();
 
     private final AtomicLong droppedReportCount = new AtomicLong();
     private final ThreadPoolExecutor theoryHitReportExecutor = new ThreadPoolExecutor(
@@ -56,12 +54,20 @@ public class TheoryCacheHitReporter {
                 return thread;
             }, new ThreadPoolExecutor.AbortPolicy());
 
-    private static volatile BufferedWriter theoryLogWriter;
-    private static volatile boolean theoryLogOpenFailed;
-    private static volatile boolean theoryLogFlushFailed;
+    private volatile BufferedWriter theoryLogWriter;
+    private boolean theoryLogFlushFailed;
 
     private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
     private static final long FNV_PRIME = 0x100000001b3L;
+
+    public TheoryCacheHitReporter(ConfigService configService) {
+        this.configService = configService;
+        var logConfig = configService.loadBalanceConfig().getObservability().getCacheHit().getTheoryLog();
+        // Open only at startup; request reporting never opens or retries the file.
+        if (logConfig != null) {
+            theoryLogWriter = openTheoryLog(logConfig.getPath());
+        }
+    }
 
     public void report(BalanceContext balanceContext) {
         if (balanceContext == null) {
@@ -100,9 +106,8 @@ public class TheoryCacheHitReporter {
         if (config.getObservability().getCacheHit().isRequestTraceLogEnabled()) {
             logTrace(balanceContext, snapshot, hitTokens, inputTokens);
         }
-        if (theoryLogEnabled(config) && inputTokens > 0L) {
-            writeTheoryLogLine(formatTheoryLogLine(balanceContext, hitTokens, inputTokens),
-                    config.getObservability().getCacheHit().getTheoryLog().getPath());
+        if (theoryLogWriter != null && theoryLogEnabled(config) && inputTokens > 0L) {
+            writeTheoryLogLine(formatTheoryLogLine(balanceContext, hitTokens, inputTokens));
         }
         if (cacheMetricsReporter != null && config.getObservability().getCacheHit().isMetricsEnabled()) {
             cacheMetricsReporter.reportTheoryPoolMetrics(snapshot.getPoolUsedKeys(), snapshot.getPoolCapacityKeys());
@@ -121,17 +126,6 @@ public class TheoryCacheHitReporter {
             return inputTokens;
         }
         return Math.min(inputTokens, hitTokens);
-    }
-
-    @PostConstruct
-    public void initializeTheoryLog() {
-        FlexlbConfig config = configService.loadBalanceConfig();
-        if (!theoryLogEnabled(config)) {
-            return;
-        }
-        synchronized (THEORY_LOG_LOCK) {
-            getTheoryLogWriterLocked(config.getObservability().getCacheHit().getTheoryLog().getPath());
-        }
     }
 
     private void logTrace(BalanceContext balanceContext, RecentCacheKeyWindow.Snapshot snapshot,
@@ -175,12 +169,9 @@ public class TheoryCacheHitReporter {
         return THEORY_LOG_TIME_FORMATTER.format(Instant.ofEpochMilli(timestampMs));
     }
 
-    private static void writeTheoryLogLine(String line, String logPath) {
-        if (theoryLogOpenFailed) {
-            return;
-        }
-        synchronized (THEORY_LOG_LOCK) {
-            BufferedWriter writer = getTheoryLogWriterLocked(logPath);
+    private void writeTheoryLogLine(String line) {
+        synchronized (theoryLogLock) {
+            BufferedWriter writer = theoryLogWriter;
             if (writer == null) {
                 return;
             }
@@ -193,26 +184,23 @@ public class TheoryCacheHitReporter {
         }
     }
 
-    private static BufferedWriter getTheoryLogWriterLocked(String configuredPath) {
-        if (theoryLogWriter != null || theoryLogOpenFailed) {
-            return theoryLogWriter;
-        }
+    private static BufferedWriter openTheoryLog(String configuredPath) {
         Path logPath = Path.of(configuredPath);
         try {
             Path parent = logPath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            theoryLogWriter = Files.newBufferedWriter(logPath,
+            BufferedWriter writer = Files.newBufferedWriter(logPath,
                     StandardCharsets.UTF_8,
                     StandardOpenOption.CREATE,
                     StandardOpenOption.APPEND);
             Logger.info("Master theory hit log path: {}", logPath);
+            return writer;
         } catch (IOException e) {
-            theoryLogOpenFailed = true;
             Logger.warn("Failed to open master theory hit log path {}: {}", logPath, e.getMessage());
+            return null;
         }
-        return theoryLogWriter;
     }
 
     private static boolean theoryLogEnabled(FlexlbConfig config) {
@@ -228,7 +216,7 @@ public class TheoryCacheHitReporter {
         if (theoryLogWriter == null) {
             return;
         }
-        synchronized (THEORY_LOG_LOCK) {
+        synchronized (theoryLogLock) {
             BufferedWriter writer = theoryLogWriter;
             if (writer == null) {
                 return;
@@ -259,7 +247,7 @@ public class TheoryCacheHitReporter {
             theoryHitReportExecutor.shutdownNow();
             Thread.currentThread().interrupt();
         }
-        synchronized (THEORY_LOG_LOCK) {
+        synchronized (theoryLogLock) {
             if (theoryLogWriter == null) {
                 return;
             }

@@ -4,6 +4,7 @@ import org.flexlb.cache.match.theory.TheoryCacheKeyHistory;
 import org.flexlb.cache.telemetry.CacheMetricsReporter;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
+import org.flexlb.config.ObservabilityConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.WorkerStatus;
@@ -12,11 +13,14 @@ import org.flexlb.dao.route.RoleType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,6 +29,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -39,8 +44,19 @@ class TheoryCacheHitReporterTest {
 
     private final List<TheoryCacheHitReporter> reporters = new ArrayList<>();
 
+    @Mock
+    private ConfigService configService;
+
+    @TempDir
+    private Path logDirectory;
+
     private TheoryCacheHitReporter newReporter() {
-        TheoryCacheHitReporter reporter = new TheoryCacheHitReporter();
+        return newReporter(new FlexlbConfig());
+    }
+
+    private TheoryCacheHitReporter newReporter(FlexlbConfig config) {
+        Mockito.lenient().when(configService.loadBalanceConfig()).thenReturn(config);
+        TheoryCacheHitReporter reporter = new TheoryCacheHitReporter(configService);
         reporters.add(reporter);
         return reporter;
     }
@@ -52,10 +68,8 @@ class TheoryCacheHitReporterTest {
 
     private void reportWithConfiguration(TheoryCacheHitReporter reporter,
                                                 BalanceContext context) throws Exception {
-        ConfigService configService = mock(ConfigService.class);
         FlexlbConfig config = context.getConfig();
         Mockito.lenient().when(configService.loadBalanceConfig()).thenReturn(config == null ? new FlexlbConfig() : config);
-        inject(reporter, "configService", configService);
         var theory = new java.util.concurrent.CompletableFuture<Long>();
         when(context.getTheoryHitTokens()).thenReturn(theory);
         theory.thenAccept(tokens -> {
@@ -78,6 +92,90 @@ class TheoryCacheHitReporterTest {
 
     @Mock
     private CacheMetricsReporter cacheMetricsReporter;
+
+    @Test
+    void should_open_theory_log_during_construction() {
+        Path logPath = logDirectory.resolve("nested/theory.log");
+
+        newReporter(theoryLogConfig(logPath));
+
+        assertTrue(Files.isRegularFile(logPath));
+    }
+
+    @Test
+    void should_append_and_flush_theory_reports() throws Exception {
+        Path logPath = logDirectory.resolve("theory.log");
+        Files.writeString(logPath, "previous report\n");
+        FlexlbConfig config = theoryLogConfig(logPath);
+        TheoryCacheHitReporter reporter = newReporter(config);
+        inject(reporter, "theoryCacheKeyHistory", smallWindow());
+
+        reportWithConfiguration(reporter, context(config, List.of(1L), 128L, 64L));
+        awaitReports(reporter);
+        reporter.flushTheoryLog();
+
+        List<String> lines = Files.readAllLines(logPath);
+        assertEquals(2, lines.size());
+        assertEquals("previous report", lines.getFirst());
+        assertTrue(lines.get(1).contains("request_hit_tokens=0 request_input_tokens=128 request_ratio=0.000000"));
+    }
+
+    @Test
+    void should_keep_reporter_log_files_and_close_operations_independent() throws Exception {
+        Path firstPath = logDirectory.resolve("first.log");
+        Path secondPath = logDirectory.resolve("second.log");
+        TheoryCacheHitReporter first = newReporter(theoryLogConfig(firstPath));
+        FlexlbConfig secondConfig = theoryLogConfig(secondPath);
+        TheoryCacheHitReporter second = newReporter(secondConfig);
+        inject(second, "theoryCacheKeyHistory", smallWindow());
+
+        first.closeTheoryLog();
+        reportWithConfiguration(second, context(secondConfig, List.of(1L), 128L, 64L));
+        awaitReports(second);
+        second.flushTheoryLog();
+
+        assertTrue(Files.readAllLines(firstPath).isEmpty());
+        assertEquals(1, Files.readAllLines(secondPath).size());
+    }
+
+    @Test
+    void should_not_open_theory_log_after_starting_with_logging_disabled() throws Exception {
+        TheoryCacheHitReporter reporter = newReporter();
+        inject(reporter, "theoryCacheKeyHistory", smallWindow());
+        Path logPath = logDirectory.resolve("late.log");
+        FlexlbConfig config = theoryLogConfig(logPath);
+
+        reportWithConfiguration(reporter, context(config, List.of(1L), 128L, 64L));
+        awaitReports(reporter);
+        reporter.flushTheoryLog();
+
+        assertFalse(Files.exists(logPath));
+    }
+
+    @Test
+    void should_not_retry_opening_theory_log_after_constructor_open_fails() throws Exception {
+        Path parent = logDirectory.resolve("blocked");
+        Files.writeString(parent, "not a directory");
+        Path logPath = parent.resolve("theory.log");
+        FlexlbConfig config = theoryLogConfig(logPath);
+        TheoryCacheHitReporter reporter = newReporter(config);
+        inject(reporter, "theoryCacheKeyHistory", smallWindow());
+        Files.delete(parent);
+
+        reportWithConfiguration(reporter, context(config, List.of(1L), 128L, 64L));
+        awaitReports(reporter);
+        reporter.flushTheoryLog();
+
+        assertFalse(Files.exists(logPath));
+    }
+
+    private static FlexlbConfig theoryLogConfig(Path path) {
+        FlexlbConfig config = new FlexlbConfig();
+        ObservabilityConfig.TheoryLogConfig theoryLog = new ObservabilityConfig.TheoryLogConfig();
+        theoryLog.setPath(path.toString());
+        config.getObservability().getCacheHit().setTheoryLog(theoryLog);
+        return config;
+    }
 
     @Test
     void should_report_request_hits_against_prior_pool() throws Exception {
