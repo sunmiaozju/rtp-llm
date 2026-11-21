@@ -7,6 +7,8 @@ worker 选择契约，两者组合完成多角色多阶段路由。
 
 ## Router / DefaultRouter
 
+每套 FlexLB 部署只支持一个流量 group。`group` 用于匹配该部署的路由候选，不代表支持多个流量 group 共存或跨 group 回退。
+
 当前 `Schedule` 可传 `schedule_roles`（Encoder、Prefill、Decode、PDFusion）只选择指定角色；
 未传时选择模型配置的全部角色。显式角色去重后按 `ModelMetaConfig.requiredRoles()` 的顺序决策；
 未配置角色以及非法枚举值返回 `INVALID_REQUEST`。现有 VIT 不属于该新增请求枚举，
@@ -34,9 +36,7 @@ Encoder 选择器组成，按请求有效角色顺序逐个选择，并在失败
    `schedule_roles` 时取其交集，未传时使用全部配置角色。
 3. **逐角色选择**：Prefill/PDFusion 调用 `CostBasedPrefillStrategy`，Decode 调用
    `DecodeSelector`，Encoder 调用 `EncoderStrategy`；VIT 由 `VitCacheSelector` 单独选点。
-   `group` 初始为 null；每个角色选中后 `group = serverStatus.getGroup()`——**首个成功角色的
-   worker group 约束后续所有角色的候选集**（group 亲和链，如 DECODE 选中的 group 决定
-   PREFILL 只能在同 group 中选）。任一角色失败立即关闭之前的选择并返回错误。
+   PD 分离时，Decode 候选使用已选 Prefill 的 `group`，两者必须属于同一流量 group。
 4. **响应**：全部成功 → success 响应（携带 `List<ServerStatus>`；物理
    `server_ip/http_port/grpc_port` 保持不变，N>1 时每个成功项带逻辑 `engine_index`，
    N=1 时省略该字段）；没有可用角色时按该角色的错误类型返回。
