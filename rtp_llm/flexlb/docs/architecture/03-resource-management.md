@@ -42,8 +42,9 @@ WorkerStatus 的 `dp_master_address` 分组，没有该地址的 worker 独立�
 `router.roles.prefill.availability.maxPendingRequests`（默认 64）。上下线切换使用
 `router.availabilityHysteresisPercent`（默认 15）做滞回，避免在阈值附近抖动。
 
-请求选中 Prefill 后进入该节点的 `PrefillQueue`。等待请求占全局与共享子队列名额，
-不占已发布请求的 Prefill 并发名额。
+请求选中 Prefill 后进入该节点的 `PrefillQueue`。请求留在子队列时只占全局与共享子队列排队名额；
+出队前才占 Prefill 在途名额和 KV，等待 Decode 时继续持有。Decode 直接按全局队列顺序取单，
+不再检查 Prefill 容量。
 如果选中的 Prefill 在入队前摘流，请求回到主队列重新选点，保留原顺序和超时期限。
 
 ## Decode 容量与本地预留

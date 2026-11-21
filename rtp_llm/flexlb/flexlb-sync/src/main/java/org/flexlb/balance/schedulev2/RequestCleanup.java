@@ -36,7 +36,7 @@ public final class RequestCleanup {
     /**
      * 请求失败或取消后调用：取消超时任务，移出主队列、Prefill 队列和 Decode 队列的 waiting，删掉 Prefill 的 dispatch 记录，
      * 归还子队列名额和排队总数，最后从请求表移除。
-     * 消费者持有的 Prefill 名额和 Decode 预占由消费者归还；这里唤醒它检查取消或失败。
+     * 删除 dispatch 记录时归还 Prefill 在途名额；唤醒 Decode 消费者归还可能持有的 Decode 预占。
      */
     public void releaseEnded(Request request) {
         request.cancelDeadlineTask();

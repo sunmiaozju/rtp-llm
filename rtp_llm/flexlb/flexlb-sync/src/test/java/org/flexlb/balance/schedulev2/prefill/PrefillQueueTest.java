@@ -6,6 +6,7 @@ import org.flexlb.balance.prediction.PrefillTimePredictor;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
+import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
@@ -25,6 +26,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -178,8 +180,9 @@ class PrefillQueueTest {
 
         assertEquals(2L, queue.inflightCount());
         assertEquals(1L, queue.unknownRequestCount());
-        assertTrue(queue.canDispatch(10L, 3));
-        assertFalse(queue.canDispatch(10L, 2));
+        Request incoming = enqueue("incoming", 10L);
+        assertEquals(QueueBlockReason.PREFILL_INFLIGHT_FULL, queue.tryReserveForDispatch(incoming, 2));
+        assertNull(queue.tryReserveForDispatch(incoming, 3));
     }
 
     @Test
@@ -189,20 +192,23 @@ class PrefillQueueTest {
         assertEquals(null, queue.tryAcquirePublishSlot(published, 4));
         V2TestSupport.report(endpoint, 1L, 100L, 1_000L, Map.of());
 
-        assertTrue(queue.canDispatch(40L, 10));
-        assertFalse(queue.canDispatch(41L, 10));
+        Request overBudget = enqueue("over-budget", 41L);
+        Request fits = enqueue("fits", 40L);
+        assertEquals(QueueBlockReason.PREFILL_KV_FULL, queue.tryReserveForDispatch(overBudget, 10));
+        assertNull(queue.tryReserveForDispatch(fits, 10));
+        assertTrue(queue.removeDispatched(fits));
 
         V2TestSupport.report(endpoint, 2L, 100L, 1_000L, Map.of("1", TaskPhase.PENDING));
 
         assertEquals(1L, queue.inflightCount());
-        assertTrue(queue.canDispatch(100L, 10));
+        assertNull(queue.tryReserveForDispatch(enqueue("full-budget", 100L), 10));
     }
 
     @Test
     void emptyMachineAcceptsRequestLargerThanAvailableKv() {
         V2TestSupport.report(endpoint, 1L, 10L, 1_000L, Map.of());
 
-        assertTrue(queue.canDispatch(500L, 10));
+        assertNull(queue.tryReserveForDispatch(enqueue("large", 500L), 10));
     }
 
     @Test
@@ -256,17 +262,14 @@ class PrefillQueueTest {
     }
 
     @Test
-    void decodeWaitingCandidatesDoNotConsumeActiveTaskLimit() {
-        for (int i = 0; i < 20; i++) {
-            V2TestSupport.dispatch(queue, new DispatchedRequest(request("candidate-" + i), 10L, 5L));
-        }
-        assertTrue(queue.hasDispatchSlot(4));
-        Request first = request("first");
-        V2TestSupport.dispatch(queue, new DispatchedRequest(first, 10L, 5L));
-        assertEquals(null, queue.tryAcquirePublishSlot(first, 1));
-        assertFalse(queue.hasDispatchSlot(1));
+    void recordingDispatchDoesNotTakeSlotUntilReservationSucceeds() {
+        Request first = enqueue("first", 10L);
+        queue.addDispatched(new DispatchedRequest(first, 10L, 5L));
+        assertEquals(0L, queue.inflightCount());
+        assertNull(queue.tryAcquirePublishSlot(first, 1));
+        assertEquals(1L, queue.inflightCount());
         queue.releasePublishSlot(first);
-        assertTrue(queue.hasDispatchSlot(1));
+        assertEquals(0L, queue.inflightCount());
     }
 
     @Test
@@ -276,12 +279,11 @@ class PrefillQueueTest {
         assertEquals(null, queue.tryAcquirePublishSlot(first, 4));
         V2TestSupport.report(endpoint, 1L, 1000L, 1000L,
                 Map.of("first", TaskPhase.RUNNING, "external", TaskPhase.PENDING));
-        assertTrue(queue.hasDispatchSlot(3));
-        assertFalse(queue.hasDispatchSlot(2));
+        assertEquals(2L, queue.inflightCount());
         V2TestSupport.report(endpoint, 2L, 1000L, 1000L, Map.of());
-        assertTrue(queue.hasDispatchSlot(1));
+        assertEquals(0L, queue.inflightCount());
         V2TestSupport.reportTasks(queue, Map.of(), Map.of("first", TaskPhase.RUNNING));
-        assertTrue(queue.hasDispatchSlot(1));
+        assertEquals(0L, queue.inflightCount());
     }
 
     @Test
@@ -307,7 +309,7 @@ class PrefillQueueTest {
                 future.get(5, java.util.concurrent.TimeUnit.SECONDS);
             }
             assertEquals(4, successes.get());
-            assertFalse(queue.hasDispatchSlot(4));
+            assertEquals(4L, queue.inflightCount());
         } finally {
             workers.shutdownNow();
         }
@@ -1088,7 +1090,15 @@ class PrefillQueueTest {
         assertEquals(0, acquiredSlots.get());
         assertEquals(1L, queue.inflightCount());
         assertEquals(1, queue.dispatchedCount());
-        assertFalse(queue.hasDispatchSlot(1));
+    }
+
+    private Request enqueue(String requestId, long seqLen) {
+        Request request = V2TestSupport.request(config, requestId, 50, seqLen);
+        request.setQueueSeq(nextQueueSeq.incrementAndGet());
+        V2TestSupport.choose(request, endpoint, 0L, 5L);
+        assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
+        queue.addWaiting(request);
+        return request;
     }
 
     private Request request(String requestId) {

@@ -18,7 +18,6 @@ import org.flexlb.balance.schedulev2.request.DecodeChoice;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
-import org.flexlb.config.ConfigService;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -52,7 +51,6 @@ public final class DecodeQueueConsumer implements Runnable {
     private final DecodeSelector decodeSelector;
     private final WorkerDirectory workerDirectory;
     private final DecodePreemptionCoordinator preemptionCoordinator;
-    private final ConfigService configService;
     private final PrefillPublishCheck prefillCheck;
     private final V2QueueReporter queueReporter;
     private final Runnable capacityWake; // 全体消费者共享同一实例，节点侧 Set 自动去重
@@ -63,7 +61,6 @@ public final class DecodeQueueConsumer implements Runnable {
                                DecodeSelector decodeSelector,
                                WorkerDirectory workerDirectory,
                                DecodePreemptionCoordinator preemptionCoordinator,
-                               ConfigService configService,
                                PrefillPublishCheck prefillCheck,
                                V2QueueReporter queueReporter,
                                Runnable capacityWake) {
@@ -72,7 +69,6 @@ public final class DecodeQueueConsumer implements Runnable {
         this.decodeSelector = decodeSelector;
         this.workerDirectory = workerDirectory;
         this.preemptionCoordinator = preemptionCoordinator;
-        this.configService = configService;
         this.prefillCheck = prefillCheck;
         this.queueReporter = queueReporter;
         this.capacityWake = capacityWake;
@@ -83,7 +79,7 @@ public final class DecodeQueueConsumer implements Runnable {
         try {
             while (running.get()) {
                 try {
-                    Request request = decodeQueue.take(this::tryAcquirePrefill, running::get);
+                    Request request = decodeQueue.take(running::get);
                     if (request != null) {
                         process(request);
                     }
@@ -102,30 +98,6 @@ public final class DecodeQueueConsumer implements Runnable {
     public void close() {
         running.set(false);
         decodeQueue.wake();
-    }
-
-    private boolean tryAcquirePrefill(Request request) {
-        try {
-            // 结束路径已完成 future 和排队清理；此处尚未取得两端资源，直接丢弃即可。
-            if (request.stage() != Stage.DECODE_WAITING) {
-                return false;
-            }
-            if (!prefillCheck.isAvailable(request)) {
-                cleanup.returnToMain(request, Stage.DECODE_WAITING);
-                return false;
-            }
-            QueueBlockReason reason = prefillCheck.tryAcquire(request,
-                    configService.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker());
-            if (reason == null) {
-                return true;
-            }
-            queueReporter.blocked(request, request.stage(), reason, request.selectedPrefill().endpoint().ipPort());
-        } catch (Throwable failure) { // 检查或上报异常时，不把请求留在无人处理的状态
-            prefillCheck.release(request);
-            request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill capacity check failed: " + failure.getMessage());
-            Logger.error("V2 decode prefill capacity check failed", failure);
-        }
-        return false;
     }
 
     private void process(Request request) throws InterruptedException {

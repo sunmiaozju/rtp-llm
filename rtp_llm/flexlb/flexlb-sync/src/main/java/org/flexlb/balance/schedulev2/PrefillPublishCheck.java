@@ -7,7 +7,7 @@ import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.schedulev2.request.Request;
 
 /**
- * 检查选中的 Prefill 是否仍可用，并管理发布名额。
+ * 检查选中的 Prefill 是否仍可用，并在未发布时归还在途名额。
  */
 public final class PrefillPublishCheck {
 
@@ -18,11 +18,6 @@ public final class PrefillPublishCheck {
     public PrefillPublishCheck(EndpointRegistry endpoints, PrefillQueueRegistry queues) {
         this.endpoints = endpoints;
         this.queues = queues;
-    }
-
-    public QueueBlockReason tryAcquire(Request request, int maxActiveTasks) {
-        PrefillQueue queue = queues.find(request);
-        return queue == null ? QueueBlockReason.ENDPOINT_RETIRED : queue.tryAcquirePublishSlot(request, maxActiveTasks);
     }
 
     public void release(Request request) {

@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /**
  * 每台 Prefill 的活跃任务：引擎 waiting/running 与本地发布名额按请求 ID 合并。
  * CAS 同时保护引擎快照和发布名额，状态更新不能覆盖并发获取的名额。
- * 等待 Decode 的候选不在这里；临时名额只持有到本轮发布成功或失败。
+ * Prefill 出队时占用本地名额，等待 Decode 时继续持有，直到请求结束或引擎上报完成。
  */
 public final class PrefillActiveTasks {
 

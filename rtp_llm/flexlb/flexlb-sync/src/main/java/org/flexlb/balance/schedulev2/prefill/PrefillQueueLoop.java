@@ -7,9 +7,9 @@ import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
 import org.flexlb.balance.schedulev2.main.MainQueue;
 import org.flexlb.balance.schedulev2.request.Request;
-import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.config.ConfigService;
+import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.service.monitor.V2QueueReporter;
 import org.flexlb.util.Logger;
 
@@ -26,7 +26,7 @@ import java.util.function.Consumer;
  * <li>按顺序 dispatch 等待的请求。在途满时停在队首；只有 KV 不够时，允许后面较小的请求先走，
  * 直到队首等到饥饿阈值，这台机器改为严格按顺序。</li>
  * </ol>
- * dispatch 出去的请求进入 DECODE_WAITING，带着名额交给 Decode 队列，发布后才归还名额和排队总数。
+ * 请求先占 Prefill 在途名额，再进入 DECODE_WAITING。发布只归还排队名额，Prefill 在途名额由引擎上报回收。
  */
 public final class PrefillQueueLoop {
 
@@ -166,39 +166,49 @@ public final class PrefillQueueLoop {
             if (request.queueProgress().prefillReturnPriority() != null) {
                 continue;
             }
-            long kvTokens = request.selectedPrefill().kvTokens(request.seqLen());
-            if (!queue.hasDispatchSlot(maxInflight)) {
-                queueReporter.blocked(request, Stage.PREFILL_WAITING, QueueBlockReason.PREFILL_INFLIGHT_FULL,
-                        queue.endpoint().ipPort());
+            QueueBlockReason reason = tryDispatch(queue, request, maxInflight);
+            if (reason == QueueBlockReason.PREFILL_INFLIGHT_FULL || reason == QueueBlockReason.PREFILL_KV_FULL) {
+                queueReporter.blocked(request, Stage.PREFILL_WAITING, reason, queue.endpoint().ipPort());
+            }
+            if (reason == QueueBlockReason.PREFILL_INFLIGHT_FULL || reason == QueueBlockReason.ENDPOINT_RETIRED) {
                 return;
             }
-            if (!queue.canDispatch(kvTokens, maxInflight)) {
-                queueReporter.blocked(request, Stage.PREFILL_WAITING, QueueBlockReason.PREFILL_KV_FULL,
-                        queue.endpoint().ipPort());
+            if (reason == QueueBlockReason.PREFILL_KV_FULL) {
                 if (head == null) {
                     head = request;
                 }
                 if (starvationThresholdMs == 0L || nowMs - head.prefillQueuedAtMs() >= starvationThresholdMs) {
                     return;
                 }
-                continue;
             }
-            dispatch(queue, request, kvTokens);
         }
     }
 
-    private void dispatch(PrefillQueue queue, Request request, long kvTokens) {
-        SelectedPrefill choice = request.selectedPrefill();
-        // 先加记录再推进阶段：推进成功后请求随时可能结束，结束时的清理要能找到这条记录
-        queue.addDispatched(new DispatchedRequest(request, kvTokens, choice.predictedMs()));
+    private QueueBlockReason tryDispatch(PrefillQueue queue, Request request, int maxInflight) {
+        QueueBlockReason reason = queue.tryReserveForDispatch(request, maxInflight);
+        if (reason != null) {
+            return reason;
+        }
+        if (!isCurrent(queue)) {
+            queue.removeDispatched(request);
+            return QueueBlockReason.ENDPOINT_RETIRED;
+        }
         if (!request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING)) {
             queue.removeDispatched(request);
-            queue.removeWaiting(request);
-            return;
+            if (request.stage() != Stage.PREFILL_WAITING) {
+                queue.removeWaiting(request);
+            }
+            return QueueBlockReason.RESERVATION_CHANGED;
         }
         queue.removeWaiting(request);
         request.setPrefillDecidedAtMs(System.currentTimeMillis());
-        sendToDecodeQueue.accept(request);
+        try {
+            sendToDecodeQueue.accept(request);
+        } catch (RuntimeException failure) {
+            request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill handoff failed: " + failure.getMessage());
+            throw failure;
+        }
+        return null;
     }
 
     /**

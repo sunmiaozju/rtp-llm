@@ -9,8 +9,8 @@ import java.util.Objects;
 /**
  * 已从 Prefill 队列交给 Decode 调度、尚未完成 Prefill 的请求跟踪记录。
  * <p>
- * 进入 Decode 队列时创建，用于负载预测，不代表占用 Prefill 活跃名额。
- * 最终发布名额由 PrefillActiveTasks 单独管理。引擎上报后改成 ENGINE_QUEUED 或 ENGINE_RUNNING。
+ * 尝试占 Prefill 在途名额时创建，用于负载预测。名额由 PrefillActiveTasks 单独管理。
+ * 引擎上报后改成 ENGINE_QUEUED 或 ENGINE_RUNNING。
  * 引擎上报过、后来从活跃列表消失，或上报 Finished 时移除记录。请求失败或取消时也会移除。
  * 请求发布或最近一次引擎上报后超过配置时长，记录和占用也会被清理。
  */

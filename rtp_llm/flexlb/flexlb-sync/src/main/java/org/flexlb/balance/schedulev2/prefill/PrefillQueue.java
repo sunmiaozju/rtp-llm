@@ -34,8 +34,8 @@ import java.util.concurrent.atomic.LongAdder;
  * <li>等待 dispatch 的请求，按 {@link RequestOrder} 排序；</li>
  * <li>已交给 Decode 调度、或已发布但 Prefill 尚未结束的跟踪记录（{@link DispatchedRequest}）。</li>
  * </ul>
- * 出队只检查活跃任务数和 KV，不为等待 Decode 的候选占执行名额。活跃任务按请求 ID 合并引擎任务与本地发布名额；
- * 引擎剩余 KV 减去已占发布名额但引擎还没上报的请求所需 KV，要放得下这个请求。
+ * 出队前占用 Prefill 在途名额，等待 Decode 时保留。活跃任务按请求 ID 合并引擎任务与本地在途名额；
+ * 检查 KV 时，从引擎剩余 KV 中扣除已占名额但引擎还没上报的请求所需 KV。
  * <p>
  * dispatch 在 Prefill 队列线程执行；状态提交线程更新活跃状态、处理完成通知。
  * 清理通过请求 ID 和记录对象的条件删除生效，再归还这条记录的发布名额。
@@ -417,19 +417,28 @@ public final class PrefillQueue {
     }
 
     /**
-     * 这个请求能否进入 Decode 候选队列。只检查 Prefill 活跃任务数和 KV，不占名额。
-     * 机器上一个在途请求都没有时总是可以，避免大请求一直等不到。
+     * 在推进请求阶段之前，登记 dispatch 记录并占用 Prefill 在途名额和 KV。
      */
-    public boolean canDispatch(long kvTokens, int maxInflight) {
-        return activeTasks.blockReason(kvTokens, maxInflight) == null;
-    }
+    QueueBlockReason tryReserveForDispatch(Request request, int maxInflight) {
+        SelectedPrefill choice = request.selectedPrefill();
+        long kvTokens = choice.kvTokens(request.seqLen());
+        QueueBlockReason reason = activeTasks.blockReason(kvTokens, maxInflight);
+        if (reason != null) {
+            return reason;
+        }
 
-    public boolean hasDispatchSlot(int maxInflight) {
-        return activeTasks.blockReason(0L, maxInflight) != QueueBlockReason.PREFILL_INFLIGHT_FULL;
+        DispatchedRequest record = new DispatchedRequest(request, kvTokens, choice.predictedMs());
+        addDispatched(record);
+        reason = tryAcquirePublishSlot(request, maxInflight);
+        if (reason != null) {
+            // 未占到名额，只移除临时记录，不唤醒队列或扣除 waiting 的预测工作量。
+            removeDispatchedRequest(record);
+        }
+        return reason;
     }
 
     /**
-     * 最终调度尝试先占 Prefill 名额，再尝试 Decode；失败时调用 releasePublishSlot。
+     * 按同一容量快照原子占位；如果记录已被清理，归还刚占的名额。
      */
     public QueueBlockReason tryAcquirePublishSlot(Request request, int maxInflight) {
         DispatchedRequest record = dispatched.get(request.requestId());

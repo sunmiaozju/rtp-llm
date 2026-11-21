@@ -16,6 +16,7 @@ import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
 import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.balance.schedulev2.main.MainQueue;
+import org.flexlb.balance.schedulev2.prefill.DispatchedRequest;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
@@ -40,6 +41,7 @@ import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -142,22 +144,6 @@ class DecodeQueueConsumerTest {
     }
 
     @Test
-    void prefillFullRequestsDoNotHideReadyRequestAfterTwoThousandEntries() throws Exception {
-        doReturn(QueueBlockReason.PREFILL_INFLIGHT_FULL).when(prefillCheck).tryAcquire(any(), anyInt());
-        for (int i = 1; i <= 2000; i++) {
-            addWaiting(Integer.toString(i), 30);
-        }
-        Request ready = addWaiting("2001", 30);
-        doReturn(null).when(prefillCheck).tryAcquire(eq(ready), anyInt());
-        start(1);
-
-        assertTrue(response(ready).isSuccess());
-        pool.close();
-        assertEquals(2000, decodeQueue.waitingCount());
-        verify(selector).select(any(), any(), eq("g"));
-    }
-
-    @Test
     void singleConsumerTakesHigherPriorityThenFifoWithinSamePriority() throws Exception {
         config.getRouter().getRoles().getDecode().getAvailability().setMaxEngineRequests(10L);
         Request low = addWaiting("1", 30);
@@ -236,9 +222,11 @@ class DecodeQueueConsumerTest {
         verify(prefillCheck, times(1)).release(any());
     }
 
-    @Test
-    void decodeBlockedRequestKeepsPrefillSlotUntilCancelled() throws Exception {
+    @ParameterizedTest
+    @EnumSource(value = CancelReason.class, names = {"CLIENT_CANCELLED", "DEADLINE_EXCEEDED"})
+    void decodeBlockedRequestKeepsPrefillSlotUntilCancelled(CancelReason cancelReason) throws Exception {
         Request request = addWaiting("1", 30);
+        var prefillQueue = request.selectedPrefill().endpoint().prefillQueue();
         CountDownLatch selecting = new CountDownLatch(1);
         doAnswer(call -> {
             selecting.countDown();
@@ -246,13 +234,14 @@ class DecodeQueueConsumerTest {
         }).when(selector).select(any(), any(), any());
         start(1);
         assertTrue(selecting.await(5, TimeUnit.SECONDS));
-        verify(prefillCheck, times(1)).tryAcquire(eq(request), anyInt());
+        assertEquals(1L, prefillQueue.inflightCount());
         verify(prefillCheck, never()).release(request);
         assertEquals(1, requestTable.waitingCount());
         assertEquals(0, decodeQueue.waitingCount());
 
-        request.cancel(CancelReason.CLIENT_CANCELLED);
+        request.cancel(cancelReason);
         pool.close();
+        assertEquals(0L, prefillQueue.inflightCount());
         verify(prefillCheck).release(request);
         assertNull(request.decodeChoice());
         assertEquals(0L, queueCapacity.globalQueueAndEngineSubQueueCount());
@@ -393,7 +382,7 @@ class DecodeQueueConsumerTest {
     @Test
     void prefillUnavailableAtLoopStartReturnsToMainWithoutReservingDecode() throws Exception {
         Request request = addWaiting("1", 30);
-        when(prefillCheck.isAvailable(request)).thenReturn(true, false);
+        when(prefillCheck.isAvailable(request)).thenReturn(false);
         CountDownLatch returned = new CountDownLatch(1);
         doAnswer(call -> {
             Object result = call.callRealMethod();
@@ -439,14 +428,13 @@ class DecodeQueueConsumerTest {
         assertEquals(1, mainQueue.size());
         assertEquals(0, decode.getInflightCount());
         verify(selector, times(1)).select(eq(request.ctx()), any(), any());
-        verify(prefillCheck, times(1)).tryAcquire(eq(request), anyInt());
         verify(prefillCheck).release(request);
     }
 
     @Test
     void cancellationAtLoopPrefillCheckDoesNotRequeueEndedRequest() throws Exception {
         Request request = addWaiting("1", 30);
-        when(prefillCheck.isAvailable(request)).thenReturn(true).thenAnswer(call -> {
+        when(prefillCheck.isAvailable(request)).thenAnswer(call -> {
             request.cancel(CancelReason.CLIENT_CANCELLED);
             return false;
         });
@@ -688,18 +676,17 @@ class DecodeQueueConsumerTest {
     private void start(int count) {
         pool = new DecodeQueueConsumerPoll(count, decodeQueue, availability,
                 () -> new DecodeQueueConsumer(decodeQueue, cleanup, selector, workerDirectory,
-                        new DecodePreemptionCoordinator(reporter), configService, prefillCheck, queueReporter,
-                        decodeQueue::wake));
+                        new DecodePreemptionCoordinator(reporter), prefillCheck, queueReporter, decodeQueue::wake));
         pool.start();
     }
 
     private Request addWaiting(String id, int priority) {
         Request request = V2TestSupport.request(config, id, priority, 16L);
         request.setQueueSeq(Long.parseLong(id));
-        V2TestSupport.choose(request, V2TestSupport.prefillEndpoint("p1:8000"), 0L, 0L);
+        var prefillQueue = V2TestSupport.prefillEndpoint("p1:8000").prefillQueue();
+        V2TestSupport.dispatch(prefillQueue, new DispatchedRequest(request, request.seqLen(), 0L));
+        assertNull(prefillQueue.tryAcquirePublishSlot(request, 1));
         request.selectedPrefill().serverStatus().setGroup("g");
-        request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
-        request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING);
         queueCapacity.increaseTotalQueueCount(request.future());
         requestTable.add(request);
         request.future().whenComplete((response, failure) -> {

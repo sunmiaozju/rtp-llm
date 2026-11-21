@@ -24,6 +24,7 @@ import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.monitor.V2QueueReporter;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
@@ -60,6 +61,7 @@ class RequestSchedulerV2Test {
     @Test
     void fusedPrefillPublishesDirectly() throws Exception {
         config.getDispatcher().setMainQueueConsumerThreads(1);
+        config.getDispatcher().setMaxInflightPerPrefillWorker(1);
         when(configService.loadBalanceConfig()).thenReturn(config);
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
         when(modelMetaConfig.requiredRoles()).thenReturn(List.of(RoleType.PDFUSION));
@@ -85,6 +87,9 @@ class RequestSchedulerV2Test {
 
         assertTrue(response.isSuccess());
         assertEquals(List.of(choice.serverStatus()), response.getServerStatus());
+        assertEquals(1L, endpoint.prefillQueue().inflightCount());
+        V2TestSupport.reportTasks(endpoint.prefillQueue(), Map.of(), Map.of("1", TaskPhase.RUNNING));
+        assertEquals(0L, endpoint.prefillQueue().inflightCount());
     }
 
     @Test

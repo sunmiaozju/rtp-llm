@@ -9,7 +9,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -40,7 +39,6 @@ class PrefillQueueRegistryTest {
         assertEquals(0, queue.waitingCount());
         assertEquals(1L, queue.inflightCount());
         assertEquals(1L, queue.unknownRequestCount());
-        assertFalse(queue.hasDispatchSlot(1));
         assertEquals(0, createdLoops.get());
         verifyNoInteractions(loop);
 

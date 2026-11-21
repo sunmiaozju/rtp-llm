@@ -150,30 +150,66 @@ class PrefillQueueLoopTest {
     @Test
     void requestWaitsWhenInflightLimitIsReached() {
         Request first = addWaiting("1");
-        assertFalse(loop.runOnce());
-        assertEquals(null, queues.find(endpoint).tryAcquirePublishSlot(first, 1));
         Request second = addWaiting("2");
+        PrefillQueue queue = endpoint.prefillQueue();
+
         assertTrue(loop.runOnce());
         assertEquals(List.of(first), sentToDecode);
+        assertEquals(Stage.DECODE_WAITING, first.stage());
         assertEquals(Stage.PREFILL_WAITING, second.stage());
+        assertEquals(1L, queue.inflightCount());
+        assertEquals(1, queue.waitingCount());
+        assertEquals(1, queue.dispatchedCount());
         verify(queueReporter).blocked(second, Stage.PREFILL_WAITING, QueueBlockReason.PREFILL_INFLIGHT_FULL, "p1:8000");
+
+        assertTrue(first.publish(Stage.DECODE_WAITING, List.of()));
+        cleanup.releasePublished(first);
+        assertTrue(loop.runOnce());
         V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of("1", TaskPhase.RUNNING));
         assertTrue(loop.runOnce());
-        V2TestSupport.report(endpoint, 2L, 1_000L, 1_000L, Map.of());
+        V2TestSupport.reportTasks(queue, Map.of(), Map.of("1", TaskPhase.RUNNING));
         assertFalse(loop.runOnce());
         assertEquals(List.of(first, second), sentToDecode);
-        V2TestSupport.reportTasks(queues.find(endpoint), Map.of(), Map.of("1", TaskPhase.RUNNING));
-        assertFalse(loop.runOnce());
-        assertEquals(List.of(first, second), sentToDecode);
+        assertEquals(1L, queue.inflightCount());
     }
 
     @Test
-    void decodeWaitingDoesNotConsumePrefillActiveSlots() {
-        Request first = addWaiting("1");
-        Request second = addWaiting("2");
+    void returnMarkedAfterReservationReleasesSlotWithoutDispatching() {
+        Request request = addWaiting("1");
+        PrefillQueue queue = endpoint.prefillQueue();
+        when(endpointRegistry.get(RoleType.PREFILL, "p1:8000")).thenReturn(endpoint).thenAnswer(call -> {
+            assertEquals(1L, queue.inflightCount());
+            assertTrue(queue.markLowerPriorityForReturn(80));
+            return endpoint;
+        }).thenReturn(endpoint);
+
+        assertTrue(loop.runOnce());
+        assertEquals(0L, queue.inflightCount());
+        assertEquals(0, queue.dispatchedCount());
+        assertEquals(1, queue.waitingCount());
+        assertTrue(sentToDecode.isEmpty());
+
         assertFalse(loop.runOnce());
-        assertEquals(List.of(first, second), sentToDecode);
-        assertEquals(Stage.DECODE_WAITING, second.stage());
+        assertEquals(Stage.MAIN_WAITING, request.stage());
+        assertEquals(1, mainQueue.size());
+    }
+
+    @Test
+    void retirementAfterReservationReleasesSlotAndReturnsRequest() {
+        Request request = addWaiting("1");
+        PrefillQueue queue = endpoint.prefillQueue();
+        when(endpointRegistry.get(RoleType.PREFILL, "p1:8000")).thenReturn(endpoint).thenAnswer(call -> {
+            assertEquals(1L, queue.inflightCount());
+            return null;
+        }).thenReturn(null);
+
+        assertTrue(loop.runOnce());
+        assertEquals(0L, queue.inflightCount());
+        assertEquals(0, queue.dispatchedCount());
+        assertFalse(loop.runOnce());
+        assertEquals(Stage.MAIN_WAITING, request.stage());
+        assertEquals(1, mainQueue.size());
+        assertTrue(sentToDecode.isEmpty());
     }
 
     @Test
@@ -216,6 +252,7 @@ class PrefillQueueLoopTest {
         request.cancel(CancelReason.CLIENT_CANCELLED);
 
         assertEquals(0, queues.find(endpoint).dispatchedCount());
+        assertEquals(0L, queues.find(endpoint).inflightCount());
         assertEquals(0L, queueCapacity.globalQueueAndEngineSubQueueCount());
     }
 

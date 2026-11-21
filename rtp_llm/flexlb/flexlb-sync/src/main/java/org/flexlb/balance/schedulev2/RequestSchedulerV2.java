@@ -101,11 +101,10 @@ public class RequestSchedulerV2 {
                 endpointRegistry, placementAvailability, configService, router, prefillStrategy, prefillQueues,
                 prefillRole, queueReporter);
         Runnable capacityWake = decodeQueue::wake;
-        this.decodeQueueConsumerPoll =
-                new DecodeQueueConsumerPoll(configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(),
-                        decodeQueue, placementAvailability,
-                        () -> new DecodeQueueConsumer(decodeQueue, cleanup, decodeSelector, workerDirectory,
-                                preemptionCoordinator, configService, prefillCheck, queueReporter, capacityWake));
+        this.decodeQueueConsumerPoll = new DecodeQueueConsumerPoll(
+                configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(), decodeQueue,
+                placementAvailability, () -> new DecodeQueueConsumer(decodeQueue, cleanup, decodeSelector,
+                        workerDirectory, preemptionCoordinator, prefillCheck, queueReporter, capacityWake));
         this.deadlineTimer = new ScheduledThreadPoolExecutor(1, task -> {
             Thread thread = new Thread(task, "flexlb-v2-deadline");
             thread.setDaemon(true);
@@ -182,9 +181,7 @@ public class RequestSchedulerV2 {
      */
     private void sendToDecodeQueue(Request request) {
         if (!needsDecode(request)) {
-            QueueBlockReason reason = prefillCheck.tryAcquire(request,
-                    configService.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker());
-            if (reason != null) {
+            if (!prefillCheck.isAvailable(request)) {
                 cleanup.returnToMain(request, Stage.DECODE_WAITING);
                 return;
             }

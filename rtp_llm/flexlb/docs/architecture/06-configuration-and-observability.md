@@ -87,7 +87,7 @@ UniConfig 和 Nacos 的内容直接使用同一种配置 JSON，不增加包装�
 环境变量来源只在启动时读取配置。
 
 `dispatcher.maxInflightPerPrefillWorker` 由请求进入 Master 时的配置快照确定。
-准备 Prefill 候选时不按该上限剔除节点；发布路由前检查并占用名额。
+准备 Prefill 候选时不按该上限剔除节点；NON_BATCH_V2 在 Prefill 子队列出队前检查并占用名额。
 `dispatcher.prefillSubqueueLimitMultiplier` 默认 4；当前路由形态的 Prefill 子队列共享
 `min(scheduler.maxQueuedRequests, 当前形态的逻辑端点数 × maxInflightPerPrefillWorker × 倍数)` 个待交付名额。
 PREFILL 与 PDFUSION 的端点和待交付名额不合并计算。
@@ -665,8 +665,8 @@ GAUGE + SUMMARY 聚合实际采样值；Micrometer provider 只暴露最近上�
 `NON_BATCH_V2` 每秒按已创建的 Prefill 队列上报以下 GAUGE，`endpoint` 标识逻辑端点，
 Master 身份由公共监控标签区分：
 
-- `schedule_v2.prefill.inflight`：引擎活跃请求与 Master 本地发布名额按请求 ID 去重后的数量，
-  与准入判断共用同一快照计数逻辑。等待 Decode 且未取得发布名额的候选不计入。
+- `schedule_v2.prefill.inflight`：引擎活跃请求与 Master 本地在途名额按请求 ID 去重后的数量，
+  与准入判断共用同一快照计数逻辑。已离开 Prefill 子队列、正在等待 Decode 的请求计入。
 - `schedule_v2.prefill.inflight_limit`：当前 `dispatcher.maxInflightPerPrefillWorker`。
 
 占用量保留 endpoint，队列移除后的下一次采样补零；上限每个 Master 上报一份。使用率按 Master 身份将各 endpoint 占用数匹配到共享上限计算，
