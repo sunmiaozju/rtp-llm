@@ -23,8 +23,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.BiConsumer;
-import java.util.function.Predicate;
+import java.util.function.LongConsumer;
 
 import static org.flexlb.dao.loadbalance.Response.buildErrorResponse;
 
@@ -355,9 +354,8 @@ public class RequestRegistry {
         completeOutstandingRequestsForShutdown();
     }
 
-    public void maintainExpiration(
-            BiConsumer<Long, Predicate<String>> exactSweeper) {
-        expirationTimer.maintain(exactSweeper);
+    public void maintainExpiration(LongConsumer purgeFinishedDecodeRequests) {
+        expirationTimer.maintain(purgeFinishedDecodeRequests);
     }
 
     public void closeExpiration() {

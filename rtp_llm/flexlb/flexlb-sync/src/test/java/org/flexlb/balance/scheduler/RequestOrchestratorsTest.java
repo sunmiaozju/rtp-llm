@@ -17,12 +17,10 @@ import org.mockito.InOrder;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -98,27 +96,18 @@ class RequestOrchestratorsTest {
     }
 
     @Test
-    void expirationOrchestratorPassesOnlyTheExactRegistrySweeper() {
-        RequestRegistry lifecycle =
-                mock(RequestRegistry.class);
+    void expirationMaintenancePassesRetentionToDecodeHistoryCleanup() {
+        RequestRegistry lifecycle = mock(RequestRegistry.class);
         EndpointRegistry registry = mock(EndpointRegistry.class);
-        AtomicBoolean exactOwnershipPredicateObserved = new AtomicBoolean();
         doAnswer(invocation -> {
-            java.util.function.Predicate<String> owns = invocation.getArgument(1);
-            exactOwnershipPredicateObserved.set(owns.test("91"));
-            return null;
-        }).when(registry).evictExpiredOrphans(anyLong(), any());
-        doAnswer(invocation -> {
-            java.util.function.BiConsumer<Long, java.util.function.Predicate<String>>
-                    sweeper = invocation.getArgument(0);
-            sweeper.accept(123L, requestId -> requestId.equals("91"));
+            java.util.function.LongConsumer purgeFinishedDecodeRequests = invocation.getArgument(0);
+            purgeFinishedDecodeRequests.accept(123L);
             return null;
         }).when(lifecycle).maintainExpiration(any());
 
         runtime(lifecycle, registry).maintainExpiration();
 
-        verify(registry).evictExpiredOrphans(anyLong(), any());
-        assertTrue(exactOwnershipPredicateObserved.get());
+        verify(registry).purgeFinishedDecodeRequests(123L);
     }
 
     @Test

@@ -35,8 +35,7 @@ final class StrategyTestSupport {
     static EndpointRegistry endpointRegistry(ConfigService configService) {
         var queues = new PrefillQueueRegistry();
         var reporter = Mockito.mock(RequestSchedulerReporter.class);
-        var events = new EndpointEventHandler(Mockito.mock(RequestRegistry.class), queues, configService,
-                new org.flexlb.balance.schedulev2.decode.DecodeReservations(), reporter);
+        var events = new EndpointEventHandler(Mockito.mock(RequestRegistry.class), queues, configService, reporter);
         return new EndpointRegistry(configService, events, Mockito.mock(BatchSchedulerReporter.class),
                 new PlacementAvailability(), queues, reporter);
     }

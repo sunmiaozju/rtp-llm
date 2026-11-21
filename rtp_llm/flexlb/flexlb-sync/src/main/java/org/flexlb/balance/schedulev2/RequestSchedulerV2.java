@@ -11,7 +11,6 @@ import org.flexlb.balance.scheduler.SchedulerErrorMessages;
 import org.flexlb.balance.schedulev2.decode.DecodeQueue;
 import org.flexlb.balance.schedulev2.decode.DecodeQueueConsumer;
 import org.flexlb.balance.schedulev2.decode.DecodeQueueConsumerPoll;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.balance.schedulev2.main.MainQueue;
 import org.flexlb.balance.schedulev2.main.MainQueueConsumerPool;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueLoop;
@@ -81,7 +80,6 @@ public class RequestSchedulerV2 {
                               ModelMetaConfig modelMetaConfig,
                               DecodePreemptionCoordinator preemptionCoordinator,
                               WorkerDirectory workerDirectory,
-                              DecodeReservations reservations,
                               V2QueueReporter queueReporter) {
         this.queueReporter = queueReporter;
         this.endpointRegistry = endpointRegistry;
@@ -107,8 +105,7 @@ public class RequestSchedulerV2 {
                 new DecodeQueueConsumerPoll(configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(),
                         decodeQueue, placementAvailability,
                         () -> new DecodeQueueConsumer(decodeQueue, cleanup, decodeSelector, workerDirectory,
-                                preemptionCoordinator, configService, prefillCheck, reservations, queueReporter,
-                                capacityWake));
+                                preemptionCoordinator, configService, prefillCheck, queueReporter, capacityWake));
         this.deadlineTimer = new ScheduledThreadPoolExecutor(1, task -> {
             Thread thread = new Thread(task, "flexlb-v2-deadline");
             thread.setDaemon(true);

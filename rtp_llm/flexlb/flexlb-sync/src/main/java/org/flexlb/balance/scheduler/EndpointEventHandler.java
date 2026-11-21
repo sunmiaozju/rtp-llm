@@ -4,7 +4,6 @@ import lombok.Getter;
 import org.flexlb.balance.endpoint.EncoderEndpoint;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.schedulev2.RequestStatusTimeout;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
@@ -26,19 +25,15 @@ public final class EndpointEventHandler {
     @Getter
     private final ConfigService configService;
     @Getter
-    private final DecodeReservations decodeReservations;
-    @Getter
     private final RequestSchedulerReporter requestReporter;
 
     public EndpointEventHandler(RequestRegistry scheduler,
                                 PrefillQueueRegistry prefillQueueRegistry,
                                 ConfigService configService,
-                                DecodeReservations decodeReservations,
                                 RequestSchedulerReporter requestReporter) {
         this.scheduler = scheduler;
         this.prefillQueueRegistry = prefillQueueRegistry;
         this.configService = configService;
-        this.decodeReservations = decodeReservations;
         this.requestReporter = requestReporter;
     }
 

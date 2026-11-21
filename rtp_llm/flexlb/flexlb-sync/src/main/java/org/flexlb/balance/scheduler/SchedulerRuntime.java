@@ -3,7 +3,6 @@ package org.flexlb.balance.scheduler;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
@@ -17,7 +16,6 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
 import java.util.List;
-import java.util.function.Predicate;
 
 /** Owns scheduler maintenance, metrics traversal, and ordered shutdown. */
 @Component
@@ -33,15 +31,6 @@ final class SchedulerRuntime {
     private final QueueCapacity queueCapacity;
     private final Runnable closePlacement;
     private final List<RoleType> queueRoles;
-    private Predicate<String> retainedByV2 = requestId -> false;
-
-    /**
-     * 旧清理任务也要保留 V2 尚在管理的预占；该查询在 endpoint 锁内执行，只能读并发表。
-     */
-    @Autowired
-    void setDecodeReservations(DecodeReservations reservations) {
-        retainedByV2 = reservations::contains;
-    }
 
     SchedulerRuntime(RequestRegistry requests,
                      EndpointRegistry endpoints,
@@ -89,8 +78,7 @@ final class SchedulerRuntime {
 
     @Scheduled(fixedRate = EXPIRATION_MAINTENANCE_INTERVAL_MS)
     void maintainExpiration() {
-        requests.maintainExpiration((ttlMs, retained) -> endpoints.evictExpiredOrphans(ttlMs,
-                requestId -> retained.test(requestId) || retainedByV2.test(requestId)));
+        requests.maintainExpiration(endpoints::purgeFinishedDecodeRequests);
     }
 
     @Scheduled(fixedRateString = "${report.interval.ms:2000}")

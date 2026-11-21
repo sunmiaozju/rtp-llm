@@ -368,7 +368,6 @@ class EncoderSchedulingIntegrationTest {
         EncoderEndpoint endpoint = new EncoderEndpoint(status,
                 new EndpointEventHandler(requests, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
                         mock(org.flexlb.config.ConfigService.class),
-                        new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                         org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class)));
         when(directory.holdEndpoint(eq(RoleType.ENCODER), eq(ip))).thenAnswer(invocation -> endpoint.tryHold());
         EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).put(ip, endpoint);

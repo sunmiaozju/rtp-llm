@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Predicate;
 
 /** Decode worker boundary: lifecycle holds, resource operations and lock-free notifications.
  * DecodeState owns the generation-local resource ledger and its single mutation lock.
@@ -38,8 +37,7 @@ public class DecodeEndpoint extends WorkerEndpoint {
                    EndpointEventHandler endpointEvents,
                    PlacementAvailability placementAvailability) {
         super(status);
-        this.state = new DecodeState(status, endpointEvents.getConfigService(),
-                endpointEvents.getDecodeReservations(), endpointEvents.getRequestReporter());
+        this.state = new DecodeState(status, endpointEvents.getConfigService(), endpointEvents.getRequestReporter());
         this.endpointEvents = endpointEvents;
         this.placementAvailability = placementAvailability;
     }
@@ -618,7 +616,7 @@ public class DecodeEndpoint extends WorkerEndpoint {
         public long kvTokens() { return Math.max(requiredKvTokens, kvBudgetTokens); }
     }
 
-    // Retirement and orphan cleanup.
+    // Retirement and finished request history.
 
     public boolean isRetired() { return isGenerationRetiringOrRetired(); }
 
@@ -630,10 +628,8 @@ public class DecodeEndpoint extends WorkerEndpoint {
         }
     }
 
-    public int evictExpiredRequests(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
-        DecodeState.CleanupResult result = state.evictExpiredRequests(ttlMs, retainForSchedulerCleanup);
-        if (result.capacityReleased()) { publishCapacityRelease(); }
-        return result.expiredReservations();
+    void purgeFinishedRequests(long ttlMs) {
+        state.purgeFinishedRequests(ttlMs);
     }
 
     // Metrics and shared lock-free capacity notifications.

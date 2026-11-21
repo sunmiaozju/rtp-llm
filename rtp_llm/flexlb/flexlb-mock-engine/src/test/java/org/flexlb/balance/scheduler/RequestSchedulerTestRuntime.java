@@ -37,8 +37,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
                                        java.util.function.Function<BalanceContext, Integer> selectedPrefillPort) {
         this.lifecycle = new RequestRegistry(configService, batchReporter, requestReporter);
         var queues = new PrefillQueueRegistry();
-        var reservations = new org.flexlb.balance.schedulev2.decode.DecodeReservations();
-        var events = new EndpointEventHandler(lifecycle, queues, configService, reservations, requestReporter);
+        var events = new EndpointEventHandler(lifecycle, queues, configService, requestReporter);
         this.registry = new EndpointRegistry(configService, events, batchReporter, placementAvailability, queues,
                 requestReporter);
         var workers = new org.flexlb.sync.status.WorkerDirectory(registry);
@@ -69,7 +68,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         };
         var v2 = new org.flexlb.balance.schedulev2.RequestSchedulerV2(configService, queueCapacity, registry,
                 placementAvailability, router, prefill, new DecodeSelector(workers), queues, model,
-                new org.flexlb.balance.eviction.DecodePreemptionCoordinator(requestReporter), workers, reservations,
+                new org.flexlb.balance.eviction.DecodePreemptionCoordinator(requestReporter), workers,
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.V2QueueReporter.class));
         this.scheduler = new RequestScheduler(configService, router, lifecycle, v2);
         this.runtime = new SchedulerRuntime(lifecycle, registry, batchReporter, requestReporter, scheduler,

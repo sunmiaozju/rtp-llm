@@ -722,13 +722,12 @@ class DecodeEndpointAdmissionTest {
     }
 
     @Test
-    void ttlEvictionInvalidatesPermitWithoutLeakingHardGateCapacity() {
+    void unsentRollbackInvalidatesPermitWithoutLeakingHardGateCapacity() {
         reserve(1L, 100, 110, 50);
         markQueued(1L);
         DecodeEndpoint.EngineDispatchPermit stale = acquirePermit(1L, 1);
 
-        assertEquals(1, endpoint.evictExpiredRequests(
-                -1, requestId -> false));
+        assertTrue(endpoint.release(reservations.get(1L), DecodeEndpoint.ReleaseReason.NOT_SENT).released());
         reserve(2L, 100, 110, 50);
         markQueued(2L);
 
@@ -942,7 +941,7 @@ class DecodeEndpointAdmissionTest {
         assertFalse(terminalCheck.permit().release());
         assertEquals(0, endpoint.routingView().engineCapacityUsed());
 
-        endpoint.evictExpiredRequests(-1L, ignored -> false);
+        endpoint.purgeFinishedRequests(-1L);
         var replacement = reserveQueued(72L, 200L, 2000L, 70);
         assertNotEquals(handle.reservationToken(), replacement.reservationToken());
         updateStatus(Map.of("72", accepted), Map.of(), 9800L);

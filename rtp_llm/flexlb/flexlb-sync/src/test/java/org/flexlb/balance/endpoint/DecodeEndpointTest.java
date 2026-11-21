@@ -322,11 +322,8 @@ class DecodeEndpointTest {
         assertEquals(0, endpoint.routingView().engineLoad());
     }
 
-    // ==================== P1-6: evictExpiredRequests counter (PR-C) ====================
-
-    /** Expiration removes the queued phase and all incremental counters together. */
     @Test
-    void evictExpiredRequests_prunesQueuedPhase_andRestoresEngineLoad() throws InterruptedException {
+    void rollbackPrunesQueuedPhaseAndRestoresEngineLoad() {
         updateStatus(null, null, 10000);
         reserve(100L, 500, 500);
         reserve(101L, 500, 500);
@@ -340,10 +337,10 @@ class DecodeEndpointTest {
         assertEquals(3, endpoint.routingView().totalLoad());
         assertEquals(3, endpoint.resourceSnapshot().queuedCount());
 
-        Thread.sleep(20);
-        int evicted = endpoint.evictExpiredRequests(5, requestId -> false);
+        for (long id : new long[]{100L, 101L, 102L}) {
+            assertTrue(endpoint.release(reservations.get(id), DecodeEndpoint.ReleaseReason.NOT_SENT).released());
+        }
 
-        assertEquals(3, evicted);
         assertEquals(0, endpoint.getInflightCount());
         assertTrue(endpoint.resourceSnapshot().queuedCount() == 0);
         assertEquals(0, endpoint.routingView().engineLoad());

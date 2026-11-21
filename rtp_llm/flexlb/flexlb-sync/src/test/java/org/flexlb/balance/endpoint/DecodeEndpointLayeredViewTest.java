@@ -177,24 +177,20 @@ class DecodeEndpointLayeredViewTest {
     }
 
     @Test
-    void evictExpiredRequests_purgesStaleTrackedEntries() throws InterruptedException {
+    void purgingFinishedHistoryKeepsUnconfirmedAndConfirmedReservations() {
         reserve(1L, 500, 508, 30);
+        reserve(2L, 500, 508, 30);
         updateStatus(Map.of("1", runningTask(1L, TaskPhase.KV_ALLOCATED, 256)), null, 10_000);
+
+        endpoint.purgeFinishedRequests(-1L);
+
         assertTrue(isConfirmed(1L));
-
-        Thread.sleep(5);
-        long versionBefore = endpoint.routingView().admissionVersion();
-        endpoint.evictExpiredRequests(1, requestId -> false);
-
-        assertFalse(isConfirmed(1L));
-        assertEquals(0, endpoint.resourceSnapshot().confirmed().size(),
-                "tracked TTL removal must release the published confirmed slot");
-        assertEquals(0, endpoint.routingView().totalLoad());
-        assertTrue(endpoint.routingView().admissionVersion() > versionBefore);
+        assertTrue(endpoint.resourceSnapshot().reserved().containsKey("2"));
+        assertEquals(2, endpoint.routingView().totalLoad());
     }
 
     @Test
-    void evictExpiredRequests_boundsPriorityCanceledTerminalRecords() throws InterruptedException {
+    void finishedHistoryExpiryAllowsLaterWorkerReports() {
         reserve(1L, 500, 508, 30);
         updateStatus(Map.of("1", runningTask(1L, TaskPhase.RUNNING, 256)), null, 10_000);
         long version = endpoint.routingView().admissionVersion();
@@ -207,8 +203,7 @@ class DecodeEndpointLayeredViewTest {
         updateStatus(Map.of("1", runningTask(1L, TaskPhase.RUNNING, 256)), null, 10_000);
         assertFalse(isConfirmed(1L));
 
-        Thread.sleep(5);
-        endpoint.evictExpiredRequests(1, requestId -> false);
+        endpoint.purgeFinishedRequests(-1L);
         updateStatus(Map.of("1", runningTask(1L, TaskPhase.RUNNING, 256)), null, 10_000);
         assertTrue(isConfirmed(1L),
                 "the cancel fence follows the configured terminal retention TTL");
@@ -338,26 +333,21 @@ class DecodeEndpointLayeredViewTest {
     }
 
     @Test
-    void ttlEvictionCannotReleaseClaimedEngineVisibleShadow() throws Exception {
+    void purgingFinishedHistoryKeepsClaimedEngineVisibleShadow() {
         reserve(1L, 500, 508, 30);
-        // Keep a wide age gap so the provisional incoming reservation cannot
-        // become TTL-eligible merely because this test runs on a loaded JVM.
-        Thread.sleep(150);
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
                 beginPreemption(101L, List.of(1L),
                         9L, 700, 708, 70));
 
-        assertEquals(0, endpoint.evictExpiredRequests(
-                100, requestId -> false));
+        endpoint.purgeFinishedRequests(-1L);
         assertTrue(endpoint.resourceSnapshot().reserved().containsKey("1"),
-                "generic TTL cleanup must not deduct a claimed victim");
+                "finished history cleanup must not deduct a claimed victim");
         assertEquals(1_200, endpoint.routingView().inputKvReserved(),
                 "victim and provisional incoming remain fully charged");
 
         assertTrue(endpoint.release(endpoint.reservationHandle("9"), DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK)
                 .released());
-        assertEquals(1, endpoint.evictExpiredRequests(
-                100, requestId -> false));
+        assertTrue(endpoint.release(reservations.get(1L), DecodeEndpoint.ReleaseReason.NOT_SENT).released());
         assertFalse(endpoint.resourceSnapshot().reserved().containsKey("1"));
         assertEquals(0, endpoint.routingView().inputKvReserved());
     }

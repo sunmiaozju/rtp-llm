@@ -14,7 +14,6 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationHandle;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationReleaseResult;
 import org.flexlb.balance.schedulev2.RequestStatusTimeout;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
@@ -39,7 +38,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Predicate;
 
 /** Resource ledger for one Decode generation. All mutations share lock.
  * Endpoint owns lifecycle pins and publishes notifications only after these calls return.
@@ -47,16 +45,13 @@ import java.util.function.Predicate;
 final class DecodeState {
     private final WorkerStatus status;
     private final ConfigService configService;
-    private final DecodeReservations decodeReservations;
     private final RequestSchedulerReporter requestReporter;
 
     DecodeState(WorkerStatus status,
                 ConfigService configService,
-                DecodeReservations decodeReservations,
                 RequestSchedulerReporter requestReporter) {
         this.status = status;
         this.configService = configService;
-        this.decodeReservations = decodeReservations;
         this.requestReporter = requestReporter;
     }
 
@@ -432,7 +427,6 @@ final class DecodeState {
             confirmedEngineOwnedCount = Math.max(0, confirmedEngineOwnedCount - 1);
         }
         // Use a history-only entry, so no old exact token remains live.
-        decodeReservations.remove(requestId);
         decodeRequests.remove(requestId, state);
         rememberSettledLocked(requestId, System.currentTimeMillis());
         admissionVersion.incrementAndGet();
@@ -1427,7 +1421,7 @@ final class DecodeState {
             if (requestIdsInWorkerActiveReport.contains(requestId)) {
                 continue;
             }
-            // 5. 尚未登记发布的本实例预留缺少上报：保留关联和并发计数，等待 Finished 或原有调度器清理。
+            // 5. 本地未发布的预留没有状态超时，由调度线程归还，或随 Worker 下线清理。
             if (decodeRequestState.reservationToken() > 0L) {
                 retainedConfirmed++;
             } else {
@@ -1488,7 +1482,7 @@ final class DecodeState {
         requestReporter.reportStatusUpdateTimeout(RoleType.DECODE, status.getLogicalIpPort());
     }
 
-    // Generation cleanup: drain resources and expire orphan/history records.
+    // Generation cleanup and finished request history.
 
     List<ReservationHandle> retire() {
         lock.lock();
@@ -1536,10 +1530,7 @@ final class DecodeState {
 
         // Canonical retirement commit. The complete owner list and every
         // exact ReservationHandle have been validated above this line.
-        decodeRequests.forEach((requestId, request) -> {
-            request.clearDispatchPermit();
-            decodeReservations.remove(requestId);
-        });
+        decodeRequests.values().forEach(DecodeRequestState::clearDispatchPermit);
         activeEngineDispatchPermitCount = 0;
         engineDispatchPermitRequiredKvReservedTotal.set(0L);
         engineDispatchPermitKvBudgetReservedTotal.set(0L);
@@ -1572,68 +1563,19 @@ final class DecodeState {
         }
     }
 
-    CleanupResult evictExpiredRequests(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
-        int evicted;
-        boolean capacityChanged;
+    void purgeFinishedRequests(long ttlMs) {
         lock.lock();
         try {
-            // Scheduler-owned requests expire through their exact local lease.
-            // This pass only sweeps endpoint orphans.
-            evicted = evictExpiredInflightLocked(
-                    ttlMs, retainForSchedulerCleanup);
             long cutoff = System.currentTimeMillis() - ttlMs;
-            int trackedPurged = 0;
-            java.util.Iterator<Map.Entry<String, DecodeRequestState>> trackedEvictIt =
-                    decodeRequests.entrySet().iterator();
-            while (trackedEvictIt.hasNext()) {
-                Map.Entry<String, DecodeRequestState> entry = trackedEvictIt.next();
-                if (entry.getValue().confirmed()
-                        && entry.getValue().lastSeenMs() < cutoff
-                        && !retainForSchedulerCleanup.test(entry.getKey())
-                        && entry.getValue().preemptionClaim == null) {
-                    decodeReservations.remove(entry.getKey());
-                    trackedEvictIt.remove();
-                    trackedPurged++;
-                }
-            }
-            if (trackedPurged > 0) {
-                confirmedEngineOwnedCount = Math.max(
-                        0, confirmedEngineOwnedCount - trackedPurged);
-            }
-            boolean settledTerminalRecordsPurged = decodeRequests.entrySet()
-                    .removeIf(entry -> !entry.getValue().countsTowardCapacity()
-                            && !entry.getValue().hasProtocolOwner()
-                            && entry.getValue().settledAtMs != 0L
-                            && entry.getValue().settledAtMs < cutoff);
-            if (evicted > 0 || trackedPurged > 0 || settledTerminalRecordsPurged) {
+            boolean removed = decodeRequests.values()
+                    .removeIf(request -> !request.countsTowardCapacity() && !request.hasProtocolOwner()
+                            && request.settledAtMs != 0L && request.settledAtMs < cutoff);
+            if (removed) {
                 admissionVersion.incrementAndGet();
             }
-            capacityChanged = evicted > 0 || trackedPurged > 0
-                    || settledTerminalRecordsPurged;
         } finally {
             lock.unlock();
         }
-        return new CleanupResult(evicted, capacityChanged);
-    }
-
-    private int evictExpiredInflightLocked(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
-        long nowMs = System.currentTimeMillis();
-        int evicted = 0;
-        for (Map.Entry<String, DecodeRequestState> entry
-                : decodeRequests.entrySet()) {
-            String requestId = entry.getKey();
-            DecodeRequestState request = entry.getValue();
-            if (!request.countsTowardCapacity()
-                    || nowMs - request.createdAtMs() <= ttlMs
-                    || retainForSchedulerCleanup.test(requestId)
-                    || request.preemptionClaim != null
-                    || request.confirmed()
-                    || !removeShadowExactLocked(requestId, request)) {
-                continue;
-            }
-            evicted++;
-        }
-        return evicted;
     }
 
     private boolean rememberSettledLocked(String requestId, long settledAtMs) {
@@ -1650,8 +1592,6 @@ final class DecodeState {
         state.settledAtMs = settledAtMs;
         return true;
     }
-
-    record CleanupResult(int expiredReservations, boolean capacityReleased) { }
 
     // Read-only views: capture, cache and metrics.
 
@@ -1955,7 +1895,6 @@ final class DecodeState {
 
     private void pruneRequestStateLocked(String requestId, DecodeRequestState state) {
         if (state != null && !state.countsTowardCapacity() && !state.hasProtocolOwner() && state.settledAtMs == 0L) {
-            decodeReservations.remove(requestId);
             decodeRequests.remove(requestId, state);
         }
     }

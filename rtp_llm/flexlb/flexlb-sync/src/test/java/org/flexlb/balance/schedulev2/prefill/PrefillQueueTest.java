@@ -7,7 +7,6 @@ import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
 import org.flexlb.balance.schedulev2.V2TestSupport;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.config.ConfigService;
@@ -590,8 +589,7 @@ class PrefillQueueTest {
         when(queues.find(endpoint)).thenReturn(queue);
         var configService = mock(ConfigService.class);
         when(configService.loadBalanceConfig()).thenReturn(config);
-        var events = new EndpointEventHandler(mock(RequestRegistry.class), queues, configService,
-                new DecodeReservations(), reporter);
+        var events = new EndpointEventHandler(mock(RequestRegistry.class), queues, configService, reporter);
         var task = EngineRpcService.TaskInfoPB.newBuilder()
                 .setRequestIdStr(request.requestId())
                 .setPhase(EngineRpcService.TaskPhase.TASK_PHASE_RUNNING)

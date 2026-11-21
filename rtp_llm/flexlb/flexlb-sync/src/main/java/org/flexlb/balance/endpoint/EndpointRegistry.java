@@ -24,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
-import java.util.function.Predicate;
 
 @Component
 public class EndpointRegistry {
@@ -882,41 +881,9 @@ public class EndpointRegistry {
         return endpoints == null ? 0 : endpoints.size();
     }
 
-    /**
-     * Trigger TTL eviction of unobserved Decode reservations.
-     *
-     * @param ttlMs max age before eviction
-     * @param retainForSchedulerCleanup current directory lookup, called under endpoint locks;
-     *                                  must not acquire request locks or use a historical snapshot
-     */
-    public void evictExpiredOrphans(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
-        getEndpointsByRole(RoleType.DECODE).forEach((endpoint, worker) -> {
-            DecodeEndpoint ep = (DecodeEndpoint) worker;
-            logEndpointEviction(RoleType.DECODE, endpoint,
-                    ep.evictExpiredRequests(
-                            ttlMs, retainForSchedulerCleanup), ttlMs);
-        });
-    }
-
-    /**
-     * Log and report one endpoint-ledger TTL eviction pass: endpoint-side
-     * evictions were previously log-only, invisible to the
-     * inflight.ttl.expired.qps series family. On this architecture the
-     * endpoint ledgers have a single stale-unobserved exit, so every evicted
-     * entry reports the {@code ttl} reason bucket; only non-zero counts are
-     * reported, keeping the series sparse.
-     */
-    private void logEndpointEviction(RoleType role,
-                                     String endpoint,
-                                     int evicted,
-                                     long ttlMs) {
-        if (evicted > 0) {
-            reporter.reportEndpointInflightTtlExpired(
-                    role.name(), endpoint, "ttl", evicted);
-            Logger.info("event=endpoint_inflight_ttl_eviction role={} endpoint={} "
-                            + "evicted={} ttl_ms={}",
-                    role, endpoint, evicted, ttlMs);
+    public void purgeFinishedDecodeRequests(long ttlMs) {
+        for (WorkerEndpoint endpoint : getEndpointsByRole(RoleType.DECODE).values()) {
+            ((DecodeEndpoint) endpoint).purgeFinishedRequests(ttlMs);
         }
     }
-
 }

@@ -78,7 +78,6 @@ class DecodeQueueConsumerTest {
     private final RequestSchedulerReporter reporter = mock(RequestSchedulerReporter.class);
     private final V2QueueReporter queueReporter = mock(V2QueueReporter.class);
     private final PrefillPublishCheck prefillCheck = mock(PrefillPublishCheck.class);
-    private final DecodeReservations reservations = new DecodeReservations();
     private final DecodeQueue decodeQueue = new DecodeQueue(true);
     private final RequestTable requestTable = new RequestTable();
     private final QueueCapacity queueCapacity = new QueueCapacity();
@@ -90,8 +89,7 @@ class DecodeQueueConsumerTest {
     private final WorkerDirectory workerDirectory = new WorkerDirectory(endpointRegistry);
     private final PlacementAvailability availability = new PlacementAvailability();
     private final EndpointEventHandler endpointEvents = new EndpointEventHandler(mock(RequestRegistry.class),
-            mock(org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry.class), configService, reservations,
-            reporter);
+            mock(org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry.class), configService, reporter);
     private final DecodeEndpoint decode =
             spy(new DecodeEndpoint(WorkerStatus.createDiscovered(RoleType.DECODE, "g", "127.0.0.2", 8080, 8081, "test"),
                     endpointEvents));
@@ -259,7 +257,6 @@ class DecodeQueueConsumerTest {
         pool.close();
         verify(prefillCheck).release(request);
         assertNull(request.decodeChoice());
-        assertFalse(reservations.contains("1"));
         assertEquals(0L, queueCapacity.globalQueueAndEngineSubQueueCount());
     }
 
@@ -293,7 +290,6 @@ class DecodeQueueConsumerTest {
         assertSame(request.selectedPrefill().serverStatus(), response.getServerStatus().get(0));
         assertEquals("127.0.0.2", response.getServerStatus().get(1).getServerIp());
         assertNotNull(decode.reservationHandle("1"));
-        assertTrue(reservations.contains("1"));
         assertEquals(0, requestTable.size());
         assertEquals(0L, queueCapacity.globalQueueAndEngineSubQueueCount());
         assertEquals(0, queueCapacity.engineSubQueueWaiting(RoleType.PREFILL));
@@ -336,7 +332,6 @@ class DecodeQueueConsumerTest {
         pool.close();
         assertNull(request.decodeChoice());
         assertNull(decode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
         verify(prefillCheck).release(request);
     }
 
@@ -435,7 +430,6 @@ class DecodeQueueConsumerTest {
         pool.close();
         assertEquals(Stage.FAILED, request.stage());
         assertNull(decode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
         verify(prefillCheck).release(request);
     }
 
@@ -451,7 +445,6 @@ class DecodeQueueConsumerTest {
         Request next = addWaiting("2", 30);
         assertTrue(response(next).isSuccess());
         pool.close();
-        assertFalse(reservations.contains("1"));
     }
 
     @Test
@@ -463,7 +456,6 @@ class DecodeQueueConsumerTest {
         assertEquals(StrategyErrorType.DISPATCH_FAILED.getErrorCode(), response(request).getCode());
         pool.close();
         assertNull(decode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
         verify(selector, never()).select(any(), any(), any());
         verify(prefillCheck).release(request);
     }
@@ -516,7 +508,6 @@ class DecodeQueueConsumerTest {
         assertTrue(response(request).isSuccess());
         pool.close();
         assertSame(otherDecode, request.decodeChoice().endpoint());
-        assertTrue(reservations.contains("1"));
         assertEquals(1, otherDecode.getInflightCount());
     }
 
@@ -584,20 +575,7 @@ class DecodeQueueConsumerTest {
         assertFalse(response(request).isSuccess());
         pool.close();
         assertEquals(0, otherDecode.getInflightCount());
-        assertFalse(reservations.contains("1"));
         assertNull(request.decodeChoice());
-    }
-
-    @Test
-    void publishedReservationIsProtectedFromOrphanSweep() throws Exception {
-        Request request = addWaiting("1", 30);
-        start(1);
-        assertTrue(response(request).isSuccess());
-        pool.close();
-
-        decode.evictExpiredRequests(-1L, reservations::contains);
-        assertNotNull(decode.reservationHandle("1"));
-        assertTrue(reservations.contains("1"));
     }
 
     @Test
@@ -611,7 +589,6 @@ class DecodeQueueConsumerTest {
 
         updateDecodeStatus(decode, Map.of(), Map.of(), false);
         assertNull(decode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
         verify(reporter).reportStatusUpdateTimeout(RoleType.DECODE, decode.ipPort());
     }
 
@@ -632,7 +609,6 @@ class DecodeQueueConsumerTest {
         markRequestStale(decode, "1");
         updateDecodeStatus(decode, Map.of(), Map.of(), false);
         assertNull(decode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
     }
 
     @ParameterizedTest
@@ -651,7 +627,6 @@ class DecodeQueueConsumerTest {
         assertTrue(response(request).isSuccess());
         pool.close();
         assertNull(decode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
     }
 
     @Test
@@ -669,14 +644,13 @@ class DecodeQueueConsumerTest {
 
         updateDecodeStatus(otherDecode, Map.of(), Map.of(), false);
         assertNull(otherDecode.reservationHandle("1"));
-        assertFalse(reservations.contains("1"));
     }
 
     private void start(int count) {
         pool = new DecodeQueueConsumerPoll(count, decodeQueue, availability,
                 () -> new DecodeQueueConsumer(decodeQueue, cleanup, selector, workerDirectory,
-                        new DecodePreemptionCoordinator(reporter),
-                        configService, prefillCheck, reservations, queueReporter, decodeQueue::wake));
+                        new DecodePreemptionCoordinator(reporter), configService, prefillCheck, queueReporter,
+                        decodeQueue::wake));
         pool.start();
     }
 

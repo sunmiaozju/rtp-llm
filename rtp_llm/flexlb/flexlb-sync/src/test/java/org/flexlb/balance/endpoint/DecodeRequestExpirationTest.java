@@ -109,7 +109,7 @@ class DecodeRequestExpirationTest {
         assertEquals(1, endpoint.getInflightCount());
 
         assertTrue(endpoint.release(original, DecodeEndpoint.ReleaseReason.EXPIRED).released());
-        endpoint.evictExpiredRequests(-1L, requestId -> false);
+        endpoint.purgeFinishedRequests(-1L);
         DecodeEndpoint.ReservationHandle replacement = reserve(1L, 300, 450, 0);
         assertFalse(endpoint.release(original, DecodeEndpoint.ReleaseReason.EXPIRED).released());
         assertEquals(300, endpoint.routingView().inputKvReserved());

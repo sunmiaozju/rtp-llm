@@ -20,7 +20,6 @@ import static org.flexlb.constant.MetricConstant.ENGINE_SUBQUEUE_RESIDENCE_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_RESIDENCE_MS;
 import static org.flexlb.constant.MetricConstant.INFLIGHT_MAX_AGE_MS;
-import static org.flexlb.constant.MetricConstant.INFLIGHT_TTL_EXPIRED_QPS;
 import static org.flexlb.constant.MetricConstant.ROUTE_SUBMIT_TIME_MS;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_LENGTH;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_MAX_LENGTH;
@@ -197,7 +196,6 @@ class BatchSchedulerReporterTest {
         verify(monitor).register(INFLIGHT_MAX_AGE_MS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         verify(monitor).register(org.flexlb.constant.MetricConstant.WORKER_STATUS_UNCONFIRMED_REQUEST_COUNT,
                 FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        verify(monitor).register(INFLIGHT_TTL_EXPIRED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         verify(monitor).register(DECODE_INPUT_KV_RESERVED_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
     }
 
@@ -249,28 +247,6 @@ class BatchSchedulerReporterTest {
                 FlexMetricTags.of("role", "PREFILL", "engineIp", "scheduler"), 3.0);
         verify(monitor).report(TRACKED_REQUEST_COUNT,
                 FlexMetricTags.of("role", "ENCODER", "engineIp", "scheduler"), 2.0);
-    }
-
-    @Test
-    void should_report_endpoint_inflight_ttl_expired_with_reason_bucket() {
-        reporter.reportEndpointInflightTtlExpired("PREFILL", "10.0.0.1", "ttl", 2);
-
-        FlexMetricTags tags = FlexMetricTags.of(
-                "engineIp", "10.0.0.1",
-                "role", "PREFILL",
-                "reason", "ttl");
-        verify(monitor).report(INFLIGHT_TTL_EXPIRED_QPS, tags, 2.0);
-    }
-
-    @Test
-    void should_report_endpoint_inflight_ttl_expired_for_decode_endpoint() {
-        reporter.reportEndpointInflightTtlExpired("DECODE", "10.0.0.2", "ttl", 1);
-
-        FlexMetricTags tags = FlexMetricTags.of(
-                "engineIp", "10.0.0.2",
-                "role", "DECODE",
-                "reason", "ttl");
-        verify(monitor).report(INFLIGHT_TTL_EXPIRED_QPS, tags, 1.0);
     }
 
     @Test

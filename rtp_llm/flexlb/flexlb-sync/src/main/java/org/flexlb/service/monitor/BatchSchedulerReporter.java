@@ -25,7 +25,6 @@ import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_RESIDENCE_MS;
 import static org.flexlb.constant.MetricConstant.INFLIGHT_MAX_AGE_MS;
 import static org.flexlb.constant.MetricConstant.INFLIGHT_REQUEST_COUNT;
-import static org.flexlb.constant.MetricConstant.INFLIGHT_TTL_EXPIRED_QPS;
 import static org.flexlb.constant.MetricConstant.ROUTE_SUBMIT_TIME_MS;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_LENGTH;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_MAX_LENGTH;
@@ -109,7 +108,6 @@ public class BatchSchedulerReporter {
         monitor.register(INFLIGHT_MAX_AGE_MS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
 
         // Inflight TTL expired — count of inflight requests cleaned up by the TTL task, QPS tagged by role
-        monitor.register(INFLIGHT_TTL_EXPIRED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
 
         // Route+submit time — from schedule() entry to batcher offer completion (timer for distribution)
         monitor.register(ROUTE_SUBMIT_TIME_MS, FlexMetricType.TIMER, FlexPriorityType.NORMAL);
@@ -286,26 +284,6 @@ public class BatchSchedulerReporter {
         FlexMetricTags tags = FlexMetricTags.ofEngine(engineIp,
                 "role", role);
         monitor.report(INFLIGHT_MAX_AGE_MS, tags, ageMs);
-    }
-
-    /**
-     * Report inflight entries evicted from an endpoint ledger (prefill/decode
-     * orphan sweeps via {@link org.flexlb.balance.endpoint.EndpointRegistry}
-     * and friends) via the same {@code app.flexlb.inflight.ttl.expired.qps}
-     * series family.
-     * <p>Endpoint-side evictions were previously log-only
-     * (event=endpoint_inflight_ttl_eviction); this closes the gap with the
-     * shared {role, engineIp, reason} tag schema. On this architecture the
-     * endpoint ledgers have a single stale-unobserved exit, so the reason
-     * bucket is {@code ttl}; only non-zero counts are reported, keeping the
-     * series sparse.
-     */
-    public void reportEndpointInflightTtlExpired(String role, String engineIp,
-                                                 String reason, int count) {
-        FlexMetricTags tags = FlexMetricTags.ofEngine(engineIp,
-                "role", role,
-                "reason", reason);
-        monitor.report(INFLIGHT_TTL_EXPIRED_QPS, tags, count);
     }
 
     /**

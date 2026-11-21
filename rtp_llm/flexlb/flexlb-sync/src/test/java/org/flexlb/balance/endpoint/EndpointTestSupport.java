@@ -35,8 +35,6 @@ public final class EndpointTestSupport {
                 .thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
         var events = org.mockito.Mockito.mock(EndpointEventHandler.class);
         org.mockito.Mockito.when(events.getConfigService()).thenReturn(configService);
-        org.mockito.Mockito.when(events.getDecodeReservations())
-                .thenReturn(new org.flexlb.balance.schedulev2.decode.DecodeReservations());
         return events;
     }
 

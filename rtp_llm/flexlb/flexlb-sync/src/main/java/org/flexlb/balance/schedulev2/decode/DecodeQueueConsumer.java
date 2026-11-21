@@ -55,7 +55,6 @@ public final class DecodeQueueConsumer implements Runnable {
     private final DecodePreemptionCoordinator preemptionCoordinator;
     private final ConfigService configService;
     private final PrefillPublishCheck prefillCheck;
-    private final DecodeReservations reservations;
     private final V2QueueReporter queueReporter;
     private final Runnable capacityWake; // 全体消费者共享同一实例，节点侧 Set 自动去重
     private final AtomicBoolean running = new AtomicBoolean(true);
@@ -67,7 +66,6 @@ public final class DecodeQueueConsumer implements Runnable {
                                DecodePreemptionCoordinator preemptionCoordinator,
                                ConfigService configService,
                                PrefillPublishCheck prefillCheck,
-                               DecodeReservations reservations,
                                V2QueueReporter queueReporter,
                                Runnable capacityWake) {
         this.decodeQueue = decodeQueue;
@@ -77,7 +75,6 @@ public final class DecodeQueueConsumer implements Runnable {
         this.preemptionCoordinator = preemptionCoordinator;
         this.configService = configService;
         this.prefillCheck = prefillCheck;
-        this.reservations = reservations;
         this.queueReporter = queueReporter;
         this.capacityWake = capacityWake;
     }
@@ -145,8 +142,6 @@ public final class DecodeQueueConsumer implements Runnable {
                     returnToMain = true;
                     break;
                 }
-                reservations.add(request.requestId());
-
                 // 尝试前记下通知版本；尝试期间的容量变化不应再睡眠。
                 long version = decodeQueue.changeVersion();
                 if (selectAndPublish(request, group, requirement)) { // 发布成功，本次处理完成
@@ -344,8 +339,6 @@ public final class DecodeQueueConsumer implements Runnable {
             }
         } catch (RuntimeException failure) {
             Logger.error("V2 decode reservation release failed: request_id={}", request.requestId(), failure);
-        } finally {
-            reservations.remove(request.requestId());
         }
     }
 

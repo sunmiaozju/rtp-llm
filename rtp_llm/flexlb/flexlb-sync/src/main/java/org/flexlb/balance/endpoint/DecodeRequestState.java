@@ -135,10 +135,6 @@ public final class DecodeRequestState {
         lastSeenAtMs = observedAtMs;
     }
 
-    long lastSeenMs() {
-        return lastSeenAtMs;
-    }
-
     boolean markQueued() {
         if (queued) {
             return false;

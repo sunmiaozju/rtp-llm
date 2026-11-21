@@ -143,15 +143,6 @@ public class MetricConstant {
     public static final String INFLIGHT_MAX_AGE_MS =
             "app.flexlb.inflight.max.age.ms";
 
-    /**
-     * FlexLB inflight TTL expired count — number of inflight entries evicted by
-     * TTL cleanup. Reported as QPS with a unified {role, engineIp, reason} tag
-     * schema: role=SCHEDULER for the scheduler ledger, endpoint ledgers for
-     * PREFILL/DECODE/PDFUSION. The new architecture routes every orphan
-     * eviction through one ttlMs-controlled exit, so reason is always "ttl".
-     */
-    public static final String INFLIGHT_TTL_EXPIRED_QPS = "app.flexlb.inflight.ttl.expired.qps";
-
     /** Selection-time first-token readiness estimate, including outstanding work. */
     public static final String PREFILL_SELECTED_ESTIMATED_TTFT_MS =
             "app.flexlb.prefill.selected.estimated_ttft_ms";

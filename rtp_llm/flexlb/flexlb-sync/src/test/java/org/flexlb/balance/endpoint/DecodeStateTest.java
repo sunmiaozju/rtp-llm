@@ -3,7 +3,6 @@ package org.flexlb.balance.endpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityLimit;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DispatchOutcome;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.master.WorkerStatus;
@@ -37,7 +36,6 @@ class DecodeStateTest {
     private static final CapacityLimit CAPACITY = new CapacityLimit(2, 100);
     private final FlexlbConfig config = new FlexlbConfig();
     private final ConfigService configService = mock(ConfigService.class);
-    private final DecodeReservations reservations = new DecodeReservations();
     private final org.flexlb.service.monitor.RequestSchedulerReporter requestReporter =
             mock(org.flexlb.service.monitor.RequestSchedulerReporter.class);
 
@@ -75,7 +73,7 @@ class DecodeStateTest {
     @Test
     void reportedPublishedRequestMissingFromWorkerStatusIsCleanedAfterTimeout() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         state.dispatch(permit, DispatchOutcome.ENGINE_OWNED);
@@ -104,7 +102,7 @@ class DecodeStateTest {
     @Test
     void unchangedVersionHeartbeatRefreshesRequestStatus() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         state.dispatch(permit, DispatchOutcome.ENGINE_OWNED);
@@ -131,9 +129,7 @@ class DecodeStateTest {
     @Test
     void unpublishedReservationsAreExcludedFromBothStatusCleanupPaths() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
-        reservations.add("1");
-        reservations.add("2");
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var queued = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var dispatched = state.reserve("2", 100, 200, 50, true, CAPACITY);
         state.dispatch(state.acquireDispatchPermit(dispatched, CAPACITY).permit(), DispatchOutcome.ENGINE_OWNED);
@@ -142,14 +138,12 @@ class DecodeStateTest {
         assertTrue(heartbeat(state, status, Map.of(), Map.of(), 0L).facts().isEmpty());
         assertTrue(state.hasOwnedResources(queued));
         assertTrue(state.hasOwnedResources(dispatched));
-        assertTrue(reservations.contains("1"));
-        assertTrue(reservations.contains("2"));
     }
 
     @Test
     void timeoutUsesLatestPublicationOrActiveReportTime() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("1", 100, 200, 50, false, CAPACITY);
         calibrate(state, status, Map.of("1", task(1, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
@@ -157,7 +151,6 @@ class DecodeStateTest {
         DecodeRequestState request = requestRecord(state, "1");
         long oldTimeMs = System.currentTimeMillis() - 10_000L;
         request.setLastSeenAtMs(oldTimeMs);
-        reservations.add("1");
         state.registerPublished(reservation, System.currentTimeMillis() + 60_000L);
         assertTrue(calibrate(state, status, Map.of(), Map.of(), 1000L).facts().isEmpty());
         request.setPublishedAtMs(oldTimeMs);
@@ -168,14 +161,13 @@ class DecodeStateTest {
                 calibrate(state, status, Map.of(), Map.of(), 1000L).facts());
         assertEquals(oldTimeMs, request.getPublishedAtMs());
         assertFalse(state.hasOwnedResources(reservation));
-        assertFalse(reservations.contains("1"));
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void detectedTimeoutIsReturnedEvenWhenNoResourcesRemainToRelease() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         DecodeRequestState request = new DecodeRequestState(0L, 0L, 50, 1L);
         request.stopCountingTowardCapacity();
         Map<String, DecodeRequestState> requests =
@@ -184,12 +176,10 @@ class DecodeStateTest {
         requests.put("1", request);
         var reservation = new DecodeEndpoint.ReservationHandle(status.getGenerationId(), "1", 1L);
         long publishedAtMs = System.currentTimeMillis() - 10_000L;
-        reservations.add("1");
         state.registerPublished(reservation, publishedAtMs);
 
         assertEquals(java.util.List.of(WorkerStatusFact.terminal(reservation, 0L)),
                 calibrate(state, status, Map.of(), Map.of(), 0L).facts());
-        assertFalse(reservations.contains("1"));
         assertEquals(publishedAtMs, request.getPublishedAtMs());
         assertFalse(state.hasOwnedResources(reservation));
         assertEquals(0, state.routingView().engineCapacityUsed());
@@ -200,7 +190,7 @@ class DecodeStateTest {
     @Test
     void unchangedStatusFinishedMembershipExcludesTimeout() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("1", 100, 200, 50, false, CAPACITY);
         state.registerPublished(reservation, System.currentTimeMillis());
 
@@ -213,9 +203,7 @@ class DecodeStateTest {
     @ValueSource(strings = {"finished", "timeout"})
     void publishedProtectionIsRemovedDuringResourceCleanup(String end) {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
-        reservations.add("1");
-        reservations.add("2");
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var published = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var unpublished = state.reserve("2", 100, 200, 50, true, CAPACITY);
         state.registerPublished(published, System.currentTimeMillis() - 10_000L);
@@ -229,16 +217,14 @@ class DecodeStateTest {
             default -> throw new IllegalArgumentException(end);
         }
 
-        assertFalse(reservations.contains("1"));
         assertFalse(state.hasOwnedResources(published));
-        assertTrue(reservations.contains("2"));
         assertTrue(state.hasOwnedResources(unpublished));
     }
 
     @Test
     void calibrationExpiresUnconfirmedAndMissingConfirmedRequests() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var unconfirmed = state.reserve("1", 100, 200, 50, false, CAPACITY);
         var missingConfirmed = state.reserve("2", 100, 200, 50, false, CAPACITY);
         calibrate(state, status, Map.of("2", task(2, TaskPhase.RUNNING)), Map.of());
@@ -262,7 +248,7 @@ class DecodeStateTest {
     void missingPublishedRequestIsCleanedAfterStatusTimeout(TaskPhase phase) {
         for (boolean sameVersion : java.util.List.of(false, true)) {
             WorkerStatus status = status();
-            DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+            DecodeState state = new DecodeState(status, configService, requestReporter);
             var reservation = state.reserve("1", 100, 200, 50, true, CAPACITY);
             state.registerPublished(reservation, System.currentTimeMillis());
             calibrate(state, status, Map.of("1", task(1, phase)), Map.of());
@@ -293,7 +279,7 @@ class DecodeStateTest {
     @Test
     void calibrationExcludesExpiredPreemptionRequestsFromHeldSlots() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
@@ -317,7 +303,7 @@ class DecodeStateTest {
     @EnumSource(value = TaskPhase.class, names = {"KV_ALLOCATED", "RUNNING"})
     void expiringPreemptionVictimDoesNotRemoveActiveRequestsCapacity(TaskPhase phase) {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         var active = state.reserve("11", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, phase), "11", task(11, TaskPhase.RUNNING)), Map.of());
@@ -349,7 +335,7 @@ class DecodeStateTest {
     @Test
     void finishedOnlyReportClearsPublishedReservation() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         state.dispatch(permit, DispatchOutcome.ENGINE_OWNED);
@@ -367,7 +353,7 @@ class DecodeStateTest {
     @EnumSource(value = TaskPhase.class, names = {"RECEIVED", "PENDING"})
     void waitingConfirmsDispatchWithoutReleasingCapacity(TaskPhase phase) {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("waiting", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         state.dispatch(permit, DispatchOutcome.ENGINE_OWNED);
@@ -387,7 +373,7 @@ class DecodeStateTest {
     @Test
     void returnedPermitCannotDispatchOrReleaseItsReplacement() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("1", 100, 200, 50, true, CAPACITY);
         var first = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         assertTrue(state.dispatch(first, DispatchOutcome.ABANDONED).capacityReleased());
@@ -415,7 +401,7 @@ class DecodeStateTest {
     @Test
     void calibrationConvertsTheSameReservationWithoutDoubleChargingAndSettlesTerminal() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("2", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
@@ -469,7 +455,7 @@ class DecodeStateTest {
     @EnumSource(value = TaskPhase.class, names = {"RECEIVED", "PENDING"})
     void regressedActivePhaseRetainsIdentityAcrossRepeatedReportsAndResumption(TaskPhase regressed) {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         for (int i = 0; i < 2; i++) {
@@ -491,7 +477,7 @@ class DecodeStateTest {
     @Test
     void expiryOfRegressedRequestDoesNotSubtractAnotherRunningRequestsSlot() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var regressed = state.reserve("10", 100, 200, 50, true, CAPACITY);
         var running = state.reserve("11", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING), "11", task(11, TaskPhase.RUNNING)), Map.of());
@@ -507,7 +493,7 @@ class DecodeStateTest {
     @Test
     void regressedClaimKeepsOneHoldAndExplicitFinishedWinsOverActiveSnapshot() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
@@ -532,7 +518,7 @@ class DecodeStateTest {
     @Test
     void emptyWorkerReportKeepsCapacityAndLateFinishedReleasesOriginalReservation() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("10", 100, 200, 50, true, CAPACITY);
         var permit = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
@@ -573,7 +559,7 @@ class DecodeStateTest {
     @Test
     void requestMissingFromWorkerReportCanResumeAndExpireWithoutReleasingAnotherRequestsCapacity() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         calibrate(state, status, Map.of(), Map.of());
@@ -593,28 +579,16 @@ class DecodeStateTest {
     }
 
     @Test
-    void missingConfirmedRequestRemainsUntilSchedulerCleanupOrEndpointRemoval() {
+    void missingConfirmedUnpublishedRequestIsReleasedOnEndpointRetirement() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var reservation = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         calibrate(state, status, Map.of(), Map.of());
-        state.evictExpiredRequests(-1, requestId -> true);
+        state.purgeFinishedRequests(-1);
         assertTrue(state.hasOwnedResources(reservation));
         assertEquals(java.util.List.of(reservation), state.retire());
         assertFalse(state.hasOwnedResources(reservation));
-    }
-
-    @Test
-    void missingConfirmedRequestWithoutSchedulerTrackingIsRemovedAfterTimeout() {
-        WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
-        var reservation = state.reserve("10", 100, 200, 50, true, CAPACITY);
-        calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
-        calibrate(state, status, Map.of(), Map.of());
-        state.evictExpiredRequests(-1, requestId -> false);
-        assertFalse(state.hasOwnedResources(reservation));
-        assertEquals(0, state.routingView().engineCapacityUsed());
     }
 
     private static TaskInfoPB.Builder task(long requestId, TaskPhase phase) {
@@ -628,7 +602,7 @@ class DecodeStateTest {
     @Test
     void returnedPreemptionCanRollBackBeforeDeliveryWithoutDroppingVictim() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
@@ -645,7 +619,7 @@ class DecodeStateTest {
     @Test
     void workerConfirmationClearsReturnedAttemptWithoutRollingBackVictimClaim() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
@@ -675,7 +649,7 @@ class DecodeStateTest {
     @Test
     void returnedPreemptionDispatchKeepsVictimUntilFinishedReport() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
@@ -696,7 +670,7 @@ class DecodeStateTest {
     @Test
     void returnedIncomingCanFinishBeforeAnyActiveWorkerReport() {
         WorkerStatus status = status();
-        DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
+        DecodeState state = new DecodeState(status, configService, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,

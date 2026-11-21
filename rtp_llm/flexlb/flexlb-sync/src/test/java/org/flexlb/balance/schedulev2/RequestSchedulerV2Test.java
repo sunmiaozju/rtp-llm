@@ -8,7 +8,6 @@ import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.RequestState;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
-import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeSelector;
@@ -82,8 +81,7 @@ class RequestSchedulerV2Test {
         when(prefillStrategy.selectPrepared(any(), any(), any(), any(), any())).thenReturn(choice);
         scheduler = new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, new PlacementAvailability(),
                 mock(DefaultRouter.class), prefillStrategy, mock(DecodeSelector.class), prefillQueues, modelMetaConfig,
-                mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class), new DecodeReservations(),
-                mock(V2QueueReporter.class));
+                mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class), mock(V2QueueReporter.class));
 
         Response response = scheduler.submit(context("1", 50, 60_000L)).get(5, TimeUnit.SECONDS);
 
@@ -256,7 +254,7 @@ class RequestSchedulerV2Test {
         return new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, placementAvailability,
                 mock(DefaultRouter.class), mock(CostBasedPrefillStrategy.class), mock(DecodeSelector.class),
                 prefillQueues, modelMetaConfig, mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class),
-                new DecodeReservations(), queueReporter);
+                queueReporter);
     }
 
     private BalanceContext context(String requestId, int priority, long expiresInMs) {

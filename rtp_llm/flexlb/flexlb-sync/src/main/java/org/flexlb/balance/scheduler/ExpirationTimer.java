@@ -11,8 +11,8 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.BiPredicate;
+import java.util.function.LongConsumer;
 import java.util.function.LongSupplier;
-import java.util.function.Predicate;
 
 /**
  * Semantic owner of request deadlines and lifecycle-retention maintenance.
@@ -21,7 +21,7 @@ import java.util.function.Predicate;
  * the request registry; a slot stores the opaque registration returned
  * by this class.
  *
- * <p>Maintenance removes settled terminal records before sweeping endpoint orphans.
+ * <p>Maintenance expires finished request history for Encoder and Decode.
  * A request's inactivity deadline bounds local ownership independently of
  * Engine cancellation acknowledgements or terminal status delivery.
  */
@@ -370,11 +370,7 @@ final class ExpirationTimer implements AutoCloseable {
         return exact;
     }
 
-    // ── 保留期维护：先清终态目录，再扫描 Endpoint 孤儿 ──
-
-    /** Run one complete maintenance pass using one dynamic policy snapshot. */
-    void maintain(
-            BiConsumer<Long, Predicate<String>> exactSweeper) {
+    void maintain(LongConsumer purgeFinishedDecodeRequests) {
         if (lifecycle.isShuttingDown()) {
             return;
         }
@@ -398,9 +394,9 @@ final class ExpirationTimer implements AutoCloseable {
         }
 
         try {
-            exactSweeper.accept(ttlMs, requestId -> false);
-        } catch (RuntimeException | Error sweepFailure) {
-            failure = append(failure, sweepFailure);
+            purgeFinishedDecodeRequests.accept(ttlMs);
+        } catch (RuntimeException | Error purgeFailure) {
+            failure = append(failure, purgeFailure);
         }
         rethrow(failure);
     }
