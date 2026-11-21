@@ -1,11 +1,15 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.strategy.SelectedRole;
+import org.flexlb.balance.endpoint.EncoderEndpoint;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
+import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
+import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RequestPhase;
+import org.flexlb.dao.route.RoleType;
+import org.flexlb.util.CommonUtils;
 import org.flexlb.util.Logger;
 import org.flexlb.util.PriorityNormalizer;
 
@@ -144,7 +148,7 @@ final class EncoderQueueCoordinator implements AutoCloseable {
         }
         try {
             long observedCapacityVersion = capacityVersion();
-            PlacementResult<SelectedRole, PlacementKey> selection = router.selectEncoder(entry.context);
+            PlacementResult<EncoderEndpoint, PlacementKey> selection = router.selectEncoder(entry.context);
             entry.context.setSchedulingDiagnostics(selection.diagnostics());
             switch (selection.status()) {
                 case SUCCESS -> publishRoute(entry, selection.value());
@@ -158,16 +162,31 @@ final class EncoderQueueCoordinator implements AutoCloseable {
         }
     }
 
-    private void publishRoute(GlobalQueueEntry entry, SelectedRole selected) {
-        try (selected; var hold = selected.takeEndpointHold()) {
-            Response response = new Response();
-            response.setSuccess(true);
-            response.setServerStatus(List.of(selected.serverStatus()));
-            if (!requests.claimEncoderRoute(entry.context.getRequestId(), entry.future, hold)
-                    || !requests.publishEncoderRoute(entry.context.getRequestId(), entry.future, response)) {
-                fail(entry, Response.error(StrategyErrorType.REQUEST_CANCELLED));
-            }
+    private void publishRoute(GlobalQueueEntry entry, EncoderEndpoint endpoint) {
+        String requestId = entry.context.getRequestId();
+        Response response = new Response();
+        response.setSuccess(true);
+        response.setServerStatus(List.of(buildEncoderServerStatus(endpoint, requestId)));
+        if (!requests.claimEncoderRoute(requestId, entry.future, endpoint)
+                || !requests.publishEncoderRoute(requestId, entry.future, response)) {
+            fail(entry, Response.error(StrategyErrorType.REQUEST_CANCELLED));
         }
+    }
+
+    private static ServerStatus buildEncoderServerStatus(EncoderEndpoint endpoint, String requestId) {
+        WorkerStatus worker = endpoint.getStatus();
+        WorkerStatus.TopologySnapshot topology = worker.topologySnapshot();
+        ServerStatus serverStatus = new ServerStatus();
+        serverStatus.setSuccess(true);
+        serverStatus.setRole(RoleType.ENCODER);
+        serverStatus.setRequestId(requestId);
+        serverStatus.setGroup(topology.group());
+        serverStatus.setServerIp(topology.ip());
+        serverStatus.setHttpPort(topology.port());
+        serverStatus.setGrpcPort(CommonUtils.toGrpcPort(topology.port()));
+        serverStatus.setDpRank(worker.committedEngineObservation().dpRank());
+        serverStatus.setSelectedEngineIndex(topology.engineIndex(), topology.multiEngineNum());
+        return serverStatus;
     }
 
     private long capacityVersion() {

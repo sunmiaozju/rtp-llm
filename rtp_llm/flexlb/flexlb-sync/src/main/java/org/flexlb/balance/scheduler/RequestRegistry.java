@@ -1,7 +1,6 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.endpoint.EncoderEndpoint;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
@@ -98,12 +97,7 @@ public class RequestRegistry {
     /**
      * Transfer a selected Encoder request to its endpoint before publishing the route.
      */
-    public boolean claimEncoderRoute(String requestId,
-                                     CompletableFuture<Response> future,
-                                     WorkerEndpoint.EndpointHold selected) {
-        WorkerEndpoint endpoint = selected.endpoint();
-        endpoint.checkHold(selected);
-        if (!(endpoint instanceof EncoderEndpoint encoder)) { return false; }
+    public boolean claimEncoderRoute(String requestId, CompletableFuture<Response> future, EncoderEndpoint encoder) {
         RequestSlot slot = requestSlot(requestId, RequestPhase.ENCODER);
         return slot != null && slot.ownsFuture(future)
                 && slot.claimEncoderRoute(encoder);
@@ -143,11 +137,6 @@ public class RequestRegistry {
     void processEncoderStatus(EncoderEndpoint source, WorkerStatus.TaskObservation task, boolean finished) {
         RequestSlot slot = requestSlot(task.requestId(), RequestPhase.ENCODER);
         if (slot != null) { slot.processEncoderStatus(source, task, finished); }
-    }
-
-    void applyEncoderRetirement(EncoderEndpoint source, String requestId) {
-        RequestSlot slot = requestSlot(requestId, RequestPhase.ENCODER);
-        if (slot != null) { slot.recordEncoderRetirement(source); }
     }
 
     CompletableFuture<Response> register(BalanceContext context) {

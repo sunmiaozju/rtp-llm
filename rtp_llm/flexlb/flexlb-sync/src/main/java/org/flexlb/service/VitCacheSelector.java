@@ -1,7 +1,5 @@
 package org.flexlb.service;
 
-import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
@@ -122,35 +120,16 @@ public class VitCacheSelector {
         if (selected == null) {
             return errorStatus(StrategyErrorType.NO_VIT_WORKER);
         }
-        try (var hold = workers.holdEndpoint(RoleType.VIT, selected.getServerIp() + ":" + selected.getHttpPort())) {
-            WorkerStatus worker = hold == null ? null : hold.endpoint().getStatus();
-            if (selected.getRole() != RoleType.VIT || worker == null
-                    || (group != null && !Objects.equals(group, worker.getGroup()))
-                    || selected.getGrpcPort() != worker.getGrpcPort()
-                    || !Objects.equals(selected.getGroup(), worker.getGroup())
-                    || selected.getWorkerGeneration() != hold.generationId()) {
-                return errorStatus(StrategyErrorType.NO_VIT_WORKER);
-            }
-            return status(worker, ctx.getRequestId());
+        var endpoint = workers.findEndpoint(RoleType.VIT, selected.getServerIp() + ":" + selected.getHttpPort());
+        WorkerStatus worker = endpoint == null ? null : endpoint.getStatus();
+        if (selected.getRole() != RoleType.VIT || worker == null
+                || (group != null && !Objects.equals(group, worker.getGroup()))
+                || selected.getGrpcPort() != worker.getGrpcPort()
+                || !Objects.equals(selected.getGroup(), worker.getGroup())
+                || selected.getWorkerGeneration() != worker.getGenerationId()) {
+            return errorStatus(StrategyErrorType.NO_VIT_WORKER);
         }
-    }
-
-    /** Holds the selected endpoint generation through the admission handoff. */
-    public synchronized SelectedRole selectHeld(BalanceContext ctx, String group) {
-        ServerStatus result = ctx.getRequest().getSelectedVit() == null ? select(ctx, group) : validate(ctx, group);
-        if (!result.isSuccess()) {
-            return null;
-        }
-        WorkerEndpoint.EndpointHold hold =
-                workers.holdEndpoint(RoleType.VIT, result.getServerIp() + ":" + result.getHttpPort());
-        if (hold == null) {
-            return null;
-        }
-        if (hold.generationId() != result.getWorkerGeneration()) {
-            hold.close();
-            return null;
-        }
-        return SelectedRole.stateless(hold, result);
+        return status(worker, ctx.getRequestId());
     }
 
     private static ServerStatus errorStatus(StrategyErrorType error) {

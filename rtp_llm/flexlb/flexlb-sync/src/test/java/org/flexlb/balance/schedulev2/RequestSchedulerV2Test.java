@@ -41,8 +41,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RequestSchedulerV2Test {
@@ -60,7 +58,7 @@ class RequestSchedulerV2Test {
     }
 
     @Test
-    void fusedPrefillPublishesWithoutHoldingEndpoint() throws Exception {
+    void fusedPrefillPublishesDirectly() throws Exception {
         config.getDispatcher().setMainQueueConsumerThreads(1);
         when(configService.loadBalanceConfig()).thenReturn(config);
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
@@ -87,7 +85,6 @@ class RequestSchedulerV2Test {
 
         assertTrue(response.isSuccess());
         assertEquals(List.of(choice.serverStatus()), response.getServerStatus());
-        verify(endpointRegistry, never()).hold(any(), any());
     }
 
     @Test

@@ -289,11 +289,9 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         return matching.toList();
     }
 
-    /**
-     * Hold one exact currently published endpoint generation by address.
-     */
-    public WorkerEndpoint.EndpointHold holdEndpoint(RoleType role, String ipPort) {
-        return endpointRegistry.hold(role, ipPort);
+    public WorkerEndpoint findEndpoint(RoleType role, String ipPort) {
+        WorkerEndpoint endpoint = endpointRegistry.get(role, ipPort);
+        return endpoint == null || endpoint.isRetired() ? null : endpoint;
     }
 
     /**
@@ -326,11 +324,8 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         return matching.toList();
     }
 
-    /**
-     * Hold the exact generation represented by a Decode routing snapshot.
-     */
-    public WorkerEndpoint.EndpointHold holdDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
-        return endpointRegistry.holdDecodeEndpoint(expected);
+    public DecodeEndpoint findDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
+        return endpointRegistry.findDecodeEndpoint(expected);
     }
 
 }

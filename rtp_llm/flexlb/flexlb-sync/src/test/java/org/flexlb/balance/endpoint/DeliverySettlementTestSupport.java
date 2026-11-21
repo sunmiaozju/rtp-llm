@@ -13,9 +13,7 @@ public final class DeliverySettlementTestSupport {
     public static void queueDecode(DecodeEndpoint endpoint, DecodeEndpoint.ReservationHandle reservation) {
         var response = WorkerStatusPB.newBuilder().setAvailableKvCache(10_000L).setTotalKvCache(10_000L);
         EndpointTestSupport.applyStatus(endpoint, response).run();
-        try (var hold = endpoint.tryHold()) {
-            assertTrue(endpoint.markQueued(hold, reservation));
-        }
+        assertTrue(endpoint.markQueued(reservation));
     }
 
     public static void dispatchDecode(DecodeEndpoint endpoint, DecodeEndpoint.ReservationHandle reservation) {

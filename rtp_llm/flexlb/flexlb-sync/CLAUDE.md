@@ -89,7 +89,6 @@ flexlb-sync/
 │   │   ├── RequestRegistry.java     # canonical request lifecycle
 │   │   └── WorkerBatcher.java      # endpoint decision/delivery runtime
 │   └── strategy/
-│       ├── RandomStrategy.java             # VIT selection
 │       ├── CostBasedPrefillStrategy.java   # Predicted Prefill cost strategy
 │       └── DecodeSelector.java    # Capacity-filtered Decode cost selection
 ├── consistency/
@@ -124,9 +123,8 @@ External dependencies:
 ## Important Implementation Notes
 
 ### Rollback Mechanism
-When routing fails for a later role type (e.g., PREFILL succeeds but DECODE fails),
-`DefaultRouter` closes the exact `SelectedRole` capabilities already selected and
-rolls back any direct-placement endpoint reservations.
+If a Decode route is not published, its queue consumer rolls back the local
+reservation on the selected endpoint.
 
 ### Load Balancer Selection
 The router calls explicit role selectors. Prefill and Decode selectors must

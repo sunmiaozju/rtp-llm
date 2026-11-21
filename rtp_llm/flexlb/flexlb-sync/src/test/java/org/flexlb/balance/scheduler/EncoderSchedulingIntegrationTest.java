@@ -13,6 +13,7 @@ import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
+import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RequestPhase;
@@ -41,7 +42,9 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -54,6 +57,7 @@ class EncoderSchedulingIntegrationTest {
     private ConfigService configService;
     private WorkerDirectory directory;
     private RequestRegistry requests;
+    private DefaultRouter router;
     private RequestScheduler scheduler;
 
     @BeforeEach
@@ -67,7 +71,7 @@ class EncoderSchedulingIntegrationTest {
                 mock(RequestSchedulerReporter.class));
         ModelMetaConfig model = mock(ModelMetaConfig.class);
         when(model.requiredRoles()).thenReturn(List.of(RoleType.ENCODER));
-        DefaultRouter router = new DefaultRouter(new EncoderStrategy(directory), configService, model);
+        router = spy(new DefaultRouter(new EncoderStrategy(directory), configService, model));
         scheduler = new RequestScheduler(configService, router, requests,
                 mock(org.flexlb.balance.schedulev2.RequestSchedulerV2.class));
     }
@@ -81,6 +85,43 @@ class EncoderSchedulingIntegrationTest {
             requests.closePublisher();
         }
         EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).clear();
+    }
+
+    @Test
+    void selectedEncoderStillPublishesAfterRetirement() throws Exception {
+        useEncoderQueue(1);
+        EncoderEndpoint first = worker("first", 8001, true, "group", 0, Map.of(), 0, 0);
+        worker("second", 8002, true, "group", 0, Map.of(), 0, 0);
+        when(directory.endpointAddressView(RoleType.ENCODER)).thenReturn(List.of("first", "second"));
+        WorkerStatus firstStatus = first.getStatus();
+        when(firstStatus.topologySnapshot()).thenReturn(
+                new WorkerStatus.TopologySnapshot("group", "first", 8001, 8002, "site", null, 1, 2));
+        WorkerStatus.EngineObservation firstEngine = firstStatus.committedEngineObservation();
+        BalanceContext selectedRequest = context(1, 100, 0L);
+        doAnswer(call -> {
+            Object selection = call.callRealMethod();
+            when(firstEngine.dpRank()).thenReturn(2L);
+            EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).remove("first", first);
+            first.close();
+            return selection;
+        }).when(router).selectEncoder(selectedRequest);
+
+        ServerStatus published = scheduler.submit(selectedRequest).get(2, TimeUnit.SECONDS).getServerStatus().getFirst();
+        assertEquals(RoleType.ENCODER, published.getRole());
+        assertEquals("1", published.getRequestId());
+        assertEquals("first", published.getServerIp());
+        assertEquals(8001, published.getHttpPort());
+        assertEquals(8002, published.getGrpcPort());
+        assertEquals("group", published.getGroup());
+        assertEquals(2L, published.getDpRank());
+        assertEquals(1, published.getEngineIndex());
+        assertEquals("second",
+                scheduler.submit(context(2, 100, 0L))
+                        .get(2, TimeUnit.SECONDS)
+                        .getServerStatus()
+                        .getFirst()
+                        .getServerIp());
+        assertEquals(0, first.pendingEncoderRequestCount());
     }
 
     @Test
@@ -369,7 +410,8 @@ class EncoderSchedulingIntegrationTest {
                 new EndpointEventHandler(requests, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
                         mock(org.flexlb.config.ConfigService.class),
                         org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class)));
-        when(directory.holdEndpoint(eq(RoleType.ENCODER), eq(ip))).thenAnswer(invocation -> endpoint.tryHold());
+        when(directory.findEndpoint(eq(RoleType.ENCODER), eq(ip)))
+                .thenAnswer(invocation -> endpoint.isRetired() ? null : endpoint);
         EndpointRegistry.getEndpointsByRole(RoleType.ENCODER).put(ip, endpoint);
         return endpoint;
     }

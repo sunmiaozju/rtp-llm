@@ -74,17 +74,6 @@ public final class EndpointEventHandler {
         }
     }
 
-    public void onEncoderGenerationRetired(EncoderEndpoint source, List<String> requestIds) {
-        for (String requestId : requestIds) {
-            try {
-                scheduler.applyEncoderRetirement(source, requestId);
-            } catch (Throwable failure) {
-                logErrorNoFail("Encoder retirement handling isolated: request_id={}",
-                        requestId, failure);
-            }
-        }
-    }
-
     private static void logErrorNoFail(String format, Object... arguments) {
         try {
             Logger.error(format, arguments);

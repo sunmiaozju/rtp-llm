@@ -39,8 +39,6 @@ import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
@@ -68,9 +66,9 @@ class VitCacheDirectoryTest {
         var workers = mock(WorkerDirectory.class);
         when(workers.getStatusBy(RoleType.VIT)).thenReturn(live);
         when(workers.endpointAddressView(RoleType.VIT)).thenReturn(live.keySet());
-        when(workers.holdEndpoint(eq(RoleType.VIT), any())).thenAnswer(call -> {
+        when(workers.findEndpoint(eq(RoleType.VIT), any())).thenAnswer(call -> {
             WorkerStatus status = live.get(call.getArgument(1));
-            return status == null ? null : new WorkerEndpoint(status).tryHold();
+            return status == null ? null : new WorkerEndpoint(status);
         });
         grpc = mock(EngineGrpcClient.class);
         consistency = mock(LBStatusConsistencyService.class);
@@ -374,13 +372,11 @@ class VitCacheDirectoryTest {
         roundTripped.setWorkerGeneration(0);
         assertFalse(selector.validate(ctx, "one").isSuccess());
         roundTripped.setWorkerGeneration(a.getGenerationId());
-        try (var held = selector.selectHeld(ctx, "one")) {
-            assertNotNull(held);
-            assertEquals(a.getGenerationId(), held.serverStatus().getWorkerGeneration());
-        }
+        var validated = selector.validate(ctx, "one");
+        assertTrue(validated.isSuccess());
+        assertEquals(a.getGenerationId(), validated.getWorkerGeneration());
         live.put(a.getIpPort(), worker(a.getIp(), "one"));
         assertFalse(selector.validate(ctx, "one").isSuccess());
-        assertNull(selector.selectHeld(ctx, "one"));
     }
 
 }

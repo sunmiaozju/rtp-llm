@@ -42,33 +42,29 @@ class DecodeEndpointTest {
     void reserveForDispatchAcquiresCapacityReservationAndPermitTogether() {
         updateStatus(null, null, 10000L);
         DecodeEndpoint.CapacityLimit capacity = new DecodeEndpoint.CapacityLimit(1L, 100L);
-        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
-            var first = endpoint.reserveForDispatch(hold, "100", 500L, 1000L, 30, capacity);
-            assertNotNull(first);
-            assertNotNull(first.reservation());
-            assertNotNull(first.permit());
-            assertEquals(1L, endpoint.routingView().placementUsage().occupiedRequests());
-            assertEquals(1L, endpoint.routingView().dispatchUsage().occupiedRequests());
-            assertNull(endpoint.reserveForDispatch(hold, "101", 500L, 1000L, 30, capacity));
-            assertNull(endpoint.reservationHandle("101"));
-            assertEquals(TRANSFERRED, first.permit().dispatch());
-            assertEquals(1L, endpoint.routingView().dispatchUsage().occupiedRequests());
-        }
+        var first = endpoint.reserveForDispatch("100", 500L, 1000L, 30, capacity);
+        assertNotNull(first);
+        assertNotNull(first.reservation());
+        assertNotNull(first.permit());
+        assertEquals(1L, endpoint.routingView().placementUsage().occupiedRequests());
+        assertEquals(1L, endpoint.routingView().dispatchUsage().occupiedRequests());
+        assertNull(endpoint.reserveForDispatch("101", 500L, 1000L, 30, capacity));
+        assertNull(endpoint.reservationHandle("101"));
+        assertEquals(TRANSFERRED, first.permit().dispatch());
+        assertEquals(1L, endpoint.routingView().dispatchUsage().occupiedRequests());
     }
 
     @Test
     void releasingUnpublishedDispatchReservationReleasesPermitToo() {
         updateStatus(null, null, 10000L);
         DecodeEndpoint.CapacityLimit capacity = new DecodeEndpoint.CapacityLimit(1L, 100L);
-        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
-            var first = endpoint.reserveForDispatch(hold, "100", 500L, 1000L, 30, capacity);
-            assertNotNull(first);
-            assertEquals(DecodeEndpoint.ReservationReleaseResult.RELEASED,
-                    endpoint.release(first.reservation(), DecodeEndpoint.ReleaseReason.NOT_SENT));
-            assertEquals(0L, endpoint.routingView().placementUsage().occupiedRequests());
-            assertEquals(0L, endpoint.routingView().dispatchUsage().occupiedRequests());
-            assertNotNull(endpoint.reserveForDispatch(hold, "101", 500L, 1000L, 30, capacity));
-        }
+        var first = endpoint.reserveForDispatch("100", 500L, 1000L, 30, capacity);
+        assertNotNull(first);
+        assertEquals(DecodeEndpoint.ReservationReleaseResult.RELEASED,
+                endpoint.release(first.reservation(), DecodeEndpoint.ReleaseReason.NOT_SENT));
+        assertEquals(0L, endpoint.routingView().placementUsage().occupiedRequests());
+        assertEquals(0L, endpoint.routingView().dispatchUsage().occupiedRequests());
+        assertNotNull(endpoint.reserveForDispatch("101", 500L, 1000L, 30, capacity));
     }
 
     @Test
@@ -373,23 +369,17 @@ class DecodeEndpointTest {
     }
 
     private DecodeEndpoint.ReservationHandle reserve(long requestId, long requiredKv, long kvBudget) {
-        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
-            assertNotNull(hold);
-            DecodeEndpoint.ReservationHandle reservation =
-                    endpoint.reserveUnqueued(hold, Long.toString(requestId), requiredKv, kvBudget, 0);
-            reservations.put(requestId, reservation);
-            return reservation;
-        }
+        DecodeEndpoint.ReservationHandle reservation =
+                endpoint.reserveUnqueued(Long.toString(requestId), requiredKv, kvBudget, 0);
+        reservations.put(requestId, reservation);
+        return reservation;
     }
 
     private static DecodeEndpoint.ReservationHandle reserve(DecodeEndpoint target,
                                                             long requestId,
                                                             long requiredKv,
                                                             long kvBudget) {
-        try (WorkerEndpoint.EndpointHold hold = target.tryHold()) {
-            assertNotNull(hold);
-            return target.reserveUnqueued(hold, Long.toString(requestId), requiredKv, kvBudget, 0);
-        }
+        return target.reserveUnqueued(Long.toString(requestId), requiredKv, kvBudget, 0);
     }
 
     private void release(long requestId) {
@@ -401,10 +391,7 @@ class DecodeEndpointTest {
     }
 
     private void markQueued(long requestId) {
-        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
-            assertNotNull(hold);
-            assertTrue(endpoint.markQueued(hold, reservations.get(requestId)));
-        }
+        assertTrue(endpoint.markQueued(reservations.get(requestId)));
     }
 
     private TaskInfoPB.Builder task(long requestId) {

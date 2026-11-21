@@ -2,7 +2,6 @@ package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.endpoint.EncoderEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.WorkerStatus;
@@ -13,8 +12,8 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -31,16 +30,13 @@ class EncoderStrategyTest {
     @Test
     void selectsLeastConcurrentWorkerWithoutUsingAvailableKvCache() {
         endpoint("busy", 8001, true, 40, 2, 2, 0);
-        endpoint("zero-kv", 8004, true, 0, 0, 1, 0);
+        EncoderEndpoint zeroKv = endpoint("zero-kv", 8004, true, 0, 0, 1, 0);
         endpoint("small-kv", 8002, true, 10, 1, 1, 0);
         endpoint("winner", 8003, true, 30, 1, 1, 0);
         when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("busy", "zero-kv", "small-kv", "winner"));
 
-        try (SelectedRole selected = strategy.select(context(), "group")) {
-            assertEquals("zero-kv", selected.serverStatus().getServerIp());
-            assertEquals(RoleType.ENCODER, selected.serverStatus().getRole());
-        }
+        assertSame(zeroKv, strategy.select(context(), "group"));
     }
 
     @Test
@@ -48,13 +44,11 @@ class EncoderStrategyTest {
         endpoint("dead", 8001, false, 100, 0, 0, 0);
         endpoint("negative", 8002, true, -1, 2, 0, 0);
         endpoint("pending", 8003, true, 100, 0, 0, 3);
-        endpoint("winner", 8004, true, 1, 1, 0, 0);
+        EncoderEndpoint winner = endpoint("winner", 8004, true, 1, 1, 0, 0);
         when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("dead", "negative", "pending", "winner"));
 
-        try (SelectedRole selected = strategy.select(context(), "group")) {
-            assertEquals("winner", selected.serverStatus().getServerIp());
-        }
+        assertSame(winner, strategy.select(context(), "group"));
     }
 
     @Test
@@ -69,13 +63,11 @@ class EncoderStrategyTest {
     @Test
     void selectsZeroKvWorkerWhenItHasLessConcurrentWork() {
         endpoint("positive", 8001, true, 100, 1, 0, 0);
-        endpoint("zero", 8002, true, 0, 0, 0, 0);
+        EncoderEndpoint zero = endpoint("zero", 8002, true, 0, 0, 0, 0);
         when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("positive", "zero"));
 
-        try (SelectedRole selected = strategy.select(context(), "group")) {
-            assertEquals("zero", selected.serverStatus().getServerIp());
-        }
+        assertSame(zero, strategy.select(context(), "group"));
     }
 
     @Test
@@ -87,24 +79,20 @@ class EncoderStrategyTest {
         when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("long-job", "short-jobs"));
 
-        try (SelectedRole selected = strategy.select(context(1000L, 200L), "group")) {
-            assertEquals("short-jobs", selected.serverStatus().getServerIp());
-        }
+        assertSame(shortJobs, strategy.select(context(1000L, 200L), "group"));
     }
 
     @Test
     void queueModeSkipsWorkersAtEncoderInflightLimit() {
         endpoint("at-cap", 8001, true, 0, 1, 1, 0);
-        endpoint("winner", 8002, true, 0, 1, 0, 0);
+        EncoderEndpoint winner = endpoint("winner", 8002, true, 0, 1, 0, 0);
         when(directory.endpointAddressView(RoleType.ENCODER))
                 .thenReturn(List.of("at-cap", "winner"));
 
         BalanceContext context = context();
         context.getConfig().getDispatcher().setMaxInflightPerEncoderWorker(2);
 
-        try (SelectedRole selected = strategy.select(context, "group")) {
-            assertEquals("winner", selected.serverStatus().getServerIp());
-        }
+        assertSame(winner, strategy.select(context, "group"));
     }
 
     @Test
@@ -127,18 +115,12 @@ class EncoderStrategyTest {
                                      long running,
                                      long waiting,
                                      int pending) {
-        WorkerEndpoint.EndpointHold hold = mock(WorkerEndpoint.EndpointHold.class);
         EncoderEndpoint endpoint = mock(EncoderEndpoint.class);
         WorkerStatus status = mock(WorkerStatus.class);
         WorkerStatus.EngineObservation engine = mock(WorkerStatus.EngineObservation.class);
-        when(directory.holdEndpoint(RoleType.ENCODER, address)).thenReturn(hold);
-        when(hold.endpoint()).thenReturn(endpoint);
-        when(hold.generationId()).thenReturn(1L);
+        when(directory.findEndpoint(RoleType.ENCODER, address)).thenReturn(endpoint);
         when(endpoint.getStatus()).thenReturn(status);
-        when(endpoint.getIp()).thenReturn(address);
-        when(endpoint.getHttpPort()).thenReturn(port);
         when(endpoint.pendingEncoderRequestCount()).thenReturn(pending);
-        when(status.getGenerationId()).thenReturn(1L);
         when(status.isAlive()).thenReturn(alive);
         when(status.topologySnapshot()).thenReturn(new WorkerStatus.TopologySnapshot(
                 "group", address, port, port + 1, "site"));

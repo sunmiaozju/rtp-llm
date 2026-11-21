@@ -163,9 +163,9 @@ The `DefaultRouter` orchestrates routing across these stages. If a later stage f
 
 ### Load Balancing Strategies
 
-`DefaultRouter` uses explicit role selectors: `CostBasedPrefillStrategy` for
-PREFILL/PDFUSION, `DecodeSelector` for DECODE, and `RandomStrategy`
-for VIT. Both selectors evaluate the complete live fleet before
+FlexLB uses `CostBasedPrefillStrategy` for PREFILL/PDFUSION, `DecodeSelector`
+for DECODE, `EncoderStrategy` for ENCODER, and `VitCacheSelector` for VIT.
+Prefill and Decode selectors evaluate the complete live fleet before
 reducing to one generation-fenced winner. Prefill uses fixed BEST_ONLY with
 optional cache affinity under `router.roles.prefill.cacheAffinity`. Decode uses
 `router.roles.decode.costEstimator.expression`, which defaults to `kvcache_used_ratio`.
@@ -294,9 +294,8 @@ generation capability; do not add a second selector pass or endpoint fallback
 after ordered QUEUE commit begins.
 
 ### Rollback Mechanism
-When multi-stage routing partially fails, `DefaultRouter` closes the exact
-`SelectedRole` capabilities that were already selected. Direct-placement owners
-also roll back their exact endpoint reservations before returning the failure.
+If a Decode route is not published, its queue consumer rolls back the local
+reservation on the selected endpoint.
 
 ### Concurrent Data Access
 `EndpointRegistry` owns endpoint publication and replacement across sync and

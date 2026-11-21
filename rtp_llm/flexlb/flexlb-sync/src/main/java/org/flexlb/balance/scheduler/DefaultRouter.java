@@ -1,8 +1,8 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
+import org.flexlb.balance.endpoint.EncoderEndpoint;
 import org.flexlb.balance.strategy.EncoderStrategy;
-import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
@@ -48,7 +48,7 @@ public class DefaultRouter {
         return deployedRoles.contains(RoleType.ENCODER);
     }
 
-    PlacementResult<SelectedRole, PlacementKey> selectEncoder(BalanceContext context) {
+    PlacementResult<EncoderEndpoint, PlacementKey> selectEncoder(BalanceContext context) {
         Response failure = validateRequest(context);
         if (failure != null) {
             return PlacementResult.rejected(failure);
@@ -57,7 +57,7 @@ public class DefaultRouter {
             return PlacementResult.rejected(Response.error(StrategyErrorType.INVALID_REQUEST));
         }
         String policyGroup = resolvePolicyGroup(context);
-        SelectedRole selected = encoderSelector.select(context, policyGroup);
+        EncoderEndpoint selected = encoderSelector.select(context, policyGroup);
         return selected == null
                 ? PlacementResult.blocked(new PlacementKey(RoleType.ENCODER, policyGroup),
                         Response.error(StrategyErrorType.NO_ENCODER_WORKER))

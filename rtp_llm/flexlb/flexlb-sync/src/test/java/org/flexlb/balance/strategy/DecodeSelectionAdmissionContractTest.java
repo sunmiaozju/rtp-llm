@@ -3,7 +3,6 @@ package org.flexlb.balance.strategy;
 import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
@@ -58,30 +57,26 @@ class DecodeSelectionAdmissionContractTest {
 
             for (long requestId = 100L; requestId < 106L; requestId++) {
                 DecodeRequirement request = fixture.request(requestId);
-                PlacementResult<SelectedRole, RoleType> result = fixture.strategy.select(request, null);
+                PlacementResult<DecodeEndpoint, RoleType> result = fixture.strategy.select(request, null);
                 assertEquals(PlacementResult.Status.SUCCESS, result.status());
-                try (SelectedRole selected = result.value()) {
-                    assertEquals(FREE_IP, selected.serverStatus().getServerIp(),
-                            "free placement capacity must win over a queued endpoint with only dispatch capacity");
-                    fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
-                    try (WorkerEndpoint.EndpointHold hold = selected.takeEndpointHold()) {
-                        DecodeEndpoint endpoint = (DecodeEndpoint) hold.endpoint();
-                        DecodeEndpoint.ReservationHandle reservation =
-                                endpoint.reserve(hold, request.requestId(), request.inputKvTokens(),
-                                        request.inputAndMaxOutputKvTokens(), request.priority(), request.capacity());
-                        assertNotNull(reservation, "the selected endpoint must pass the same placement gate");
-                        try {
-                            String canonicalRequestId = Long.toString(requestId);
-                            assertEquals(canonicalRequestId, reservation.requestId());
-                            assertTrue(endpoint.resourceSnapshot().isQueued(canonicalRequestId));
-                            var reserved = endpoint.resourceSnapshot().reserved().get(canonicalRequestId);
-                            assertEquals(70, reserved.priority());
-                            assertEquals(PROMPT_TOKENS, reserved.kvTokens());
-                            assertEquals(EXPECTED_TOKENS, reserved.kvBudgetTokens());
-                        } finally {
-                            endpoint.release(reservation, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
-                        }
-                    }
+                DecodeEndpoint endpoint = result.value();
+                assertEquals(FREE_IP, endpoint.getIp(),
+                        "free placement capacity must win over a queued endpoint with only dispatch capacity");
+                fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
+                var reservedDispatch = endpoint.reserveForDispatch(request.requestId(), request.inputKvTokens(),
+                        request.inputAndMaxOutputKvTokens(), request.priority(), request.capacity());
+                assertNotNull(reservedDispatch, "the selected endpoint must pass the same placement gate");
+                var reservation = reservedDispatch.reservation();
+                try {
+                    String canonicalRequestId = Long.toString(requestId);
+                    assertEquals(canonicalRequestId, reservation.requestId());
+                    assertTrue(endpoint.resourceSnapshot().isQueued(canonicalRequestId));
+                    var reserved = endpoint.resourceSnapshot().reserved().get(canonicalRequestId);
+                    assertEquals(70, reserved.priority());
+                    assertEquals(PROMPT_TOKENS, reserved.kvTokens());
+                    assertEquals(EXPECTED_TOKENS, reserved.kvBudgetTokens());
+                } finally {
+                    endpoint.release(reservation, DecodeEndpoint.ReleaseReason.NOT_SENT);
                 }
                 assertEquals(queuedUsage, fixture.queued.routingView().placementUsage());
                 assertEquals(freeUsage, fixture.free.routingView().placementUsage());
@@ -99,12 +94,11 @@ class DecodeSelectionAdmissionContractTest {
             Map<String, Integer> selectedCounts = new HashMap<>();
 
             for (long requestId = 200L; requestId < 206L; requestId++) {
-                PlacementResult<SelectedRole, RoleType> result = fixture.strategy.select(fixture.request(requestId), null);
+                PlacementResult<DecodeEndpoint, RoleType> result =
+                        fixture.strategy.select(fixture.request(requestId), null);
                 assertEquals(PlacementResult.Status.SUCCESS, result.status());
-                try (SelectedRole selected = result.value()) {
-                    selectedCounts.merge(selected.serverStatus().getServerIp(), 1, Integer::sum);
-                    fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
-                }
+                selectedCounts.merge(result.value().getIp(), 1, Integer::sum);
+                fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
             }
 
             assertEquals(Map.of(FREE_IP, 6), selectedCounts, "QUEUE includes queued reservations");
@@ -158,11 +152,8 @@ class DecodeSelectionAdmissionContractTest {
             strategy = new DecodeSelector(new WorkerDirectory(endpoints));
 
             long kvBudget = dimension == CapacityDimension.EXPECTED_KV ? 400L : 0L;
-            try (WorkerEndpoint.EndpointHold hold = queued.tryHold()) {
-                assertNotNull(hold);
-                assertNotNull(queued.reserve(hold, "1", 0L, kvBudget, 50));
-                assertNotNull(queued.reserve(hold, "2", 0L, kvBudget, 50));
-            }
+            assertNotNull(queued.reserve("1", 0L, kvBudget, 50));
+            assertNotNull(queued.reserve("2", 0L, kvBudget, 50));
         }
 
         private DecodeEndpoint publish(String ip) {

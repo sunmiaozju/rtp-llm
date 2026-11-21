@@ -64,10 +64,6 @@ public class PrefillEndpoint extends WorkerEndpoint {
         return new FormulaPredictor(estimator.getExpression());
     }
 
-    public boolean isRetired() {
-        return isGenerationRetiringOrRetired();
-    }
-
     @Override
     public Runnable applyPreparedStatus(WorkerStatus ws, WorkerStatus.PreparedStatus prepared) {
         try {

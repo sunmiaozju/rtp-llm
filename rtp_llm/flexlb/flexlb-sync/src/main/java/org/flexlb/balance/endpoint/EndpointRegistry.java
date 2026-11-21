@@ -115,9 +115,7 @@ public class EndpointRegistry {
     /**
      * Advisory Decode routing directory. Writers publish a complete immutable
      * replacement after changing the endpoint map. A racing reader may finish
-     * an older traversal, but it cannot acquire stale ownership because the
-     * selected address and generation are always revalidated by
-     * {@link #holdDecodeEndpoint(DecodeEndpoint.DecodeRoutingView)}.
+     * an older traversal; Decode selection resolves the chosen view against the current registry.
      */
     private volatile List<Map.Entry<String, DecodeEndpoint>> decodeDirectory = List.of();
     private final ConfigService configService;
@@ -172,25 +170,9 @@ public class EndpointRegistry {
     }
 
     /**
-     * Hold one exact currently published endpoint generation.
-     *
-     * <p>The hold is acquired inside the address key's CHM remapping critical
-     * section. Holding therefore linearizes either before exact detach (and
-     * retirement waits for the hold) or after detach (and returns {@code null}).
-     * The returned route capability is thread-confined.</p>
-     */
-    public WorkerEndpoint.EndpointHold hold(RoleType roleType, String ipPort) {
-        ConcurrentHashMap<String, WorkerEndpoint> endpoints = getEndpointsByRole(roleType);
-        return endpoints == null ? null : hold(endpoints, ipPort);
-    }
-
-    /**
      * Return addresses from the captured Prefill directory or the live role map.
      *
-     * <p>Callers must not modify the collection. A caller which needs
-     * generation ownership must pass an address back through
-     * {@link #hold(RoleType, String)}; same-address replacement therefore
-     * remains linearized by the address key's remapping critical section.</p>
+     * <p>Callers must not modify the collection.</p>
      */
     public Collection<String> endpointAddressView(RoleType roleType) {
         if (roleType != null && roleType.supportsPrefill()) {
@@ -231,9 +213,7 @@ public class EndpointRegistry {
      * during this traversal.
      *
      * <p>The registry is intentionally not locked while an endpoint takes its
-     * admission lock.  This avoids introducing a map-bin/admission-lock order;
-     * publication races are resolved when the selected generation is held
-     * by {@link #holdDecodeEndpoint(DecodeEndpoint.DecodeRoutingView)}.</p>
+     * admission lock.</p>
      */
     public List<DecodeEndpoint.DecodeRoutingView> decodeRoutingSnapshot() {
         List<Map.Entry<String, DecodeEndpoint>> directory = decodeDirectory;
@@ -247,42 +227,13 @@ public class EndpointRegistry {
         return Collections.unmodifiableList(snapshot);
     }
 
-    /**
-     * Hold the exact Decode generation represented by a routing snapshot.
-     *
-     * <p>The routing values are advisory and may change after selection. The
-     * subsequent reservation/dispatch transaction revalidates capacity under
-     * the endpoint admission lock. This method authorizes only an identical
-     * endpoint generation; every rejected or exceptional hold is closed
-     * here, while a successful caller owns the returned endpoint hold.</p>
-     */
-    public WorkerEndpoint.EndpointHold holdDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
-        WorkerEndpoint.EndpointHold hold = hold(RoleType.DECODE, expected.address());
-        if (hold == null) {
-            return null;
+    public DecodeEndpoint findDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
+        WorkerEndpoint current = get(RoleType.DECODE, expected.address());
+        if (current instanceof DecodeEndpoint endpoint && !endpoint.isRetired()
+                && endpoint.getStatus().getGenerationId() == expected.generationId()) {
+            return endpoint;
         }
-        boolean transferred = false;
-        try {
-            if (hold.generationId() != expected.generationId() || !(hold.endpoint() instanceof DecodeEndpoint)) {
-                return null;
-            }
-            transferred = true;
-            return hold;
-        } finally {
-            if (!transferred) {
-                hold.close();
-            }
-        }
-    }
-
-    private static WorkerEndpoint.EndpointHold hold(ConcurrentHashMap<String, WorkerEndpoint> endpoints,
-                                                    String ipPort) {
-        AtomicReference<WorkerEndpoint.EndpointHold> held = new AtomicReference<>();
-        endpoints.computeIfPresent(ipPort, (ignored, current) -> {
-            held.set(current.tryHold());
-            return current;
-        });
-        return held.get();
+        return null;
     }
 
     /** Return the endpoint only when it belongs to the expected status generation. */
@@ -796,8 +747,7 @@ public class EndpointRegistry {
                 failure = appendFailure(failure, retirementFailure);
             }
         }
-        // Phase 2: initiate every cleanup. A generation with an accepted
-        // handoff may transfer its cleanup to a dedicated continuation.
+        // Phase 2: initiate every cleanup.
         for (WorkerEndpoint endpoint : endpoints) {
             try {
                 endpoint.close();

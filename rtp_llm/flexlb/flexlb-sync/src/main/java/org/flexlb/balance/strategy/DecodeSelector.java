@@ -4,18 +4,14 @@ import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRoutingView;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.scheduler.decode.DecodeMode;
 import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.RejectReason;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
-import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.sync.status.WorkerDirectory;
-import org.flexlb.util.CommonUtils;
 import org.flexlb.util.PriorityNormalizer;
 import org.springframework.stereotype.Component;
 
@@ -35,7 +31,7 @@ public class DecodeSelector {
         this.workerDirectory = workerDirectory;
     }
 
-    public PlacementResult<SelectedRole, RoleType> select(DecodeRequirement request, String group) {
+    public PlacementResult<DecodeEndpoint, RoleType> select(DecodeRequirement request, String group) {
         return select(null, request, group);
     }
 
@@ -43,9 +39,9 @@ public class DecodeSelector {
      * Selects the least-cost available Decode endpoint and records the choice
      * reason when the caller supplies the request context.
      */
-    public PlacementResult<SelectedRole, RoleType> select(BalanceContext context,
-                                                          DecodeRequirement request,
-                                                          String group) {
+    public PlacementResult<DecodeEndpoint, RoleType> select(BalanceContext context,
+                                                            DecodeRequirement request,
+                                                            String group) {
         for (int attempt = 0; attempt < MAX_SELECTION_ATTEMPTS; attempt++) {
             List<DecodeRoutingView> decodeWorkerViews = workerDirectory.getDecodeCandidates(group);
             if (decodeWorkerViews.isEmpty()) {
@@ -105,37 +101,37 @@ public class DecodeSelector {
                     i -> decodeWorkerViews.get(i).address());
             if (selectedIndex < 0) { throw new IllegalStateException("Decode snapshot candidate disappeared"); }
             DecodeRoutingView selected = decodeWorkerViews.get(selectedIndex);
-            WorkerEndpoint.EndpointHold hold = workerDirectory.holdDecodeEndpoint(selected);
-            if (hold != null) {
+            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(selected);
+            if (endpoint != null) {
                 if (context != null) {
                     context.recordSelectionReason(RoleType.DECODE,
                             minimumCostCandidateCount > 1
                                     ? "DECODE_MIN_COST_ROUND_ROBIN_TIEBREAK"
                                     : "DECODE_MIN_COST");
                 }
-                return PlacementResult.success(buildSelectedRole(selected, hold, request.requestId()));
+                return PlacementResult.success(endpoint);
             }
         }
         return PlacementResult.blocked(RoleType.DECODE);
     }
 
-    private PlacementResult<SelectedRole, RoleType> classifyCapacityFailure(DecodeRequirement request,
-                                                                            List<DecodeRoutingView> views) {
+    private PlacementResult<DecodeEndpoint, RoleType> classifyCapacityFailure(DecodeRequirement request,
+                                                                              List<DecodeRoutingView> views) {
         Response failure = null;
         boolean uniformFailure = true;
         List<Map<String, Object>> evidence = new ArrayList<>(views.size());
         for (DecodeRoutingView view : views) {
             Response workerFailure;
-            try (WorkerEndpoint.EndpointHold hold = workerDirectory.holdDecodeEndpoint(view)) {
-                if (hold == null) {
-                    workerFailure = Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
-                } else {
-                    var snapshot = ((DecodeEndpoint) hold.endpoint()).admissionSummary();
-                    evidence.add(Map.of("endpoint", view.address(), "version", snapshot.routing().admissionVersion(),
-                            "engineLoad", snapshot.routing().engineLoad(), "totalLoad", snapshot.routing().totalLoad(),
-                            "kvTotal", snapshot.routing().totalKv(), "kvAvailable", snapshot.routing().placementUsage().availableKvAfterReservations()));
-                    workerFailure = classifyCapacityFailure(request, snapshot);
-                }
+            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(view);
+            if (endpoint == null) {
+                workerFailure = Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
+            } else {
+                var snapshot = endpoint.admissionSummary();
+                evidence.add(Map.of("endpoint", view.address(), "version", snapshot.routing().admissionVersion(),
+                        "engineLoad", snapshot.routing().engineLoad(), "totalLoad", snapshot.routing().totalLoad(),
+                        "kvTotal", snapshot.routing().totalKv(), "kvAvailable",
+                        snapshot.routing().placementUsage().availableKvAfterReservations()));
+                workerFailure = classifyCapacityFailure(request, snapshot);
             }
             if (failure == null) {
                 failure = workerFailure;
@@ -212,40 +208,6 @@ public class DecodeSelector {
         return Response.error(StrategyErrorType.RESOURCE_EXHAUSTED, RejectReason.RESOURCE_EXHAUSTED,
                 "Decode prompt plus output demand=" + required + " exceeds every worker KV admission budget; maximum="
                         + maximum);
-    }
-
-    public static SelectedRole buildSelectedRole(DecodeRoutingView selected,
-                                                 WorkerEndpoint.EndpointHold selectedHold,
-                                                 String requestId) {
-        try {
-            if (selectedHold.generationId() != selected.generationId()
-                    || !(selectedHold.endpoint() instanceof DecodeEndpoint)) {
-                throw new IllegalStateException("Decode snapshot hold changed before selection handoff");
-            }
-            WorkerStatus.TopologySnapshot topology = selected.topology();
-            WorkerStatus.EngineObservation status =
-                    selected.workerStatus().fields();
-            ServerStatus result = new ServerStatus();
-            result.setSuccess(true);
-            result.setRole(RoleType.DECODE);
-            result.setServerIp(topology.ip());
-            result.setHttpPort(topology.port());
-            result.setGrpcPort(CommonUtils.toGrpcPort(topology.port()));
-            result.setDpRank(status.dpRank());
-            result.setGroup(topology.group());
-            result.setRequestId(requestId);
-            result.setSelectedEngineIndex(
-                    topology.engineIndex(), topology.multiEngineNum());
-
-            // SelectedRole consumes the hold even if its validation rejects.
-            WorkerEndpoint.EndpointHold factoryHold = selectedHold;
-            selectedHold = null;
-            return SelectedRole.decode(factoryHold, result, selected.admissionVersion());
-        } finally {
-            if (selectedHold != null) {
-                selectedHold.close();
-            }
-        }
     }
 
 }

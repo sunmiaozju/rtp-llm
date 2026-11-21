@@ -174,9 +174,8 @@ public class VitCacheDirectory {
 
     private boolean isRoutable(WorkerStatus worker) {
         if (worker == null) { return false; }
-        try (var hold = workers.holdEndpoint(RoleType.VIT, worker.getIpPort())) {
-            return hold != null && hold.endpoint().getStatus() == worker;
-        }
+        var endpoint = workers.findEndpoint(RoleType.VIT, worker.getIpPort());
+        return endpoint != null && endpoint.getStatus() == worker;
     }
 
     /** Cache matches share immutable key sets from one directory view. */

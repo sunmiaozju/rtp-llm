@@ -316,7 +316,7 @@ class WorkerDirectoryTest {
 
         assertTrue(groupRetiringBeforeDrain.get());
         for (WorkerStatus member : List.of(first, second, third)) {
-            assertNull(workerDirectory.holdEndpoint(role, member.getLogicalIpPort()));
+            assertNull(workerDirectory.findEndpoint(role, member.getLogicalIpPort()));
         }
         assertEquals(Map.of(otherGroup.getLogicalIpPort(), otherGroup, independent.getLogicalIpPort(), independent),
                 workerDirectory.getStatusBy(role));
@@ -426,10 +426,7 @@ class WorkerDirectoryTest {
         WorkerEndpoint registered = RunnerTestSupport.publishEndpoint(registry,
                 role, status.getLogicalIpPort(), status);
 
-        try (WorkerEndpoint.EndpointHold selected = workerDirectory.holdEndpoint(role, status.getLogicalIpPort())) {
-            assertNotNull(selected);
-            assertSame(registered, selected.endpoint());
-        }
+        assertSame(registered, workerDirectory.findEndpoint(role, status.getLogicalIpPort()));
     }
 
     private static WorkerStatus status(

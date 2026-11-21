@@ -10,14 +10,14 @@ worker 选择契约，两者组合完成多角色多阶段路由。
 当前 `Schedule` 可传 `schedule_roles`（Encoder、Prefill、Decode、PDFusion）只选择指定角色；
 未传时选择模型配置的全部角色。显式角色去重后按 `ModelMetaConfig.requiredRoles()` 的顺序决策；
 未配置角色以及非法枚举值返回 `INVALID_REQUEST`。现有 VIT 不属于该新增请求枚举，
-其选点仍使用 `RandomStrategy`。
+其选点使用 `VitCacheSelector`。
 EPD 部署当前按客户端分别请求 Encoder 与 Generation 阶段；混合角色请求不在已验证链路内。
 
 Encoder 使用独立的 `EncoderStrategy`：候选必须是已发布且存活的 Encoder endpoint。
 请求携带可选 `encoder_cache_hit_len` 时，先比较各节点在途的未命中编码工作量代理值，
 并列时比较 `running_query_len + waiting_query_len + 本地待观察请求数`；未携带时仅比较并发数。
 Encoder 不按可用 KV cache 筛选或决胜。Encoder 单独请求进入独立的
-Encoder QUEUE，FlexLB 返回 `ENCODER` 端点，不调用 EnqueueBatch。
+Encoder QUEUE，选路返回具体的 `EncoderEndpoint`；队列从同一个端点构造响应并登记请求，不调用 EnqueueBatch。
 QUEUE 会过滤已达到 `dispatcher.maxInflightPerEncoderWorker` 的节点，并在容量释放后重试。
 本地待观察请求在 endpoint 的并发 map 中逐请求更新，选点读取允许短暂滞后；并发请求可能依据
 同一份负载快照选中同一 worker。Prefill/Decode 与 PDFusion 的既有策略保持原样。
@@ -33,7 +33,7 @@ Encoder 选择器组成，按请求有效角色顺序逐个选择，并在失败
 2. **角色列表**：`ModelMetaConfig.requiredRoles()` 给出配置顺序；请求带
    `schedule_roles` 时取其交集，未传时使用全部配置角色。
 3. **逐角色选择**：Prefill/PDFusion 调用 `CostBasedPrefillStrategy`，Decode 调用
-   `DecodeSelector`，VIT 调用 `RandomStrategy`，Encoder 调用 `EncoderStrategy`。
+   `DecodeSelector`，Encoder 调用 `EncoderStrategy`；VIT 由 `VitCacheSelector` 单独选点。
    `group` 初始为 null；每个角色选中后 `group = serverStatus.getGroup()`——**首个成功角色的
    worker group 约束后续所有角色的候选集**（group 亲和链，如 DECODE 选中的 group 决定
    PREFILL 只能在同 group 中选）。任一角色失败立即关闭之前的选择并返回错误。
@@ -76,11 +76,11 @@ master forwarding 透传 protobuf 响应。物理地址字段与既有 service p
 `inputLength - prefixLength` 的 KV token 从 used 还给 free、从 `localTaskMap` 移除。
 `lastSelectedTime` 不回滚。
 
-各策略实现：`RandomStrategy` 为 no-op（它 select 时不记账）；`ShortestTTFTStrategy`（及其
+各策略实现：`ShortestTTFTStrategy`（及其
 子类 CacheAffinityFirst）回滚时**硬编码查 PREFILL** 的 worker map；`WeightedCacheLoadBalancer`
 **硬编码查 DECODE**——回滚正确性耦合于默认的策略↔角色配对，改配对时须注意。
 
-## 四种策略
+## 路由策略
 
 均实现 `LoadBalancer.select(ctx, roleType, group)`，注册名见 `LoadBalanceStrategyEnum`
 （RANDOM / SHORTEST_TTFT / CACHE_AFFINITY_FIRST / WEIGHTED_CACHE）。
@@ -89,11 +89,6 @@ master forwarding 透传 protobuf 响应。物理地址字段与既有 service p
 退役只会移除该 `ip:httpPort@index`，不会连带过滤同一 frontend 的 sibling。资源、队列、cache
 命中、outstanding tokens 和 score 都读取该 logical worker 自己的状态。快照选中的候选仍须捕获
 其 exact generation，避免在选择与提交之间使用已替换或已退役的 endpoint。
-
-### RandomStrategy
-
-公共物理健康门控后随机起点环形扫描，取第一个 `isAlive()` 的逻辑 worker。不看资源水位、不做 cache 匹配、
-**不 `putLocalTask()`**（因此 rollBack 为空实现）。
 
 ### ShortestTTFTStrategy（PREFILL/PDFUSION 默认）
 

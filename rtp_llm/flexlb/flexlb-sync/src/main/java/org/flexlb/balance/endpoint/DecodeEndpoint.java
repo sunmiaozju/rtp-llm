@@ -42,33 +42,28 @@ public class DecodeEndpoint extends WorkerEndpoint {
         this.placementAvailability = placementAvailability;
     }
 
-    // Reservation and release. Lifecycle holds remain valid for the entire handoff.
+    // Reservation and release.
 
-    public ReservationHandle reserve(EndpointHold hold,
-                                     String requestId,
+    public ReservationHandle reserve(String requestId,
                                      long inputKvTokens,
                                      long inputAndMaxOutputKvTokens,
                                      int priority) {
-        return reserve(hold, requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, null);
+        return reserve(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, null);
     }
 
-    public ReservationHandle reserve(EndpointHold hold,
-                                     String requestId,
+    public ReservationHandle reserve(String requestId,
                                      long inputKvTokens,
                                      long inputAndMaxOutputKvTokens,
                                      int priority,
                                      CapacityLimit capacity) {
-        checkHold(hold);
         return state.reserve(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, true, capacity);
     }
 
     /** An engine-facing shadow for work already outside the local queue. */
-    public ReservationHandle reserveUnqueued(EndpointHold hold,
-                                             String requestId,
+    public ReservationHandle reserveUnqueued(String requestId,
                                              long inputKvTokens,
                                              long inputAndMaxOutputKvTokens,
                                              int priority) {
-        checkHold(hold);
         ReservationHandle reservation = state.reserve(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, false, null);
         if (reservation == null) {
             throw new IllegalStateException("Decode request id is already owned: " + requestId);
@@ -137,8 +132,7 @@ public class DecodeEndpoint extends WorkerEndpoint {
 
     // Dispatch: acquire capacity, hand over ownership, or return the permit.
 
-    public boolean markQueued(EndpointHold hold, ReservationHandle reservation) {
-        checkHold(hold);
+    public boolean markQueued(ReservationHandle reservation) {
         boolean changed = state.markQueued(reservation);
         if (changed) { publishCapacityRelease(); }
         return changed;
@@ -147,13 +141,11 @@ public class DecodeEndpoint extends WorkerEndpoint {
     /**
      * V2 一次取得预占和下发名额；容量不足返回 null，成功后可直接发布。
      */
-    public DispatchReservation reserveForDispatch(EndpointHold hold,
-                                                  String requestId,
+    public DispatchReservation reserveForDispatch(String requestId,
                                                   long inputKvTokens,
                                                   long inputAndMaxOutputKvTokens,
                                                   int priority,
                                                   CapacityLimit capacity) {
-        checkHold(hold);
         DecodeState.ReservedDispatch reserved =
                 state.reserveForDispatch(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, capacity);
         return reserved == null
@@ -166,15 +158,14 @@ public class DecodeEndpoint extends WorkerEndpoint {
 
     public EngineDispatchPermitAcquisition acquireDispatchPermit(ReservationHandle reservation,
                                                                  CapacityLimit capacity) {
-        EndpointHold hold = tryHold();
-        if (hold == null) {
+        if (isRetired()) {
             return new EngineDispatchPermitAcquisition(EngineDispatchPermitAcquireStatus.ENDPOINT_RETIRED, null);
         }
-        try (hold) {
-            DecodeState.DispatchAcquisition acquired = state.acquireDispatchPermit(reservation, capacity);
-            return new EngineDispatchPermitAcquisition(acquired.status(), acquired.permit() == null ? null
-                    : new EngineDispatchPermit(this, reservation.requestId(), acquired.permit()));
-        }
+        DecodeState.DispatchAcquisition acquired = state.acquireDispatchPermit(reservation, capacity);
+        return new EngineDispatchPermitAcquisition(acquired.status(),
+                acquired.permit() == null
+                        ? null
+                        : new EngineDispatchPermit(this, reservation.requestId(), acquired.permit()));
     }
 
     /** Resolve a permit once. ENGINE_OWNED means handoff, not Worker acceptance. */
@@ -184,17 +175,15 @@ public class DecodeEndpoint extends WorkerEndpoint {
     }
 
     private EngineDispatchPermitTransferStatus applyDispatch(EngineDispatchPermit permit, DispatchOutcome outcome) {
-        EndpointHold hold = outcome == DispatchOutcome.ENGINE_OWNED ? tryHold() : null;
-        if (outcome == DispatchOutcome.ENGINE_OWNED && hold == null) {
-            return EngineDispatchPermitTransferStatus.ENDPOINT_RETIRED;
-        }
-        try (hold) {
-            DecodeState.DispatchResult result = state.dispatch(permit.lease, outcome);
-            if (result.capacityReleased()) {
-                if (outcome == DispatchOutcome.ABANDONED) { publishCapacityRelease(); } else { notifyEngineDispatchCapacityListeners(); }
+        DecodeState.DispatchResult result = state.dispatch(permit.lease, outcome);
+        if (result.capacityReleased()) {
+            if (outcome == DispatchOutcome.ABANDONED) {
+                publishCapacityRelease();
+            } else {
+                notifyEngineDispatchCapacityListeners();
             }
-            return result.status();
         }
+        return result.status();
     }
 
     /** Lock-free waiter hint, including retirement or lost ownership. Acquisition still rechecks capacity. */
@@ -329,15 +318,15 @@ public class DecodeEndpoint extends WorkerEndpoint {
                                          long inputAndMaxOutputKvTokens,
                                          int priority,
                                          CapacityLimit capacity) {
-        EndpointHold hold = tryHold();
-        if (hold == null) {
+        if (isRetired()) {
             return false;
         }
-        try (hold) {
-            boolean replaced = state.replaceQueuedRequests(victims, incomingRequestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, capacity);
-            if (replaced) { publishCapacityRelease(); }
-            return replaced;
+        boolean replaced = state.replaceQueuedRequests(victims, incomingRequestId, inputKvTokens,
+                inputAndMaxOutputKvTokens, priority, capacity);
+        if (replaced) {
+            publishCapacityRelease();
         }
+        return replaced;
     }
 
     /** Atomically reserve an instruction-bearing route without issuing Cancel RPCs. */
@@ -351,15 +340,11 @@ public class DecodeEndpoint extends WorkerEndpoint {
         if (attemptToken <= 0 || victims == null || victims.isEmpty()) {
             throw new IllegalArgumentException("attempt token and victims are required");
         }
-        EndpointHold hold = tryHold();
-        if (hold == null) {
+        if (isRetired()) {
             return PreemptionBeginResult.ENDPOINT_RETIRED;
         }
-        try (hold) {
-            return state.beginReturnedPreemption(
-                    attemptToken, victims, incomingRequestId,
-                    inputKvTokens, inputAndMaxOutputKvTokens, priority, capacity);
-        }
+        return state.beginReturnedPreemption(attemptToken, victims, incomingRequestId, inputKvTokens,
+                inputAndMaxOutputKvTokens, priority, capacity);
     }
 
     public enum PreemptionBeginResult {
@@ -415,8 +400,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
     DecodeRoutingView routingViewSnapshot(String address) { return state.routingViewSnapshot(address); }
 
     public LayeredAdmissionView resourceSnapshot() { return state.resourceSnapshot(); }
-
-    public long placementVersion() { return state.placementVersion(); }
 
     public long realKvAvailable() { return state.realKvAvailable(); }
 
@@ -617,8 +600,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
     }
 
     // Retirement and finished request history.
-
-    public boolean isRetired() { return isGenerationRetiringOrRetired(); }
 
     protected void closeEndpoint() {
         try {

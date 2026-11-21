@@ -143,19 +143,6 @@ public final class RequestSlot {
         }
     }
 
-    void recordEncoderRetirement(EncoderEndpoint source) {
-        TerminalAction action;
-        synchronized (this) {
-            if (!ownsResourceTrackingLocked()
-                    || encoderEndpoint != source) {
-                return;
-            }
-            action = claimTerminalActionLocked(
-                    TerminalOutcome.fail("Encoder endpoint generation retired"), null, false);
-        }
-        terminalCleanup.submitTerminal(action);
-    }
-
     RequestFuture future() {
         return future;
     }

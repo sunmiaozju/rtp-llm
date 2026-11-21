@@ -18,7 +18,6 @@ import org.flexlb.balance.schedulev2.request.DecodeChoice;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
-import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
@@ -171,7 +170,7 @@ public final class DecodeQueueConsumer implements Runnable {
     }
 
     private boolean selectAndPublish(Request request, String group, DecodeRequirement requirement) {
-        PlacementResult<SelectedRole, RoleType> result = decodeSelector.select(request.ctx(), requirement, group);
+        PlacementResult<DecodeEndpoint, RoleType> result = decodeSelector.select(request.ctx(), requirement, group);
 
         switch (result.status()) {
             case SUCCESS -> {
@@ -194,32 +193,27 @@ public final class DecodeQueueConsumer implements Runnable {
         }
     }
 
-    private boolean reserve(Request request, SelectedRole selected, DecodeRequirement requirement) {
-
-        DecodeChoice selectedDecode;
-        DecodeEndpoint.EngineDispatchPermit permit;
-        List<DecodeEndpoint.DecodeRequestView> preemptedRequests = new ArrayList<>();
-
-        try (selected; WorkerEndpoint.EndpointHold hold = selected.takeEndpointHold()) {
-            DecodeEndpoint decodeEndpoint = (DecodeEndpoint) hold.endpoint();
-
-            decodeEndpoint.addEngineDispatchCapacityListener(capacityWake);
-            DecodeEndpoint.DispatchReservation reserved =
-                    decodeEndpoint.reserveForDispatch(hold, request.requestId(), requirement.inputKvTokens(),
-                            requirement.inputAndMaxOutputKvTokens(), requirement.priority(), requirement.capacity());
-
-            if (reserved == null) { // 所选节点占不到资源，尝试低优抢占
-                reserved = preempt(request, hold, requirement, preemptedRequests);
-                if (reserved == null) {
-                    reportCapacityBlock(request, decodeEndpoint, requirement);
-                    return false;
-                }
-            }
-
-            selectedDecode = new DecodeChoice(decodeEndpoint, reserved.reservation(), preemptedRequests);
-            permit = reserved.permit();
-            request.setDecodeChoice(selectedDecode);
+    private boolean reserve(Request request, DecodeEndpoint endpoint, DecodeRequirement requirement) {
+        if (endpoint.isRetired()) {
+            return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING);
         }
+        endpoint.addEngineDispatchCapacityListener(capacityWake);
+        List<DecodeEndpoint.DecodeRequestView> preemptedRequests = new ArrayList<>();
+        DecodeEndpoint.DispatchReservation reserved =
+                endpoint.reserveForDispatch(request.requestId(), requirement.inputKvTokens(),
+                        requirement.inputAndMaxOutputKvTokens(), requirement.priority(), requirement.capacity());
+        if (reserved == null) {
+            reserved = preempt(request, endpoint, requirement, preemptedRequests);
+            if (reserved == null) {
+                if (endpoint.isRetired()) {
+                    return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING);
+                }
+                reportCapacityBlock(request, endpoint, requirement);
+                return false;
+            }
+        }
+        DecodeChoice selectedDecode = new DecodeChoice(endpoint, reserved.reservation(), preemptedRequests);
+        request.setDecodeChoice(selectedDecode);
 
         // 先记录预占再推进阶段；取消先赢 CAS 时直接归还刚取得的预占。
         if (!request.moveTo(Stage.DECODE_WAITING, Stage.DECODE_RESERVED)) {
@@ -227,7 +221,7 @@ public final class DecodeQueueConsumer implements Runnable {
             return false;
         }
 
-        return publish(request, selectedDecode, permit, Stage.DECODE_RESERVED);
+        return publish(request, selectedDecode, reserved.permit(), Stage.DECODE_RESERVED);
     }
 
     /**
@@ -273,19 +267,21 @@ public final class DecodeQueueConsumer implements Runnable {
                             DecodeEndpoint.EngineDispatchPermit permit,
                             Stage expected) {
 
-        try { // 移交已取得的下发名额，不再次检查容量
-            if (permit != null && permit.dispatch() != DecodeEndpoint.EngineDispatchPermitTransferStatus.TRANSFERRED) {
+        if (permit != null) {
+            try {
+                // 下线已清理这个名额时，仍在优雅窗口内返回原地址；不在旧节点重新记账。
+                if (permit.dispatch() == DecodeEndpoint.EngineDispatchPermitTransferStatus.OWNERSHIP_LOST) {
+                    permit.release();
+                    releaseDecode(request);
+                    return false;
+                }
+            } catch (RuntimeException failure) {
                 permit.release();
                 releaseDecode(request);
                 return false;
             }
-        } catch (RuntimeException failure) {
-            permit.release();
-            releaseDecode(request);
-            return false;
         }
 
-        // 节点开始下线后仍会在优雅下线窗口内接收请求，因此发布时不再复查下线状态，允许已选路的请求继续下发。
         // 发布与取消共用阶段 CAS；只有发布成功才保留资源，并上报实际完成的抢占。
         ServerStatus decodeStatus = decodeServerStatus(choice.endpoint(), request.requestId());
         decodeStatus.setPreemptRequestIds(
@@ -293,7 +289,9 @@ public final class DecodeQueueConsumer implements Runnable {
         boolean published = request.publish(expected, List.of(request.selectedPrefill().serverStatus(), decodeStatus));
 
         if (published) {
-            choice.endpoint().registerPublished(choice.reservation(), request.publishedAtMs());
+            if (choice.reservation() != null) {
+                choice.endpoint().registerPublished(choice.reservation(), request.publishedAtMs());
+            }
             cleanup.releasePublished(request);
             for (DecodeEndpoint.DecodeRequestView victim : choice.preemptedRequests()) {
                 queueReporter.decodePreempted(request.priority(), victim.priority(), victim.phase(),
@@ -346,7 +344,7 @@ public final class DecodeQueueConsumer implements Runnable {
      * 只抢占这台 Decode 上已发给引擎的低优先级请求，RETURN 模式由调用方按响应 ID 取消，不发 cancel RPC。
      */
     private DecodeEndpoint.DispatchReservation preempt(Request request,
-                                                       WorkerEndpoint.EndpointHold hold,
+                                                       DecodeEndpoint endpoint,
                                                        DecodeRequirement requirement,
                                                        List<DecodeEndpoint.DecodeRequestView> preemptedRequests) {
         PreemptionConfig configured =
@@ -354,7 +352,6 @@ public final class DecodeQueueConsumer implements Runnable {
         if (configured == null || !returnPreemptionAllowed(requirement, configured)) {
             return null;
         }
-        DecodeEndpoint endpoint = (DecodeEndpoint) hold.endpoint();
         DecodeEndpointSnapshot snapshot = DecodeEndpointSnapshot.capture(endpoint, requirement.capacity());
         DecodeEvictionProposal proposal = EvictionPlanner.planDecode(requirement.priority(),
                 requirement.inputKvTokens(), requirement.inputAndMaxOutputKvTokens(), List.of(snapshot),
@@ -378,7 +375,7 @@ public final class DecodeQueueConsumer implements Runnable {
             return null;
         }
         // RETURN 抢占沿用现有事务，先标记 queued 再取得 permit；抢占名额不做普通容量复查。
-        if (!endpoint.markQueued(hold, reservation)) {
+        if (!endpoint.markQueued(reservation)) {
             endpoint.release(reservation, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
             return null;
         }

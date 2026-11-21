@@ -32,20 +32,22 @@ public final class EncoderEndpoint extends WorkerEndpoint {
 
     /**
      * Track a selected request until status reports it running or finished.
-     * Returns false if the worker is retiring or already tracks this request.
+     * An already selected request can publish after retirement without registering load again.
      */
     public boolean trackSelectedRequest(String requestId, long estimatedUncachedTokens) {
-        try (EndpointGenerationLifecycle.HandoffPermit handoff = tryAcquireGenerationHandoff()) {
-            if (handoff == null) { return false; }
-            AtomicBoolean added = new AtomicBoolean();
-            requestObservations.compute(requestId, (id, current) -> {
-                if (current != null) { return current; }
-                pendingRequestCount.incrementAndGet();
-                added.set(true);
-                return new RequestObservation(false, Math.max(0L, estimatedUncachedTokens));
-            });
-            return added.get();
+        if (isRetired()) {
+            return true;
         }
+        AtomicBoolean added = new AtomicBoolean();
+        requestObservations.compute(requestId, (id, current) -> {
+            if (current != null) {
+                return current;
+            }
+            pendingRequestCount.incrementAndGet();
+            added.set(true);
+            return new RequestObservation(false, Math.max(0L, estimatedUncachedTokens));
+        });
+        return added.get();
     }
 
     /**
@@ -146,7 +148,6 @@ public final class EncoderEndpoint extends WorkerEndpoint {
         for (String requestId : requestIds) {
             removeRequestObservation(requestId);
         }
-        endpointEvents.onEncoderGenerationRetired(this, requestIds);
         endpointEvents.onEncoderCapacityChanged();
     }
 }

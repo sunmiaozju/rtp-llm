@@ -20,13 +20,11 @@ import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
-import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.QueueOrderingConfig;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
@@ -318,6 +316,47 @@ class DecodeQueueConsumerTest {
         assertEquals(1, decode.getInflightCount());
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void retirementKeepsSelectedRouteButNewRequestsUseAnotherDecode(boolean retireBeforeReserve) throws Exception {
+        updateDecodeStatus(decode, Map.of(), Map.of(), false);
+        updateDecodeStatus(otherDecode, Map.of(), Map.of(), false);
+        register(decode);
+        when(endpointRegistry.findDecodeEndpoint(any())).thenCallRealMethod();
+        when(endpointRegistry.get(eq(RoleType.DECODE), any()))
+                .thenAnswer(call -> EndpointRegistry.getEndpointsByRole(RoleType.DECODE).get(call.getArgument(1)));
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        when(selector.select(any(), any(), any())).thenAnswer(call -> {
+            var selection = realSelector.select(call.getArgument(0), call.getArgument(1), call.getArgument(2));
+            if (retireBeforeReserve && selection.value() == decode) {
+                retireSelectedDecode();
+            }
+            return selection;
+        });
+        doAnswer(call -> {
+            var reserved = (DecodeEndpoint.DispatchReservation) call.callRealMethod();
+            assertNotNull(reserved);
+            retireSelectedDecode();
+            return reserved;
+        }).when(decode).reserveForDispatch(eq("1"), anyLong(), anyLong(), anyInt(), any());
+
+        Request first = addWaiting("1", 30);
+        start(1);
+        assertEquals(decode.getIp(), response(first).getServerStatus().getLast().getServerIp());
+        Request second = addWaiting("2", 30);
+        assertEquals(otherDecode.getIp(), response(second).getServerStatus().getLast().getServerIp());
+        pool.close();
+
+        assertEquals(0, decode.getInflightCount());
+        assertNotNull(otherDecode.reservationHandle("2"));
+    }
+
+    private void retireSelectedDecode() {
+        EndpointRegistry.getEndpointsByRole(RoleType.DECODE).remove(decode.ipPort(), decode);
+        decode.close();
+        register(otherDecode);
+    }
+
     @Test
     void cancellationDuringReserveReleasesLocalResources() throws Exception {
         Request request = addWaiting("1", 30);
@@ -325,7 +364,7 @@ class DecodeQueueConsumerTest {
             Object result = call.callRealMethod();
             request.cancel(CancelReason.CLIENT_CANCELLED);
             return result;
-        }).when(decode).reserveForDispatch(any(), eq("1"), anyLong(), anyLong(), anyInt(), any());
+        }).when(decode).reserveForDispatch(eq("1"), anyLong(), anyLong(), anyInt(), any());
         start(1);
 
         assertFalse(response(request).isSuccess());
@@ -677,14 +716,8 @@ class DecodeQueueConsumerTest {
         return request.future().get(5, TimeUnit.SECONDS);
     }
 
-    private static PlacementResult<SelectedRole, RoleType> success(DecodeEndpoint endpoint) {
-        ServerStatus status = new ServerStatus();
-        status.setRole(RoleType.DECODE);
-        status.setSuccess(true);
-        status.setServerIp(endpoint.getIp());
-        status.setHttpPort(8080);
-        status.setGroup("g");
-        return PlacementResult.success(SelectedRole.decode(endpoint.tryHold(), status));
+    private static PlacementResult<DecodeEndpoint, RoleType> success(DecodeEndpoint endpoint) {
+        return PlacementResult.success(endpoint);
     }
 
     private static void register(DecodeEndpoint endpoint) {

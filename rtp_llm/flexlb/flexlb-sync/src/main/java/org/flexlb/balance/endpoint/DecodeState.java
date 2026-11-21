@@ -675,6 +675,9 @@ final class DecodeState {
         boolean capacityIncreased;
         lock.lock();
         try {
+            if (permit.retiredByEndpoint) {
+                return new DispatchResult(EngineDispatchPermitTransferStatus.ENDPOINT_RETIRED, false);
+            }
             // Engine status may consume the acquired permit before publication.
             // Only the same canonical reservation can satisfy this handoff.
             DecodeRequestState current = requestState(permit.requestId);
@@ -1775,10 +1778,6 @@ final class DecodeState {
                 && cached.address().equals(address)
                 && cached.admissionVersion() == version
                 && cached.topology() == topology;
-    }
-
-    long placementVersion() {
-        return admissionVersion.get();
     }
 
     long realKvAvailable() {

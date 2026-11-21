@@ -408,13 +408,10 @@ class DecodeEndpointLayeredViewTest {
     }
 
     private DecodeEndpoint.ReservationHandle reserve(long requestId, long requiredKv, long kvBudget, int priority) {
-        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
-            assertTrue(hold != null);
-            DecodeEndpoint.ReservationHandle reservation =
-                    endpoint.reserveUnqueued(hold, Long.toString(requestId), requiredKv, kvBudget, priority);
-            reservations.put(requestId, reservation);
-            return reservation;
-        }
+        DecodeEndpoint.ReservationHandle reservation =
+                endpoint.reserveUnqueued(Long.toString(requestId), requiredKv, kvBudget, priority);
+        reservations.put(requestId, reservation);
+        return reservation;
     }
 
     private boolean isConfirmed(long requestId) {

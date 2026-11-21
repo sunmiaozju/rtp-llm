@@ -12,7 +12,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -48,15 +47,6 @@ class WorkerEndpointTest {
     @Test
     void ipPort_format() {
         assertEquals("10.0.0.1:8080@0", endpoint.ipPort());
-    }
-
-    @Test
-    void endpointHoldCanBeReleasedByCompletionThread() {
-        WorkerEndpoint.EndpointHold hold = endpoint.tryHold();
-
-        CompletableFuture.runAsync(hold::close).join();
-
-        assertThrows(IllegalArgumentException.class, () -> endpoint.checkHold(hold));
     }
 
     // ==================== getStatus() returns live reference ====================

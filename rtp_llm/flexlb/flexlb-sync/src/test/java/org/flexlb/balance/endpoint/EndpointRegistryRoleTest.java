@@ -237,7 +237,7 @@ class EndpointRegistryRoleTest {
         retire(RoleType.DECODE, address, first);
 
         assertEquals(List.of(firstView), snapshots);
-        assertNull(registry.holdDecodeEndpoint(firstView));
+        assertNull(registry.findDecodeEndpoint(firstView));
         assertEquals(List.of("127.0.0.1:8031"),
                 registry.decodeRoutingSnapshot().stream().map(view -> view.address()).toList());
     }
@@ -260,15 +260,12 @@ class EndpointRegistryRoleTest {
                         address,
                         replacementStatus);
 
-        assertNull(registry.holdDecodeEndpoint(oldView), "an old view must not hold a same-address replacement");
+        assertNull(registry.findDecodeEndpoint(oldView), "an old view must not resolve a same-address replacement");
         DecodeEndpoint.DecodeRoutingView replacementView =
                 registry.decodeRoutingSnapshot().getFirst();
         assertEquals(address, replacementView.address());
         assertTrue(oldView.generationId() != replacementView.generationId());
-        try (WorkerEndpoint.EndpointHold hold = registry.holdDecodeEndpoint(replacementView)) {
-            assertNotNull(hold);
-            assertSame(replacement, hold.endpoint());
-        }
+        assertSame(replacement, registry.findDecodeEndpoint(replacementView));
     }
 
     @Test
@@ -324,14 +321,7 @@ class EndpointRegistryRoleTest {
                 .findFirst()
                 .orElseThrow()
                 .endpoint());
-        WorkerEndpoint.EndpointHold replacementHold =
-                registry.hold(RoleType.PREFILL, originalDirectory.getFirst().address());
-        assertNotNull(replacementHold);
-        try (replacementHold) {
-            assertSame(replacement, replacementHold.endpoint());
-            assertNotSame(originalDirectory.getFirst().endpoint(), replacementHold.endpoint(),
-                    "winner identity validation must reject the stale route");
-        }
+        assertSame(replacement, registry.get(RoleType.PREFILL, originalDirectory.getFirst().address()));
 
         EndpointRegistry.DetachedGeneration detached =
                 detachUnderGenerationLock(
@@ -371,7 +361,7 @@ class EndpointRegistryRoleTest {
         WorkerEndpoint newEndpoint = EndpointTestSupport.publishEndpoint(registry, RoleType.VIT, ipPort, replacement);
 
         assertNotSame(oldEndpoint, newEndpoint);
-        assertNull(oldEndpoint.tryHold());
+        assertTrue(oldEndpoint.isRetired());
         assertSame(newEndpoint, registry.get(RoleType.VIT, ipPort));
 
         EndpointRegistry.DetachedGeneration detached =
@@ -389,11 +379,7 @@ class EndpointRegistryRoleTest {
                 EndpointTestSupport.publishEndpoint(registry,
                         RoleType.DECODE, ipPort,
                         status(RoleType.DECODE, 8080));
-        DecodeEndpoint.ReservationHandle oldReservation;
-        try (WorkerEndpoint.EndpointHold hold = oldEndpoint.tryHold()) {
-            assertTrue(hold != null);
-            oldReservation = oldEndpoint.reserve(hold, "41", 100L, 110L, 50);
-        }
+        var oldReservation = oldEndpoint.reserve("41", 100L, 110L, 50);
 
         retire(RoleType.DECODE, ipPort, oldEndpoint.getStatus());
         DecodeEndpoint replacement = (DecodeEndpoint)

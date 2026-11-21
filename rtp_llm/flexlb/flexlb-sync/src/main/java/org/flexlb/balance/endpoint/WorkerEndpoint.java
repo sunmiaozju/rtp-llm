@@ -42,8 +42,7 @@ public class WorkerEndpoint {
 
     public WorkerEndpoint(WorkerStatus status) {
         this.status = status;
-        this.generationLifecycle = new EndpointGenerationLifecycle(
-                this::continueRetirementAfterHandoff);
+        this.generationLifecycle = new EndpointGenerationLifecycle();
     }
 
     /**
@@ -127,52 +126,15 @@ public class WorkerEndpoint {
         }
     }
 
-    /**
-     * Hold this exact endpoint generation for one admission handoff.
-     *
-     * <p>The returned capability remains valid after retirement starts. That is
-     * the point of the hold: a capture which linearized before registry detach
-     * may finish its already accepted handoff. The owner must close the hold on
-     * every selected, rejected, and exceptional path.</p>
-     */
-    public final EndpointHold tryHold() {
-        EndpointGenerationLifecycle.HandoffPermit permit =
-                generationLifecycle.tryAcquireHandoff();
-        return permit == null ? null : new EndpointHold(this, status.getGenerationId(), permit);
-    }
-
-    /**
-     * Validate an exact, still-open hold before consuming its admission right.
-     */
-    public final void checkHold(EndpointHold hold) {
-        if (hold == null || hold.endpoint != this || hold.generationId != status.getGenerationId()
-                || !hold.permit.isOpen()) {
-            throw new IllegalArgumentException("Endpoint hold does not own this endpoint generation");
-        }
-    }
-
-    /**
-     * Internal generation handoff used by existing batch/route leases whose
-     * terminal callback may run on a different thread. It shares the one gate
-     * with public route holds but deliberately is not exposed as a route API.
-     */
-    final EndpointGenerationLifecycle.HandoffPermit
-            tryAcquireGenerationHandoff() {
-        return generationLifecycle.tryAcquireHandoff();
-    }
-
-    protected final boolean isGenerationRetiringOrRetired() {
+    public boolean isRetired() {
         return generationLifecycle.isRetiringOrRetired();
     }
 
     /**
      * Close the admission gate for this exact endpoint generation.
      *
-     * <p>This is the non-blocking half of endpoint retirement. Implementations
-     * must make every later generation-local ownership acquisition fail closed,
-     * but must not wait for existing handoffs, drain queues, or invoke external
-     * callbacks. {@link EndpointRegistry} invokes this method while atomically
-     * withdrawing the endpoint from its address mapping.</p>
+     * <p>The registry marks the endpoint before withdrawing its address from routing.
+     * Requests that already chose the endpoint may still publish their route.</p>
      */
     final void beginRetirement() {
         generationLifecycle.beginRetirement();
@@ -201,14 +163,8 @@ public class WorkerEndpoint {
             return;
         }
 
-        // An accepted handoff may finish on a worker callback thread. The last
-        // release schedules cleanup on the shared retirement executor so that
-        // cleanup never waits on, or joins, its own callback thread.
-        if (generationLifecycle.armDrainContinuation()) {
-            return;
-        }
         if (forceAsynchronous) {
-            continueRetirementAfterHandoff();
+            scheduleRetirementCleanup();
         } else {
             finishRetirement();
         }
@@ -236,7 +192,7 @@ public class WorkerEndpoint {
         rethrowRetirementFailure(retirementFailure);
     }
 
-    private void continueRetirementAfterHandoff() {
+    private void scheduleRetirementCleanup() {
         RETIREMENT_EXECUTOR.execute(
                 () -> {
                     try {
@@ -252,7 +208,7 @@ public class WorkerEndpoint {
     }
 
     /**
-     * Release subclass resources after the shared generation gate has drained.
+     * Release subclass resources after the endpoint stops accepting new routes.
      * This is invoked exactly once by the retirement owner.
      */
     protected void closeEndpoint() {
@@ -269,39 +225,6 @@ public class WorkerEndpoint {
         if (failure != null) {
             throw new IllegalStateException(
                     "Endpoint generation retirement failed", failure);
-        }
-    }
-
-    /**
-     * Exact, single-owner admission capability for one endpoint generation.
-     * The permit is transferable: asynchronous ownership may close it from a
-     * completion thread without adding a second lifecycle state.
-     */
-    public static final class EndpointHold implements AutoCloseable {
-
-        private final WorkerEndpoint endpoint;
-        private final long generationId;
-        private final EndpointGenerationLifecycle.HandoffPermit permit;
-
-        private EndpointHold(WorkerEndpoint endpoint,
-                             long generationId,
-                             EndpointGenerationLifecycle.HandoffPermit permit) {
-            this.endpoint = endpoint;
-            this.generationId = generationId;
-            this.permit = permit;
-        }
-
-        public WorkerEndpoint endpoint() {
-            return endpoint;
-        }
-
-        public long generationId() {
-            return generationId;
-        }
-
-        @Override
-        public void close() {
-            permit.close();
         }
     }
 

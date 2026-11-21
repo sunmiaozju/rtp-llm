@@ -1,54 +1,38 @@
 package org.flexlb.balance.endpoint;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
-/** One endpoint-generation admission gate and its retirement drain. */
+/**
+ * One endpoint cleanup and its completion state.
+ */
 public final class EndpointGenerationLifecycle {
 
     private static final long DEFAULT_RETIREMENT_TIMEOUT_MS =
             Long.getLong("flexlb.endpoint.retirement.timeout.ms", 30_000L);
 
     private enum RetirementPhase {
-        ACCEPTING_HANDOFFS,
+        ACTIVE,
         RETIRING,
         RETIRED
     }
 
-    private volatile RetirementPhase phase =
-            RetirementPhase.ACCEPTING_HANDOFFS;
-    private final Runnable handoffsDrained;
-    private int activeHandoffs;
+    private volatile RetirementPhase phase = RetirementPhase.ACTIVE;
     private boolean cleanupClaimed;
-    private boolean drainContinuationArmed;
     private Thread cleanupThread;
     private Throwable retirementFailure;
 
-    public EndpointGenerationLifecycle(Runnable handoffsDrained) {
-        this.handoffsDrained = handoffsDrained;
-    }
-
-    public synchronized HandoffPermit tryAcquireHandoff() {
-        if (phase != RetirementPhase.ACCEPTING_HANDOFFS) {
-            return null;
-        }
-        activeHandoffs++;
-        return new HandoffPermit(this);
-    }
-
     boolean isRetiringOrRetired() {
-        return phase != RetirementPhase.ACCEPTING_HANDOFFS;
+        return phase != RetirementPhase.ACTIVE;
     }
 
     /** Close the gate without waiting or running endpoint cleanup. */
     synchronized void beginRetirement() {
-        if (phase == RetirementPhase.ACCEPTING_HANDOFFS) {
+        if (phase == RetirementPhase.ACTIVE) {
             phase = RetirementPhase.RETIRING;
         }
     }
 
     /** Exactly one caller may own the endpoint-local drain and cleanup. */
     synchronized boolean tryClaimCleanup() {
-        if (phase == RetirementPhase.ACCEPTING_HANDOFFS) {
+        if (phase == RetirementPhase.ACTIVE) {
             throw new IllegalStateException(
                     "endpoint retirement gate is still open");
         }
@@ -59,25 +43,9 @@ public final class EndpointGenerationLifecycle {
         return true;
     }
 
-    /** Arm one continuation only when accepted handoffs still need to drain. */
-    synchronized boolean armDrainContinuation() {
-        if (phase != RetirementPhase.RETIRING || !cleanupClaimed
-                || cleanupThread != null || drainContinuationArmed) {
-            throw new IllegalStateException(
-                    "endpoint retirement continuation is invalid");
-        }
-        if (activeHandoffs == 0) {
-            return false;
-        }
-        drainContinuationArmed = true;
-        return true;
-    }
-
     /** Bind the claimed cleanup to its execution thread for reentrant close. */
     synchronized void beginCleanup() {
-        if (phase != RetirementPhase.RETIRING || !cleanupClaimed
-                || cleanupThread != null || drainContinuationArmed
-                || activeHandoffs != 0) {
+        if (phase != RetirementPhase.RETIRING || !cleanupClaimed || cleanupThread != null) {
             throw new IllegalStateException(
                     "endpoint retirement cleanup owner is invalid");
         }
@@ -85,9 +53,8 @@ public final class EndpointGenerationLifecycle {
     }
 
     synchronized void completeRetirement(Throwable failure) {
-        if (phase != RetirementPhase.RETIRING || activeHandoffs != 0) {
-            throw new IllegalStateException(
-                    "endpoint generation cannot retire with active handoffs");
+        if (phase != RetirementPhase.RETIRING) {
+            throw new IllegalStateException("endpoint generation is not retiring");
         }
         retirementFailure = failure;
         cleanupThread = null;
@@ -110,7 +77,7 @@ public final class EndpointGenerationLifecycle {
         long deadlineNanos = System.nanoTime()
                 + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         synchronized (this) {
-            if (phase == RetirementPhase.ACCEPTING_HANDOFFS) {
+            if (phase == RetirementPhase.ACTIVE) {
                 throw new IllegalStateException(
                         "endpoint retirement has not begun");
             }
@@ -126,13 +93,8 @@ public final class EndpointGenerationLifecycle {
             while (phase != RetirementPhase.RETIRED) {
                 long remainingNanos = deadlineNanos - System.nanoTime();
                 if (remainingNanos <= 0L) {
-                    timeoutFailure = new IllegalStateException(
-                            "endpoint retirement timed out after "
-                                    + timeoutMs + "ms: phase=" + phase
-                                    + ", activeHandoffs=" + activeHandoffs
-                                    + ", cleanupClaimed=" + cleanupClaimed
-                                    + ", drainContinuationArmed="
-                                    + drainContinuationArmed);
+                    timeoutFailure = new IllegalStateException("endpoint retirement timed out after " + timeoutMs
+                            + "ms: phase=" + phase + ", cleanupClaimed=" + cleanupClaimed);
                     break;
                 }
                 try {
@@ -158,27 +120,6 @@ public final class EndpointGenerationLifecycle {
         rethrow(failure);
     }
 
-    private void releaseHandoff() {
-        boolean runContinuation = false;
-        synchronized (this) {
-            if (activeHandoffs <= 0) {
-                throw new IllegalStateException(
-                        "endpoint handoff permit released more than once");
-            }
-            activeHandoffs--;
-            if (activeHandoffs == 0) {
-                notifyAll();
-                if (drainContinuationArmed) {
-                    drainContinuationArmed = false;
-                    runContinuation = true;
-                }
-            }
-        }
-        if (runContinuation) {
-            handoffsDrained.run();
-        }
-    }
-
     private static void rethrow(Throwable failure) {
         if (failure instanceof RuntimeException runtimeFailure) {
             throw runtimeFailure;
@@ -192,23 +133,4 @@ public final class EndpointGenerationLifecycle {
         }
     }
 
-    public static final class HandoffPermit implements AutoCloseable {
-        private final EndpointGenerationLifecycle lifecycle;
-        private final AtomicBoolean open = new AtomicBoolean(true);
-
-        private HandoffPermit(EndpointGenerationLifecycle lifecycle) {
-            this.lifecycle = lifecycle;
-        }
-
-        @Override
-        public void close() {
-            if (open.compareAndSet(true, false)) {
-                lifecycle.releaseHandoff();
-            }
-        }
-
-        boolean isOpen() {
-            return open.get();
-        }
-    }
 }

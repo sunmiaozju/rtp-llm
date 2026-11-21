@@ -54,15 +54,7 @@ class EndpointRetirementLinearizationTest {
                 assertTrue(resumeAdmission.await(2, TimeUnit.SECONDS));
 
                 boolean queueOfferAccepted = new PrefillQueueRegistry().find(prefill) != null;
-                boolean directHoldAvailable;
-                try (WorkerEndpoint.EndpointHold hold = prefill.tryHold()) {
-                    directHoldAvailable = hold != null;
-                }
-                boolean decodeHoldAvailable;
-                try (WorkerEndpoint.EndpointHold hold = decode.tryHold()) {
-                    decodeHoldAvailable = hold != null;
-                }
-                return new AdmissionAttempt(queueOfferAccepted, directHoldAvailable, decodeHoldAvailable);
+                return new AdmissionAttempt(queueOfferAccepted, prefill.isRetired(), decode.isRetired());
             });
 
             assertTrue(referencesCaptured.await(2, TimeUnit.SECONDS));
@@ -80,13 +72,12 @@ class EndpointRetirementLinearizationTest {
             assertNull(registry.get(RoleType.PREFILL, prefillAddress));
             assertNull(registry.get(RoleType.DECODE, decodeAddress));
 
-            // Resume while close/drain has deliberately not run yet. Detach itself
-            // must already have made every new generation-local owner impossible.
+            // A detached worker is no longer a candidate even before cleanup starts.
             resumeAdmission.countDown();
             AdmissionAttempt attempt = delayedAdmission.get(2, TimeUnit.SECONDS);
             assertFalse(attempt.queueOfferAccepted());
-            assertFalse(attempt.directHoldAvailable());
-            assertFalse(attempt.decodeHoldAvailable());
+            assertTrue(attempt.prefillRetired());
+            assertTrue(attempt.decodeRetired());
             assertTrue(capturedDecode.resourceSnapshot()
                     .reserved().isEmpty());
         } finally {
@@ -122,8 +113,6 @@ class EndpointRetirementLinearizationTest {
         }
     }
 
-    private record AdmissionAttempt(boolean queueOfferAccepted,
-                                    boolean directHoldAvailable,
-                                    boolean decodeHoldAvailable) {
+    private record AdmissionAttempt(boolean queueOfferAccepted, boolean prefillRetired, boolean decodeRetired) {
     }
 }
