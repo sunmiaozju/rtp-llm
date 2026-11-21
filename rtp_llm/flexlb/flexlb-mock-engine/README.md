@@ -333,7 +333,7 @@ across engine addresses.
 
 ### Cancel channel
 
-- **`MockEngineCancelChannel`** (`src/main/java/org/flexlb/mockengine/MockEngineCancelChannel.java`):
+- **`MockEngineCancelChannel`** (`src/test/java/org/flexlb/mockengine/MockEngineCancelChannel.java`):
   an in-process test channel exposing the same cancel contract the cluster's
   `FastRpcService.cancelRequest` implements, so tests can drive cancellation
   without going through gRPC.

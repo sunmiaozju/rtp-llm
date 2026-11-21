@@ -47,7 +47,7 @@ public class JsonUtils {
     private static final Map<String, List<String>> REMOVED_FLEXLB_CONFIG_FIELDS = Map.ofEntries(
             Map.entry("", List.of("autoTpmEnabled", "autoTpmSloLengthBuckets")),
             Map.entry("/scheduler", List.of("decision", "scanBudgetMultiplier", "capacity", "lifecycle")),
-            Map.entry("/scheduler/ordering/preemption/engineCancellation", List.of("ackTimeoutMs", "completionTimeoutMs")),
+            Map.entry("/scheduler/ordering/preemption", List.of("engineCancellation", "timeoutMs")),
             Map.entry("/dispatcher", List.of("fetchAttachTimeoutMs", "maxInflightBatchesPerPrefillWorker",
                     "prefillInflightLimitAtDelivery", "maxInflightRequestsPerPrefillWorker", "enqueueRpcTimeoutMs",
                     "inflightMultiplier", "inflightRequestMultiplier")),

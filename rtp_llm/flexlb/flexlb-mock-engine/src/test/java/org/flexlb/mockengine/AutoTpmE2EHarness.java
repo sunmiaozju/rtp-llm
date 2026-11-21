@@ -5,8 +5,6 @@ import io.grpc.stub.StreamObserver;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.eviction.EngineCancelChannel;
-import org.flexlb.balance.preemption.CancelTarget;
 import org.flexlb.balance.scheduler.DefaultRouter;
 import org.flexlb.balance.scheduler.RequestScheduler;
 import org.flexlb.balance.scheduler.RequestSchedulerTestRuntime;
@@ -100,8 +98,7 @@ final class AutoTpmE2EHarness implements AutoCloseable {
     private ScheduledExecutorService pumpExecutor;
     private final Path tempDir;
 
-    AutoTpmE2EHarness(int basePort, int nPrefill, int nDecode,
-                      String prefillFormulaMs, double decodeStepMs, boolean realCancelChannel) {
+    AutoTpmE2EHarness(int basePort, int nPrefill, int nDecode, String prefillFormulaMs, double decodeStepMs) {
         this.config = new FlexlbConfig();
         try {
             tempDir = Files.createTempDirectory("auto-tpm-e2e");
@@ -466,19 +463,4 @@ final class AutoTpmE2EHarness implements AutoCloseable {
         engineScheduler.shutdownNow();
     }
 
-    /** Test-local fail-closed cancel transport for non-preemption scenarios. */
-    private static final class UnsupportedCancelStub
-            implements EngineCancelChannel {
-        @Override
-        public boolean isSupported(DecodeEndpoint endpoint) {
-            return false;
-        }
-
-        @Override
-        public CompletableFuture<CancelAck> cancel(
-                CancelTarget target, String requestId, long timeoutMs) {
-            return CompletableFuture.completedFuture(
-                    CancelAck.UNSUPPORTED);
-        }
-    }
 }

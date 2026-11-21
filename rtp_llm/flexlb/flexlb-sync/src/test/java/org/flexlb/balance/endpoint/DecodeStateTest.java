@@ -3,7 +3,6 @@ package org.flexlb.balance.endpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityLimit;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DispatchOutcome;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
-import org.flexlb.balance.preemption.PreemptionCancelPhase;
 import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
@@ -68,9 +67,7 @@ class DecodeStateTest {
 
         PreemptionClaim claim = new PreemptionClaim(2L, ClaimOwner.SHADOW_IN_FLIGHT, 100L, 200L);
         claim.setOwner(ClaimOwner.ENGINE_CONFIRMED);
-        claim.setReturnedInstruction(true);
         assertEquals(ClaimOwner.ENGINE_CONFIRMED, claim.getOwner());
-        assertTrue(claim.isReturnedInstruction());
         assertEquals(2L, claim.getAttemptToken());
         assertEquals(Object.class, PreemptionClaim.class.getMethod("equals", Object.class).getDeclaringClass());
     }
@@ -507,17 +504,14 @@ class DecodeStateTest {
         assertFalse(state.hasOwnedResources(regressed));
     }
 
-    @ParameterizedTest
-    @EnumSource(value = PreemptionCancelPhase.class, names = {"CANCEL_REQUESTED", "NOT_FOUND_STALE", "CANCEL_UNKNOWN"})
-    void regressedClaimKeepsOneHoldAndExplicitFinishedWinsOverActiveSnapshot(PreemptionCancelPhase reply) {
+    @Test
+    void regressedClaimKeepsOneHoldAndExplicitFinishedWinsOverActiveSnapshot() {
         WorkerStatus status = status();
         DecodeState state = new DecodeState(status, configService, reservations, requestReporter);
         var victim = state.reserve("10", 100, 200, 50, true, CAPACITY);
         calibrate(state, status, Map.of("10", task(10, TaskPhase.RUNNING)), Map.of());
-        assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
-                state.beginPreemption(1, java.util.List.of(victim), "11", 100, 200, 80, new CapacityLimit(1, 100)));
-        assertTrue(state.updatePreemption(1, DecodeEndpoint.PreemptionUpdate.cancelSending()));
-        assertTrue(state.updatePreemption(1, DecodeEndpoint.PreemptionUpdate.cancelReply("10", reply)));
+        assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS, state.beginReturnedPreemption(1,
+                java.util.List.of(victim), "11", 100, 200, 80, new CapacityLimit(1, 100)));
         for (int i = 0; i < 2; i++) {
             calibrate(state, status, Map.of("10", task(10, TaskPhase.RECEIVED)), Map.of());
             assertEquals(2, state.routingView().engineCapacityUsed(), "one victim hold plus one incoming shadow");
@@ -529,7 +523,6 @@ class DecodeStateTest {
         assertEquals(WorkerStatusFact.Kind.TERMINAL, terminal.facts().getFirst().kind());
         assertEquals(victim, terminal.facts().getFirst().reservation());
         assertFalse(state.hasOwnedResources(victim));
-        assertTrue(state.finishPreemption(1, DecodeEndpoint.PreemptionDecision.COMMIT));
         assertEquals(1, state.routingView().engineCapacityUsed());
         assertEquals(9_900L, state.routingView().realKvAvailable());
         assertEquals(RELEASED, state.release(state.reservationHandle("11"), ReleaseReason.LOCAL_ROLLBACK));
@@ -665,7 +658,6 @@ class DecodeStateTest {
         assertThrows(IllegalStateException.class, () -> state.release(incoming, ReleaseReason.LOCAL_ROLLBACK));
         assertTrue(state.hasOwnedResources(victim));
         assertEquals(2, state.routingView().engineCapacityUsed());
-        assertFalse(state.finishPreemption(1, DecodeEndpoint.PreemptionDecision.ABORT));
         for (int round = 0; round < 2; round++) {
             calibrate(state, status, Map.of("11", task(11, TaskPhase.RUNNING)), Map.of());
             assertEquals(2, state.routingView().engineCapacityUsed());
@@ -719,7 +711,6 @@ class DecodeStateTest {
                         && fact.reservation().equals(incoming)));
         assertFalse(state.hasOwnedResources(incoming));
         assertTrue(state.hasOwnedResources(victim));
-        assertFalse(state.finishPreemption(1, DecodeEndpoint.PreemptionDecision.ABORT));
         assertEquals(1, state.routingView().engineCapacityUsed());
         assertAdmissionMetricsMatch(state);
     }

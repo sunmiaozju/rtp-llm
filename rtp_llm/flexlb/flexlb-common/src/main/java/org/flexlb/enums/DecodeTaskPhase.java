@@ -6,25 +6,31 @@ package org.flexlb.enums;
  * (design doc 11.3): earlier phases are cheaper to evict.
  *
  * <p>A request still in the Master queue can be removed locally. Once its
- * dispatch may have reached Prefill, eviction must use the same Cancel
- * protocol as an accepted or running request.</p>
+ * dispatch may have reached Prefill, FlexLB must return the victim ID to the
+ * caller instead of removing the request locally.</p>
  */
 public enum DecodeTaskPhase {
 
     /** Still owned exclusively by the Master queue; Engine cannot have seen it. */
     MASTER_QUEUED_NOT_DISPATCHED,
 
-    /** Dispatch started or is in flight; original Prefill must handle Cancel. */
+    /**
+     * Dispatch started but the request has not been confirmed by WorkerStatus.
+     */
     ENGINE_MAY_HAVE_SEEN,
 
     /** Engine accepted the request and allocated KV, but has not started it. */
     ACCEPTED_NOT_RUNNING,
 
-    /** Engine is running the request. Eviction requires Cancel and release confirmation. */
+    /**
+     * Engine is running the request.
+     */
     RUNNING;
 
-    /** Whether eviction must go through the original Prefill Cancel owner. */
-    public boolean requiresEngineCancel() {
+    /**
+     * Whether dispatch may have reached Prefill.
+     */
+    public boolean isEngineFacing() {
         return this == ENGINE_MAY_HAVE_SEEN
                 || this == ACCEPTED_NOT_RUNNING
                 || this == RUNNING;

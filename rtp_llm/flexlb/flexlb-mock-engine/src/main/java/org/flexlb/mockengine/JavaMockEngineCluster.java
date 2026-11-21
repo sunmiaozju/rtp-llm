@@ -2045,19 +2045,9 @@ public final class JavaMockEngineCluster {
         }
 
         /**
-         * Cancel-RPC arrival bookkeeping + fault-injection gate, shared by
-         * all three cancel surfaces (gRPC Cancel handler, HTTP
-         * {@code /cancel_request}, in-process {@link MockEngineCancelChannel}).
-         * Counts the arrival (stats.cancelRpcs + rpcCancel — exactly like
-         * statusNoRespond counts statusRpcs before hanging), then returns
-         * the armed injection kind or {@code null} for the normal path.
-         *
-         * <p>An injected cancel is an RPC-LAYER failure simulated BEFORE the
-         * engine cancel state machine is touched: no fences, no terminal records,
-         * no census branch — production semantics "RPC failed = engine state
-         * unchanged". The master's one-shot cancel contract (never retries,
-         * 50ms ack timeout) turns every injected kind into a failed future
-         * on the master side while the engine keeps its exact prior state.
+         * Counts Cancel arrivals from gRPC, HTTP, and in-process tests before
+         * checking for an injected RPC failure. An injected failure leaves
+         * the request and its completion records unchanged.
          */
         CancelFaultKind arriveCancelRpc() {
             stats.cancelRpcs.increment();
@@ -2078,8 +2068,7 @@ public final class JavaMockEngineCluster {
         }
 
         /**
-         * Three-branch cancel used by {@link MockEngineCancelChannel} and the
-         * gRPC Cancel handler, mapped to the production C++ Prefill contract:
+         * Implements the production C++ Prefill Cancel contract:
          * a live request (or an accepted-cancel terminal record retry) is
          * {@code found} → ACCEPTED; a request this engine has seen but which
          * already finished (completed or previously cancelled) is

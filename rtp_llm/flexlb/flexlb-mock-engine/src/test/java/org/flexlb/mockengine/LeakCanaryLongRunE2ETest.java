@@ -38,7 +38,7 @@ class LeakCanaryLongRunE2ETest {
     @Test
     @Timeout(115)
     void d_long_run_mixed_traffic_with_transient_faults_leaks_nothing() throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT, 2, 1, "5", 1.0, true)) {
+        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT, 2, 1, "5", 1.0)) {
             // Prefill rejection is not Decode terminal evidence. Requests that
             // never reach Decode must settle through bounded inactivity cleanup.
             // Priority ordering and exact terminal cleanup remain active without preemption.

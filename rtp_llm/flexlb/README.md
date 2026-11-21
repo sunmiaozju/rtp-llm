@@ -97,7 +97,6 @@ numeric enums, and trailing JSON. Only explicitly allowlisted retired fields are
 | `router.roles.decode.costEstimator.expression` | Default `kvcache_used_ratio`; smallest cost wins within the same availability tier. Using `max_running_size` requires a positive `availability.maxEngineRequests`. |
 | Transport timeout | `flexlb.engine-grpc.enqueue-timeout-ms`, default 5000; outside the scheduling JSON. |
 | Engine channel keepalive | `flexlb.engine-grpc.keep-alive-time-ms`, positive, default 2000 (grpc-java raises anything below 10000 to 10000); `flexlb.engine-grpc.keep-alive-without-calls`, default `true`. Outside the scheduling JSON. rtp-llm's gRPC server tolerates idle pings. An engine whose gRPC server keeps grpc's default keepalive rules (the dashllm worker-status server today) answers the third ping on a connection with no running call with `GOAWAY too_many_pings` and closes it, failing any call still running on that channel; set `keep-alive-without-calls=false` for such engines. |
-| `scheduler.ordering.preemption.timeoutMs` | Default 1000 ms, positive; Engine-owned Decode preemption only. Starts after the Cancel ACK phase and bounds the wait for the Engine terminal. ACK timeout stays internal, 50 ms. |
 | `scheduler.ordering.preemption.allowedVictimStages` | PRIORITY defaults to all three stages: `PREFILL_QUEUED`, `DECODE_RESERVED`, `DECODE_ENGINE_OWNED`, including when `preemption` is omitted. An explicit non-empty list replaces the defaults. |
 
 The request timeout below is an explicit workload value; decision lifetime 2.0 is the default:
@@ -153,8 +152,9 @@ Only schema 3 is accepted. Write the configuration directly with explicit values
 `requestLifecycle.request.timeoutMs`, which has no default. A matching Engine request
 status renews this deadline. Once it expires, FlexLB releases the exact local
 request and its reservations even if delivery acknowledgement or Engine request status is missing.
-Only priority preemption may send an Engine Cancel RPC. Delivery uncertainty,
-request inactivity expiry, and client-cancellation bookkeeping remain local to the Master.
+FlexLB does not send an Engine Cancel RPC for Decode preemption. It returns victim IDs in
+`preempt_request_ids` for the caller to handle. Existing deployment configs may retain
+`scheduler.ordering.preemption.engineCancellation` and `scheduler.ordering.preemption.timeoutMs`; both are ignored.
 `requestLifecycle.decision.lifetime` defaults to 2.0. There is no legacy-schema conversion layer.
 
 `MODEL_SERVICE_CONFIG` still describes service discovery and endpoint topology; it is
@@ -298,8 +298,8 @@ requests. Each request keeps the configuration captured when it entered the Mast
 when it waits in the queue and retries Decode placement. The Decode limits and request KV demand
 are fixed through reservation and dispatch. `FLEXLB_CONFIG` from the environment is read at startup.
 
-See [FlexLB scheduling and configuration](docs/priority-scheduler-delivery-modes.md)
-for lifecycle behavior, capacity accounting, configuration defaults, and the mode matrix.
+See [FlexLB architecture](docs/architecture/00-overview.md) for scheduling, capacity accounting,
+and configuration defaults.
 
 ### Run
 

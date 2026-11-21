@@ -61,7 +61,7 @@ class EngineGrpcClientTest {
         listener.getValue().onAddressUpdate(List.of(host));
         listener.getValue().onAddressUpdate(List.of(host));
 
-        verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 8081));
+        verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
         verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18002));
 
         listener.getValue().onAddressUpdate(List.of());
@@ -90,14 +90,14 @@ class EngineGrpcClientTest {
         listener.getValue().onAddressUpdate(List.of(new WorkerHost(
                 "10.0.0.1", 8080, 8081, 8085, 18002, "", "", "")));
 
-        verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 8081));
+        verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
         verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 18002));
 
         client.shutdown();
     }
 
     @Test
-    void sharesDataPlaneChannelsAcrossLogicalEnginesAndKeepsStatusPortsSeparate() {
+    void sharesBatchEnqueueChannelAcrossLogicalEnginesAndKeepsStatusPortsSeparate() {
         EngineAddressResolver addressResolver = mock(EngineAddressResolver.class);
         GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
@@ -117,7 +117,7 @@ class EngineGrpcClientTest {
                         "10.0.0.1", 8080, 8081, 8085, 18003,
                         "", "", "", 1, 2)));
 
-        verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 8081));
+        verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
         verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18002));
         verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18003));
         client.shutdown();
@@ -173,7 +173,6 @@ class EngineGrpcClientTest {
         String serverName = InProcessServerBuilder.generateName();
         AtomicInteger workerStatusCalls = new AtomicInteger();
         AtomicInteger batchCalls = new AtomicInteger();
-        AtomicInteger cancelCalls = new AtomicInteger();
         Server server = InProcessServerBuilder.forName(serverName).directExecutor()
                 .addService(new RpcServiceGrpc.RpcServiceImplBase() {
                     @Override
@@ -197,16 +196,6 @@ class EngineGrpcClientTest {
                             EngineRpcService.EnqueueBatchRequestPB request,
                             StreamObserver<EngineRpcService.EnqueueBatchResponsePB> observer) {
                         batchCalls.incrementAndGet();
-                        observer.onError(io.grpc.Status.INTERNAL
-                                .withDescription("Connection reset")
-                                .asRuntimeException());
-                    }
-
-                    @Override
-                    public void cancel(
-                            EngineRpcService.CancelRequestPB request,
-                            StreamObserver<EngineRpcService.CancelResponsePB> observer) {
-                        cancelCalls.incrementAndGet();
                         observer.onError(io.grpc.Status.INTERNAL
                                 .withDescription("Connection reset")
                                 .asRuntimeException());
@@ -243,21 +232,14 @@ class EngineGrpcClientTest {
                             EngineRpcService.EnqueueBatchRequestPB.getDefaultInstance(),
                             1000)
                     .get(2, TimeUnit.SECONDS));
-            assertThrows(Exception.class, () -> client.cancelAsync(
-                            "10.0.0.1",
-                            8081,
-                            EngineRpcService.CancelRequestPB.getDefaultInstance(),
-                            1000)
-                    .get(2, TimeUnit.SECONDS));
 
             assertEquals(2, workerStatusCalls.get());
             assertEquals(1, batchCalls.get());
-            assertEquals(1, cancelCalls.get());
             verify(grpcReporter).reportConnectionDuration(eq("GetWorkerStatus"), anyLong());
             verify(grpcReporter).reportCallMetrics(
                     eq("GetWorkerStatus"), anyLong(), anyInt(), eq(true));
             verify(channelFactory, times(5)).create(new GrpcTarget("10.0.0.1", 18002));
-            verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 8081));
+            verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
         } finally {
             client.shutdown();
             server.shutdownNow().awaitTermination(2, TimeUnit.SECONDS);

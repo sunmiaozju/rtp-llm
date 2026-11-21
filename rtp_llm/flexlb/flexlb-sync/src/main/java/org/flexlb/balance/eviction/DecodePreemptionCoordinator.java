@@ -9,42 +9,21 @@ import org.springframework.stereotype.Component;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BooleanSupplier;
 
 /**
- * Executes one Engine-Cancel preemption transaction.
- *
- * <p>The scheduler supplies a pure plan and consumes one result.  This class
- * owns the two-phase protocol, token fencing and exactly-once child settlement.
- * Engine acknowledgement is only control evidence; the canonical victim
- * terminal transaction may complete before or after that acknowledgement.</p>
+ * Reserves a Decode route that will carry the victim request IDs to the caller.
  */
 @Component
 public final class DecodePreemptionCoordinator {
 
-    public record PreemptionResult(
-            boolean committed, boolean controlFailure, String detail) {
-        public PreemptionResult {
-            if (committed && controlFailure) {
-                throw new IllegalArgumentException(
-                        "committed preemption cannot be a control failure");
-            }
-        }
-    }
-
     public record PreemptionCommand(DecodeEndpoint endpoint,
-                             String incomingRequestId,
-                             long incomingKvTokens,
-                             long incomingKvBudgetTokens,
-                             int incomingPriority,
-                             DecodeEndpoint.CapacityLimit capacity,
-                             List<DecodeRequestView> victims,
-                             long cancelAckTimeoutMs,
-                             long preemptionTimeoutMs,
-                             BooleanSupplier admissionOpen,
-                             String detail) {
+                                    String incomingRequestId,
+                                    long incomingKvTokens,
+                                    long incomingKvBudgetTokens,
+                                    int incomingPriority,
+                                    DecodeEndpoint.CapacityLimit capacity,
+                                    List<DecodeRequestView> victims) {
         public PreemptionCommand {
             if (endpoint == null || victims == null || victims.isEmpty()) {
                 throw new IllegalArgumentException("endpoint and victims are required");
@@ -63,18 +42,13 @@ public final class DecodePreemptionCoordinator {
                     throw new IllegalArgumentException(
                             "victim requestId must not be blank and reservation token must be positive");
                 }
-                if (victim.phase() == null
-                        || !victim.phase().requiresEngineCancel()) {
-                    throw new IllegalArgumentException(
-                            "coordinator accepts only Engine-Cancel victims");
+                if (victim.phase() == null || !victim.phase().isEngineFacing()) {
+                    throw new IllegalArgumentException("only engine-facing victims can be returned to the caller");
                 }
                 if (!victimIds.add(victim.requestId())) {
                     throw new IllegalArgumentException(
                             "duplicate victim " + victim.requestId());
                 }
-            }
-            if (admissionOpen == null) {
-                throw new IllegalArgumentException("admission gate is required");
             }
         }
     }
@@ -86,8 +60,7 @@ public final class DecodePreemptionCoordinator {
         this.reporter = reporter;
     }
 
-    public CompletableFuture<PreemptionResult> prepareReturnedPreemption(
-            PreemptionCommand command) {
+    public DecodeEndpoint.PreemptionBeginResult prepareReturnedPreemption(PreemptionCommand command) {
         long token = nextToken();
         long generation = command.endpoint().getStatus().getGenerationId();
         List<DecodeEndpoint.ReservationHandle> victims = command.victims().stream()
@@ -104,10 +77,7 @@ public final class DecodePreemptionCoordinator {
                         command.incomingPriority(),
                         command.capacity());
         reportTargetValidationResult("return", begin);
-        return CompletableFuture.completedFuture(new PreemptionResult(
-                begin == DecodeEndpoint.PreemptionBeginResult.SUCCESS,
-                begin == DecodeEndpoint.PreemptionBeginResult.ENDPOINT_RETIRED,
-                "return_" + begin.name().toLowerCase()));
+        return begin;
     }
 
     private void reportTargetValidationResult(

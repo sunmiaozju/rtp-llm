@@ -2,10 +2,9 @@ package org.flexlb.balance.endpoint;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.flexlb.balance.preemption.PreemptionCancelPhase;
 
 /**
- * 保存一次抢占对请求容量的占用和取消进度；由 DecodeState 在节点锁内推进和释放。
+ * 保留被选中抢占的请求容量，等待 Worker 状态确认或归还未发布的路由。
  */
 @Getter
 @Setter
@@ -14,8 +13,6 @@ public final class PreemptionClaim {
     ClaimOwner owner;
     final long requiredKvTokens;
     final long kvBudgetTokens;
-    PreemptionCancelPhase phase = PreemptionCancelPhase.CLAIMED;
-    boolean returnedInstruction;
     boolean kvHeldAfterWorkerRelease;
 
     public PreemptionClaim(long attemptToken, ClaimOwner owner, long requiredKvTokens, long kvBudgetTokens) {

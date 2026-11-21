@@ -1,12 +1,11 @@
-package org.flexlb.balance.eviction;
+package org.flexlb.mockengine;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.preemption.CancelTarget;
 
 import java.util.concurrent.CompletableFuture;
 
 /**
- * Abstraction over the engine-side priority-preemption Cancel RPC.
+ * Test adapter for exercising the mock worker's Cancel contract.
  *
  * <p>Contract highlights:
  * <ul>
@@ -17,9 +16,11 @@ import java.util.concurrent.CompletableFuture;
  *   <li>{@code request_id} identifies the victim request.</li>
  * </ul>
  */
-public interface EngineCancelChannel {
+interface EngineCancelChannel {
 
-    /** Whether accepted eviction is enabled for victims held by this Decode endpoint. */
+    /**
+     * Whether accepted eviction is enabled for victims held by this Decode endpoint.
+     */
     boolean isSupported(DecodeEndpoint endpoint);
 
     /**
@@ -29,27 +30,33 @@ public interface EngineCancelChannel {
      * identically (the intent may still have landed; release stays gated on
      * the WorkerStatus report).
      */
-    CompletableFuture<CancelAck> cancel(CancelTarget target,
-                                        String requestId,
-                                        long timeoutMs);
+    CompletableFuture<CancelAck> cancel(CancelTarget target, String requestId, long timeoutMs);
 
     /**
      * Local delivery outcome. ACCEPTED and NOT_FOUND come from the engine
      * response; UNSUPPORTED and FAILED are local transport/capability branches.
      */
     enum CancelAck {
-        /** The addressed Prefill accepted the cancel intent. */
+        /**
+         * The addressed Prefill accepted the cancel intent.
+         */
         ACCEPTED,
-        /** The addressed Prefill does not own or know the request. */
+        /**
+         * The addressed Prefill does not own or know the request.
+         */
         NOT_FOUND,
         /**
          * Prefill atomically fenced this request id while it was absent. Any
          * racing later Enqueue is rejected before reaching the scheduler.
          */
         REQUEST_FENCED,
-        /** Endpoint has no cancel path at all — planning-gate violation. */
+        /**
+         * Endpoint has no cancel path at all — planning-gate violation.
+         */
         UNSUPPORTED,
-        /** Transport-layer failure (RPC error/timeout, or unroutable cancel). */
+        /**
+         * Transport-layer failure (RPC error/timeout, or unroutable cancel).
+         */
         FAILED
     }
 

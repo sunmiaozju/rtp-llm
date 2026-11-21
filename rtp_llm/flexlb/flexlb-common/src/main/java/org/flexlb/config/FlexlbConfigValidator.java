@@ -55,31 +55,14 @@ public final class FlexlbConfigValidator {
         }
     }
 
-    private static void validateOrderingShape(
-            JsonNode ordering, JsonNode effectiveOrdering) {
+    private static void validateOrderingShape(JsonNode ordering, JsonNode effectiveOrdering) {
         if (!ordering.isObject()) {
             return;
         }
         String type = effectiveOrdering.path("type").asText("FIFO");
         if ("FIFO".equals(type)) {
             rejectFields(ordering, "scheduler.ordering", "defaultPriority", "highPriorityThreshold", "preemption");
-        } else if ("PRIORITY".equals(type)) {
-            validatePreemptionShape(ordering.path("preemption"));
         }
-    }
-
-    private static void validatePreemptionShape(JsonNode preemption) {
-        if (!preemption.isObject() || !preemption.has("timeoutMs") || !preemption.has("allowedVictimStages")) {
-            return;
-        }
-        for (JsonNode stage : preemption.path("allowedVictimStages")) {
-            if (VictimStage.DECODE_ENGINE_OWNED.name().equals(stage.asText())) {
-                return;
-            }
-        }
-        throw new ConfigValidationException(
-                "scheduler.ordering.preemption.timeoutMs",
-                "is supported only when DECODE_ENGINE_OWNED is enabled");
     }
 
     private static void rejectFields(JsonNode object, String path, String... fields) {
@@ -148,14 +131,6 @@ public final class FlexlbConfigValidator {
                                 && !preemption.getAllowedVictimStages().isEmpty(),
                         "scheduler.ordering.preemption.allowedVictimStages",
                         "must contain at least one stage when preemption is configured");
-                positive(preemption.getTimeoutMs(),
-                        "scheduler.ordering.preemption.timeoutMs");
-                require(preemption.getEngineCancellation() != null,
-                        "scheduler.ordering.preemption.engineCancellation",
-                        "is required");
-                require(preemption.getEngineCancellation().getMode() != null,
-                        "scheduler.ordering.preemption.engineCancellation.mode",
-                        "is required");
             }
         } else {
             require(ordering.getPreemption() == null,

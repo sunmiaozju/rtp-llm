@@ -18,9 +18,8 @@ class ProductionRoutingDeadlineE2ETest {
 
     @Test
     @Timeout(10)
-    void requestDeadlineIsNotMisclassifiedAsAPlacementCapacityMiss()
-            throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT, 1, 1, "1", 1.0, false)) {
+    void requestDeadlineIsNotMisclassifiedAsAPlacementCapacityMiss() throws Exception {
+        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT, 1, 1, "1", 1.0)) {
             h.startAutoPump(5L);
 
             long nearDeadlineId = 88_001L;

@@ -2,7 +2,6 @@ package org.flexlb.balance.endpoint;
 
 import org.flexlb.balance.eviction.DecodeEndpointSnapshot;
 import org.flexlb.balance.eviction.DecodeEvictionProposal;
-import org.flexlb.balance.eviction.EngineCancelChannel;
 import org.flexlb.balance.eviction.EvictionPlanner;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
@@ -21,8 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /** Exercise one demand and budget through selection, planning and authoritative commit. */
 class DecodeCapacityPreemptionTest {
@@ -49,9 +46,12 @@ class DecodeCapacityPreemptionTest {
         assertEquals(DecodeEvictionProposal.CASE_KV, proposal.evictionCase());
         assertEquals(List.of("1"), proposal.victims().stream().map(DecodeEndpoint.DecodeRequestView::requestId).toList());
         if (usageChanged) { updateCapacity(endpoint, 250L); }
-        assertEquals(usageChanged ? DecodeEndpoint.PreemptionBeginResult.INFEASIBLE
+        assertEquals(
+                usageChanged
+                        ? DecodeEndpoint.PreemptionBeginResult.INFEASIBLE
                         : DecodeEndpoint.PreemptionBeginResult.SUCCESS,
-                endpoint.beginPreemption(1L, List.of(victim), "9", requiredKvTokens, kvBudgetTokens, 70, policy));
+                endpoint.beginReturnedPreemption(1L, List.of(victim), "9", requiredKvTokens, kvBudgetTokens, 70,
+                        policy));
         assertNotNull(endpoint.reservationHandle("1"));
         if (usageChanged) { assertNull(endpoint.reservationHandle("9")); }
     }
@@ -99,11 +99,9 @@ class DecodeCapacityPreemptionTest {
                                                VictimStage stage) {
         PreemptionConfig preemption = new PreemptionConfig();
         preemption.setAllowedVictimStages(EnumSet.of(stage));
-        EngineCancelChannel channel = mock(EngineCancelChannel.class);
-        when(channel.isSupported(endpoint)).thenReturn(true);
         var failures = new HashMap<String, String>();
         DecodeEvictionProposal proposal = EvictionPlanner.planDecode(70, requiredKvTokens, kvBudgetTokens,
-                List.of(DecodeEndpointSnapshot.capture(endpoint, policy)), preemption, channel, failures);
+                List.of(DecodeEndpointSnapshot.capture(endpoint, policy)), preemption, failures);
         assertNotNull(proposal, failures.toString());
         return proposal;
     }

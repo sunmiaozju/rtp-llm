@@ -534,32 +534,11 @@ class ConfigServiceTest {
     }
 
     @Test
-    void engine_owned_preemption_timeout_has_one_default_and_accepts_positive_overrides() {
-        assertEquals(1000L, new PreemptionConfig().getTimeoutMs());
-        FlexlbConfig config = ConfigTestFixtures.parse("""
-                {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                  "allowedVictimStages":["DECODE_ENGINE_OWNED"]}}}}
-                """);
-        assertEquals(1000L, config.priorityOrdering().getPreemption().getTimeoutMs());
-        for (long timeoutMs : new long[]{1L, 2500L, Long.MAX_VALUE}) {
-            config = ConfigTestFixtures.parse("""
-                    {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                      "allowedVictimStages":["DECODE_RESERVED","DECODE_ENGINE_OWNED"],
-                      "timeoutMs":%d}}}}
-                    """.formatted(timeoutMs));
-            assertEquals(timeoutMs, config.priorityOrdering().getPreemption().getTimeoutMs());
-        }
-    }
-
-    @Test
     void priority_defaults_to_all_preemption_stages_and_preserves_explicit_subsets() {
         var allStages = java.util.EnumSet.allOf(VictimStage.class);
         assertEquals(allStages, new PreemptionConfig().getAllowedVictimStages());
         assertEquals(allStages, QueueOrderingConfig.priority().getPreemption().getAllowedVictimStages());
-        for (String ordering : new String[]{
-                "{\"type\":\"PRIORITY\"}",
-                "{\"type\":\"PRIORITY\",\"preemption\":{}}",
-                "{\"type\":\"PRIORITY\",\"preemption\":{\"timeoutMs\":2500}}"}) {
+        for (String ordering : new String[]{"{\"type\":\"PRIORITY\"}", "{\"type\":\"PRIORITY\",\"preemption\":{}}"}) {
             FlexlbConfig config = ConfigTestFixtures.parse("{\"scheduler\":{\"ordering\":" + ordering + "}}");
             assertEquals(allStages, config.priorityOrdering().getPreemption().getAllowedVictimStages());
             for (VictimStage stage : allStages) { assertTrue(config.allowsPreemption(stage)); }
@@ -581,40 +560,6 @@ class ConfigServiceTest {
     }
 
     @Test
-    void preemption_timeout_rejects_non_positive_values_and_json_coercion() {
-        for (String value : new String[]{"0", "-1", "1.5", "\"1000\"", "true", "null", "[]", "{}",
-                "9223372036854775808"}) {
-            assertInvalid("""
-                    {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                      "allowedVictimStages":["DECODE_ENGINE_OWNED"],"timeoutMs":%s}}}}
-                    """.formatted(value), "timeoutMs");
-        }
-        FlexlbConfig config = ConfigTestFixtures.parse("""
-                {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                  "allowedVictimStages":["DECODE_ENGINE_OWNED"]}}}}
-                """);
-        config.priorityOrdering().getPreemption().setTimeoutMs(0);
-        assertThrows(ConfigValidationException.class, () -> FlexlbConfigValidator.validate(config));
-    }
-
-    @Test
-    void explicit_preemption_timeout_requires_engine_owned_decode_stage() {
-        FlexlbConfig config = ConfigTestFixtures.parse("""
-                {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                  "allowedVictimStages":["DECODE_RESERVED"]}}}}
-                """);
-        assertTrue(config.priorityOrdering().getPreemption().allows(VictimStage.DECODE_RESERVED));
-        assertInvalid("""
-                {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                  "allowedVictimStages":["DECODE_RESERVED"],"timeoutMs":1000}}}}
-                """, "timeoutMs");
-        assertInvalid("""
-                {"scheduler":{"ordering":{"type":"FIFO","preemption":{
-                  "allowedVictimStages":["DECODE_ENGINE_OWNED"],"timeoutMs":1000}}}}
-                """, "preemption");
-    }
-
-    @Test
     void queued_prefill_preemption_is_valid_alone_or_with_decode_preemption() {
         FlexlbConfig config = ConfigTestFixtures.parse("""
                 {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
@@ -627,10 +572,6 @@ class ConfigServiceTest {
                 """);
         assertTrue(config.allowsPreemption(VictimStage.PREFILL_QUEUED));
         assertTrue(config.allowsPreemption(VictimStage.DECODE_RESERVED));
-        assertInvalid("""
-                {"scheduler":{"ordering":{"type":"PRIORITY","preemption":{
-                  "allowedVictimStages":["PREFILL_QUEUED"],"timeoutMs":1000}}}}
-                """, "timeoutMs");
     }
 
     @Test
@@ -646,9 +587,9 @@ class ConfigServiceTest {
                 Map.entry("scheduler.capacity.maxWaitingRequestsPerPrefillWorker", "1024"),
                 Map.entry("scheduler.lifecycle.staleInflightTimeoutMs", "300000"),
                 Map.entry("scheduler.lifecycle.deliveredNotAcceptedTimeoutMs", "30000"),
-                Map.entry("scheduler.lifecycle.maxDeliveredNotAcceptedRequestsGlobal", "200"),
-                Map.entry("scheduler.ordering.preemption.engineCancellation.ackTimeoutMs", "50"),
-                Map.entry("scheduler.ordering.preemption.engineCancellation.completionTimeoutMs", "1000"),
+                 Map.entry("scheduler.lifecycle.maxDeliveredNotAcceptedRequestsGlobal", "200"),
+                Map.entry("scheduler.ordering.preemption.engineCancellation", "{\"mode\":\"RPC\"}"),
+                Map.entry("scheduler.ordering.preemption.timeoutMs", "1000"),
                 Map.entry("dispatcher.maxInflightRequestsPerPrefillWorker", "8"),
                 Map.entry("dispatcher.enqueueRpcTimeoutMs", "5000"),
                 Map.entry("router.roles.prefill.candidateChoice.type", "\"BEST_ONLY\""),

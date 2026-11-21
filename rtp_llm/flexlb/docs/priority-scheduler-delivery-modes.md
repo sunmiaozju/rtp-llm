@@ -1,5 +1,8 @@
 # QUEUE ordering, decision, and dispatcher modes
 
+> Historical design for schema v2. For current settings and Decode preemption behavior, see
+> [Configuration and observability](architecture/06-configuration-and-observability.md).
+
 ## Purpose
 
 FlexLB exposes the scheduler plus three independent QUEUE axes in one strict

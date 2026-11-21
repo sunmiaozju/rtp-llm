@@ -12,8 +12,8 @@ import java.util.List;
  *
  * <p>Victims are strictly lower priority than the incoming request. Depending
  * on the feature gate, they may be Master shadow reservations or
- * engine-confirmed accepted/running requests; confirmed victims require the
- * Cancel-and-release-confirm commit path.
+ * requests that may have reached the engine. FlexLB returns the IDs of
+ * engine-facing victims to the caller.
  *
  * @param endpointId       decode endpoint key ("ip:httpPort")
  * @param victims          selected victims in eviction order
@@ -33,15 +33,14 @@ public record DecodeEvictionProposal(
 
     public DecodeEvictionProposal {
         boolean hasLocal = victims.stream().anyMatch(victim -> victim.phase().isMasterQueued());
-        boolean hasCancel = victims.stream().anyMatch(victim -> victim.phase().requiresEngineCancel());
-        if (hasLocal && hasCancel) {
-            throw new IllegalArgumentException(
-                    "decode proposal cannot mix Master-local and Engine-Cancel victims");
+        boolean hasEngineFacingVictims = victims.stream().anyMatch(victim -> victim.phase().isEngineFacing());
+        if (hasLocal && hasEngineFacingVictims) {
+            throw new IllegalArgumentException("decode proposal cannot mix Master-queued and engine-facing victims");
         }
     }
 
-    public boolean requiresEngineCancel() {
-        return !victims.isEmpty() && victims.get(0).phase().requiresEngineCancel();
+    public boolean hasEngineFacingVictims() {
+        return !victims.isEmpty() && victims.getFirst().phase().isEngineFacing();
     }
 
     /** Concurrency slots exhausted (design doc 11). */

@@ -14,10 +14,7 @@ import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
 
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_CONFIRM_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_QPS;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_REQUEST_COUNT;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_TIMEOUT_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_ACCEPTED_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_ENGINE_LOAD;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_RESERVED_COUNT;
@@ -84,9 +81,6 @@ public class RequestSchedulerReporter {
         monitor.register(AUTO_TPM_PRIORITY_PREEMPT_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_DECODE_RUNNING_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_DECODE_ACCEPTED_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_CANCEL_REQUEST_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_CANCEL_CONFIRM_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_CANCEL_TIMEOUT_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_CANCEL_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_DECODE_ENGINE_LOAD, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_PREEMPTION_TARGET_INVALID_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
@@ -280,9 +274,7 @@ public class RequestSchedulerReporter {
     }
 
     /**
-     * Report one cancel initiation via {@code auto_tpm.cancel.qps} — counted
-     * once per cancel intent injected into the EngineCancelChannel, tagged
-     * with the cancelled request's priority and the cancel reason
+     * Report one cancellation request, tagged with its priority and reason
      * (PRIORITY_PREEMPTED / USER_CANCELLED / DEADLINE_EXCEEDED).
      *
      * @param priority normalized priority of the cancelled request
@@ -291,43 +283,6 @@ public class RequestSchedulerReporter {
     public void reportCancel(int priority, String reason) {
         monitor.report(AUTO_TPM_CANCEL_QPS,
                 FlexMetricTags.of("priority", String.valueOf(priority), "reason", reason), 1.0);
-    }
-
-    /**
-     * Report one engine cancel request issued via
-     * {@code auto_tpm.cancel.request.count}.
-     *
-     * @param victimPriority normalized priority of the cancelled victim
-     */
-    public void reportCancelRequest(String endpoint, int victimPriority) {
-        monitor.report(AUTO_TPM_CANCEL_REQUEST_COUNT, FlexMetricTags.of("priority", String.valueOf(victimPriority)),
-                1.0);
-    }
-
-    /**
-     * Report one cancel release confirmation via
-     * {@code auto_tpm.cancel.confirm.count} — inside the commit wait window
-     * or via the later WorkerStatus settle path, whichever happens.
-     *
-     * @param victimPriority normalized priority of the cancelled victim
-     */
-    public void reportCancelConfirm(String endpoint, int victimPriority) {
-        monitor.report(AUTO_TPM_CANCEL_CONFIRM_COUNT, FlexMetricTags.of("priority", String.valueOf(victimPriority)),
-                1.0);
-    }
-
-    /**
-     * Report one cancel wait-window timeout via
-     * {@code auto_tpm.cancel.timeout.count}. The plan failed; the victim
-     * stays CANCEL_REQUESTED until WorkerStatus settles it (a later settle
-     * also counts one confirm, so confirms may exceed non-timed-out requests).
-     *
-     * @param incomingPriority normalized priority of the incoming request
-     *                         whose eviction plan failed
-     */
-    public void reportCancelTimeout(String endpoint, int incomingPriority) {
-        monitor.report(AUTO_TPM_CANCEL_TIMEOUT_COUNT, FlexMetricTags.of("priority", String.valueOf(incomingPriority)),
-                1.0);
     }
 
     /**

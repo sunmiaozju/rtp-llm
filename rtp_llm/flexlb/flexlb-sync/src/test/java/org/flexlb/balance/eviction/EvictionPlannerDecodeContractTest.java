@@ -2,8 +2,6 @@ package org.flexlb.balance.eviction;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
-import org.flexlb.balance.eviction.EngineCancelChannel.CancelAck;
-import org.flexlb.balance.preemption.CancelTarget;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
 import org.flexlb.enums.DecodeTaskPhase;
@@ -15,7 +13,6 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -40,24 +37,9 @@ class EvictionPlannerDecodeContractTest {
 
     private static final long H_SLOT = 4L;
     private static final long H_KV = 8L;
-    private static final EngineCancelChannel SUPPORTING_CHANNEL =
-            new EngineCancelChannel() {
-                @Override
-                public boolean isSupported(DecodeEndpoint endpoint) {
-                    return true;
-                }
-
-                @Override
-                public CompletableFuture<CancelAck> cancel(
-                        CancelTarget target, String requestId, long timeoutMs) {
-                    return CompletableFuture.completedFuture(CancelAck.ACCEPTED);
-                }
-            };
-
     private static PreemptionConfig engineOwned() {
         PreemptionConfig p = new PreemptionConfig();
         p.setAllowedVictimStages(EnumSet.of(VictimStage.DECODE_ENGINE_OWNED));
-        p.setEngineCancellation(new org.flexlb.config.EngineCancellationConfig());
         return p;
     }
 
@@ -79,11 +61,12 @@ class EvictionPlannerDecodeContractTest {
                 List.of(), accepted, List.of());
     }
 
-    private static DecodeEvictionProposal plan(
-            int priority, long requiredKvTokens, DecodeEndpointSnapshot ep,
-            Map<String, String> failures) {
-        return EvictionPlanner.planDecode(
-                priority, requiredKvTokens, requiredKvTokens, List.of(ep), engineOwned(), SUPPORTING_CHANNEL, failures);
+    private static DecodeEvictionProposal plan(int priority,
+                                               long requiredKvTokens,
+                                               DecodeEndpointSnapshot ep,
+                                               Map<String, String> failures) {
+        return EvictionPlanner.planDecode(priority, requiredKvTokens, requiredKvTokens, List.of(ep), engineOwned(),
+                failures);
     }
 
     private static List<String> victimIds(DecodeEvictionProposal p) {

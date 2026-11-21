@@ -2,8 +2,6 @@ package org.flexlb.mockengine;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.eviction.EngineCancelChannel;
-import org.flexlb.balance.preemption.CancelTarget;
 
 import java.net.URI;
 import java.net.http.HttpClient;

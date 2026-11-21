@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.preemption.PreemptionCancelPhase;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
@@ -123,17 +122,12 @@ class DecodeRequestExpirationTest {
         updateStatus(Map.of("1", task(1L, TaskPhase.RUNNING, 500)), Map.of(), 9_500);
         assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
                 beginPreemption(101L, List.of(1L), 9L, 100, 120, 70));
-        assertTrue(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.cancelSending()));
-        assertTrue(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.cancelReply("1", PreemptionCancelPhase.NOT_FOUND_STALE)));
-        updateStatus(Map.of(), Map.of(), 10_000);
-        endpoint.finishPreemption(101L, DecodeEndpoint.PreemptionDecision.ABORT);
+        updateStatus(Map.of(), Map.of("9", task(9L, TaskPhase.RUNNING, 100)), 10_000);
         assertEquals(1, endpoint.routingView().totalLoad());
         assertEquals(9_500, endpoint.realKvAvailable());
 
         assertTrue(endpoint.release(victim, DecodeEndpoint.ReleaseReason.EXPIRED).released());
         assertFalse(endpoint.release(victim, DecodeEndpoint.ReleaseReason.EXPIRED).released());
-        assertFalse(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.canceled(victim)));
-        assertFalse(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.finished(victim)));
         assertEquals(0, endpoint.routingView().totalLoad());
         assertEquals(10_000, endpoint.realKvAvailable());
         assertEquals(0, endpoint.routingView().realKvUsed());
@@ -148,7 +142,6 @@ class DecodeRequestExpirationTest {
         DecodeEndpoint.ReservationHandle incoming = endpoint.reservationHandle("9");
         assertTrue(endpoint.release(incoming, DecodeEndpoint.ReleaseReason.EXPIRED).released());
         assertFalse(endpoint.release(incoming, DecodeEndpoint.ReleaseReason.EXPIRED).released());
-        endpoint.finishPreemption(101L, DecodeEndpoint.PreemptionDecision.ABORT);
         assertEquals(1, endpoint.routingView().totalLoad());
         assertEquals(0, endpoint.getInflightCount());
         assertTrue(endpoint.release(victim, DecodeEndpoint.ReleaseReason.EXPIRED).released());
@@ -170,23 +163,6 @@ class DecodeRequestExpirationTest {
         updateStatus(Map.of("1", task(1L, TaskPhase.RUNNING, 1)), Map.of(), 9_999);
         assertTrue(isConfirmed(1L),
                 "a later fresh active observation is not blocked by an ordinary completion");
-    }
-
-    @Test
-    void priorityNotFoundOrdinaryFinishedDoesNotRetainGenerationFence() {
-        reserve(1L, 500, 700, 30);
-        updateStatus(Map.of("1", task(1L, TaskPhase.RUNNING, 500)), Map.of(), 9_500);
-        assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
-                beginPreemption(101L, List.of(1L),
-                        9L, 100, 120, 70));
-        assertTrue(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.cancelSending()));
-        assertTrue(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.cancelReply("1", PreemptionCancelPhase.NOT_FOUND_STALE)));
-        endpoint.finishPreemption(101L, DecodeEndpoint.PreemptionDecision.ABORT);
-
-        assertTrue(endpoint.updatePreemption(101L, DecodeEndpoint.PreemptionUpdate.finished(reservations.get(1L))));
-
-        updateStatus(Map.of("1", task(1L, TaskPhase.RUNNING, 500)), Map.of(), 9_500);
-        assertTrue(isConfirmed(1L));
     }
 
     private void updateStatus(Map<String, TaskInfoPB.Builder> running,
@@ -232,7 +208,7 @@ class DecodeRequestExpirationTest {
                                                                  long requiredKv,
                                                                  long kvBudget,
                                                                  int priority) {
-        return endpoint.beginPreemption(attemptToken, victimIds.stream().map(reservations::get).toList(),
+        return endpoint.beginReturnedPreemption(attemptToken, victimIds.stream().map(reservations::get).toList(),
                 Long.toString(incomingRequestId), requiredKv, kvBudget, priority,
                 new DecodeEndpoint.CapacityLimit(Math.max(1, endpoint.routingView().totalLoad()), 100));
     }

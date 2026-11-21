@@ -10,12 +10,9 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.EngineDispatchPermitAcquireSta
 import org.flexlb.balance.endpoint.DecodeEndpoint.EngineDispatchPermitTransferStatus;
 import org.flexlb.balance.endpoint.DecodeEndpoint.LayeredAdmissionView;
 import org.flexlb.balance.endpoint.DecodeEndpoint.PreemptionBeginResult;
-import org.flexlb.balance.endpoint.DecodeEndpoint.PreemptionDecision;
-import org.flexlb.balance.endpoint.DecodeEndpoint.PreemptionUpdate;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationHandle;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationReleaseResult;
-import org.flexlb.balance.preemption.PreemptionCancelPhase;
 import org.flexlb.balance.schedulev2.RequestStatusTimeout;
 import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
@@ -408,7 +405,7 @@ final class DecodeState {
             for (ReservationHandle victim : attempt.remainingVictims.values()) {
                 PreemptionClaim victimClaim = exactPreemptionClaimLocked(
                         entry.getKey(), victim);
-                if (victimClaim != null && victimClaim.phase.isLocallyReleasable()) {
+                if (victimClaim != null) {
                     releaseHeldKv(victimClaim);
                     removePreemptionClaimLocked(victim.requestId(), victimClaim);
                 }
@@ -450,17 +447,13 @@ final class DecodeState {
         boolean exactState = isExactReservation(state, reservation);
 
         PreemptionClaim claim = state == null ? null : state.preemptionClaim;
-        if (claim != null && exactState && !claim.returnedInstruction) {
-            throw terminalInvariant(reservation,
-                    "priority claim must settle before generic terminal ownership");
-        }
         if (hasExactIncomingAttemptLocked(reservation)) {
             throw terminalInvariant(reservation,
                     "priority attempt still owns the exact incoming reservation");
         }
 
         boolean changed = false;
-        if (claim != null && exactState && claim.returnedInstruction) {
+        if (claim != null && exactState) {
             return settlePriorityClaimTerminalLocked(
                     claim.attemptToken, reservation, claim);
         }
@@ -827,7 +820,7 @@ final class DecodeState {
         }
     }
 
-    // Preemption: local replacement and the complete remote-cancel resource transaction.
+    // Preemption: local replacement and reservations for routes carrying victim IDs.
 
     boolean replaceQueuedRequests(List<ReservationHandle> victims,
                                   String incomingRequestId,
@@ -898,13 +891,13 @@ final class DecodeState {
         return capacity.evaluate(routingViewLocked().placementUsage(), requiredKvTokens, kvBudgetTokens, released).fits();
     }
 
-    PreemptionBeginResult beginPreemption(long attemptToken,
-                                          List<ReservationHandle> victims,
-                                          String incomingRequestId,
-                                          long incomingKvTokens,
-                                          long incomingKvBudgetTokens,
-                                          int incomingPriority,
-                                          CapacityLimit capacity) {
+    PreemptionBeginResult beginReturnedPreemption(long attemptToken,
+                                                  List<ReservationHandle> victims,
+                                                  String incomingRequestId,
+                                                  long incomingKvTokens,
+                                                  long incomingKvBudgetTokens,
+                                                  int incomingPriority,
+                                                  CapacityLimit capacity) {
         lock.lock();
         try {
             if (preemptionAttempts.containsKey(attemptToken)) {
@@ -991,8 +984,7 @@ final class DecodeState {
                                 kvBudget));
             }
 
-            // Provisional incoming ownership closes the free-pool race while
-            // Cancel runs.  It is not visible to the prefill queue yet.
+            // Reserve capacity before publishing the route with the victim IDs.
             ReservationHandle incomingReservation = reserveLocked(
                     incomingRequestId, incomingKvTokens,
                     incomingKvBudgetTokens, incomingPriority);
@@ -1016,6 +1008,7 @@ final class DecodeState {
                     }
                     request.preemptionClaim = claim.getValue();
                 }
+                shadowReservation(incomingRequestId).returnedPreemptionToken = attemptToken;
             } catch (RuntimeException | Error installationFailure) {
                 if (preparedAttempt != null) {
                     preemptionAttempts.remove(attemptToken, preparedAttempt);
@@ -1033,31 +1026,6 @@ final class DecodeState {
             }
             admissionVersion.incrementAndGet();
             return PreemptionBeginResult.SUCCESS;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    PreemptionBeginResult beginReturnedPreemption(long attemptToken,
-                                                  List<ReservationHandle> victims,
-                                                  String incomingRequestId,
-                                                  long incomingKvTokens,
-                                                  long incomingKvBudgetTokens,
-                                                  int incomingPriority,
-                                                  CapacityLimit capacity) {
-        lock.lock();
-        try {
-            PreemptionBeginResult result = beginPreemption(
-                    attemptToken, victims, incomingRequestId,
-                    incomingKvTokens, incomingKvBudgetTokens,
-                    incomingPriority, capacity);
-            if (result == PreemptionBeginResult.SUCCESS) {
-                shadowReservation(incomingRequestId).returnedPreemptionToken = attemptToken;
-                for (ReservationHandle victim : victims) {
-                    preemptionClaim(victim.requestId()).returnedInstruction = true;
-                }
-            }
-            return result;
         } finally {
             lock.unlock();
         }
@@ -1089,76 +1057,6 @@ final class DecodeState {
             preemptionAttempts.remove(incoming.returnedPreemptionToken);
             incoming.returnedPreemptionToken = 0L;
         }
-    }
-
-    boolean updatePreemption(long attemptToken, PreemptionUpdate update) {
-        lock.lock();
-        try {
-            if (update.kind() == PreemptionUpdate.Kind.CANCEL_SENDING) {
-                return startCancelLocked(attemptToken);
-            }
-            if (update.kind() == PreemptionUpdate.Kind.CANCEL_REPLY) {
-                PreemptionClaim claim = preemptionClaim(update.requestId());
-                if (claim == null || claim.attemptToken != attemptToken
-                        || !claim.phase.canTransitionTo(update.phase())) { return false; }
-                claim.phase = update.phase();
-                admissionVersion.incrementAndGet();
-                return true;
-            }
-            ReservationHandle victim = update.reservation();
-            if (victim.endpointGenerationId() != status.getGenerationId()) { return false; }
-            PreemptionClaim claim = exactPreemptionClaimLocked(attemptToken, victim);
-            if (claim == null) { return false; }
-            return switch (update.kind()) {
-                case CANCELED -> claim.phase.acceptsPriorityTerminal()
-                        && settlePriorityClaimTerminalLocked(attemptToken, victim, claim);
-                case REQUEST_FENCED -> claim.phase.acceptsRequestFenced()
-                        && settlePriorityClaimTerminalLocked(attemptToken, victim, claim);
-                case ACTIVE, FINISHED -> observeVictimLocked(victim, claim, update.kind());
-                default -> throw new IllegalStateException("Unhandled preemption update: " + update.kind());
-            };
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private boolean startCancelLocked(long attemptToken) {
-        EndpointPreemptionAttempt attempt = preemptionAttempts.get(attemptToken);
-        if (attempt == null) {
-            return false;
-        }
-        for (ReservationHandle victim
-                : attempt.remainingVictims.values()) {
-            String victimId = victim.requestId();
-            PreemptionClaim claim = exactPreemptionClaimLocked(
-                    attemptToken, victim);
-            if (claim == null
-                    || !claim.phase.canTransitionTo(
-                            PreemptionCancelPhase.CANCEL_IN_FLIGHT)) {
-                return false;
-            }
-        }
-        for (ReservationHandle victim
-                : attempt.remainingVictims.values()) {
-            preemptionClaim(victim.requestId()).phase =
-                    PreemptionCancelPhase.CANCEL_IN_FLIGHT;
-        }
-        admissionVersion.incrementAndGet();
-        return true;
-    }
-
-    private boolean observeVictimLocked(ReservationHandle victim, PreemptionClaim claim,
-                                        PreemptionUpdate.Kind evidence) {
-        boolean finished = evidence == PreemptionUpdate.Kind.FINISHED;
-        if (finished ? !claim.phase.requiresOrdinaryReconciliation()
-                : claim.phase != PreemptionCancelPhase.NOT_FOUND_STALE) { return false; }
-        releaseHeldKv(claim);
-        removePreemptionClaimLocked(victim.requestId(), claim);
-        if (finished) {
-            settleAuthoritativeTerminalLocked(victim, false, System.currentTimeMillis());
-        }
-        admissionVersion.incrementAndGet();
-        return true;
     }
 
     private boolean settlePriorityClaimTerminalLocked(long attemptToken,
@@ -1208,42 +1106,6 @@ final class DecodeState {
         rememberSettledLocked(requestId, System.currentTimeMillis());
         admissionVersion.incrementAndGet();
         return true;
-    }
-
-    boolean finishPreemption(long attemptToken, PreemptionDecision decision) {
-        lock.lock();
-        try {
-            EndpointPreemptionAttempt attempt = preemptionAttempts.get(attemptToken);
-            if (attempt == null) { return false; }
-            if (decision == PreemptionDecision.COMMIT) {
-                DecodeRequestState incoming = shadowReservation(attempt.incomingRequestId);
-                if (incoming == null || incoming.reservationToken() != attempt.incomingReservationToken
-                        || !attempt.remainingVictims.isEmpty()) { return false; }
-            } else {
-                releaseLocked(attempt.incomingRequestId);
-                for (ReservationHandle victim : attempt.remainingVictims.values()) {
-                    PreemptionClaim claim = exactPreemptionClaimLocked(attemptToken, victim);
-                    if (claim != null && claim.phase.isLocallyReleasable()) {
-                        releaseHeldKv(claim);
-                        removePreemptionClaimLocked(victim.requestId(), claim);
-                    }
-                }
-            }
-            preemptionAttempts.remove(attemptToken);
-            admissionVersion.incrementAndGet();
-            return true;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private boolean releaseLocked(String requestId) {
-        DecodeRequestState removed = shadowReservation(requestId);
-        boolean changed = removeShadowExactLocked(requestId, removed);
-        if (changed) {
-            admissionVersion.incrementAndGet();
-        }
-        return changed;
     }
 
     private PreemptionClaim preemptionClaim(String requestId) {
@@ -1466,13 +1328,6 @@ final class DecodeState {
                     reservedRequestCount.decrementAndGet();
                 }
                 PreemptionClaim claim = preemptionClaim(requestId);
-                if (claim != null
-                        && claim.phase == PreemptionCancelPhase.NOT_FOUND_STALE
-                        && !preemptionAttempts.containsKey(claim.attemptToken)) {
-                    releaseHeldKv(claim);
-                    removePreemptionClaimLocked(requestId, claim);
-                    claim = null;
-                }
                 if (claim != null) {
                     claim.owner = ClaimOwner.ENGINE_CONFIRMED;
                     releaseHeldKv(claim);

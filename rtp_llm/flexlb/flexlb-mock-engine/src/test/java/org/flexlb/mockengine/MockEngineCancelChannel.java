@@ -1,8 +1,6 @@
 package org.flexlb.mockengine;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.eviction.EngineCancelChannel;
-import org.flexlb.balance.preemption.CancelTarget;
 import org.flexlb.engine.grpc.RequestId;
 
 import java.util.Map;
@@ -53,10 +51,8 @@ public final class MockEngineCancelChannel implements EngineCancelChannel {
     }
 
     @Override
-    public CompletableFuture<CancelAck> cancel(CancelTarget target, String requestId,
-                                               long timeoutMs) {
-        JavaMockEngineCluster.FastRpcService service = target == null
-                ? null : services.get(target.prefillGrpcPort());
+    public CompletableFuture<CancelAck> cancel(CancelTarget target, String requestId, long timeoutMs) {
+        JavaMockEngineCluster.FastRpcService service = target == null ? null : services.get(target.prefillGrpcPort());
         if (service == null) {
             return CompletableFuture.completedFuture(CancelAck.UNSUPPORTED);
         }
@@ -81,8 +77,7 @@ public final class MockEngineCancelChannel implements EngineCancelChannel {
         if (fault == JavaMockEngineCluster.CancelFaultKind.ERROR) {
             // cancel_error: transport-layer failure -> failed future, no
             // fence installed (mirrors the gRPC INTERNAL error path).
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("mock cancel error injection"));
+            return CompletableFuture.failedFuture(new IllegalStateException("mock cancel error injection"));
         }
         if (fault == JavaMockEngineCluster.CancelFaultKind.UNEXPECTED_STATUS) {
             // cancel_unexpected_status: the RPC "succeeds" but the ack status
@@ -90,14 +85,12 @@ public final class MockEngineCancelChannel implements EngineCancelChannel {
             // mapping failing on the out-of-contract status instead of
             // accepting it (same terminal shape as HttpMockEngineCancel
             // Channel's unknown-status IllegalStateException).
-            return CompletableFuture.failedFuture(
-                    new IllegalStateException("unexpected cancel ack status"));
+            return CompletableFuture.failedFuture(new IllegalStateException("unexpected cancel ack status"));
         }
         try {
             // Deliberately inspect only the addressed Prefill. Scanning other
             // workers would hide an incorrect Prefill route in tests.
-            JavaMockEngineCluster.CancelResult result = service.cancelRequest(
-                    engineRequestId);
+            JavaMockEngineCluster.CancelResult result = service.cancelRequest(engineRequestId);
             if (result.found()) {
                 return CompletableFuture.completedFuture(CancelAck.ACCEPTED);
             }
@@ -107,8 +100,8 @@ public final class MockEngineCancelChannel implements EngineCancelChannel {
             // window); a never-seen rid answers REQUEST_FENCED — cancelRequest
             // installed the ABSENT_FENCE record that rejects any racing
             // later Enqueue of that rid with the typed 8429.
-            return CompletableFuture.completedFuture(
-                    result.alreadyFinished() ? CancelAck.NOT_FOUND : CancelAck.REQUEST_FENCED);
+            return CompletableFuture
+                    .completedFuture(result.alreadyFinished() ? CancelAck.NOT_FOUND : CancelAck.REQUEST_FENCED);
         } catch (UnsupportedOperationException e) {
             return CompletableFuture.completedFuture(CancelAck.FAILED);
         } catch (Exception e) {

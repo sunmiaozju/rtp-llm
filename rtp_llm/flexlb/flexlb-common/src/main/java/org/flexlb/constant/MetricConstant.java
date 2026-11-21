@@ -789,10 +789,8 @@ public class MetricConstant {
 
     /**
      * Auto-TPM eviction plan commit count (QPS), tags: priority, case, result.
-     * Under {@code engineCancellation.mode=RETURN} a commit means the
-     * instruction-bearing route was prepared, before it crosses its delivery
-     * boundary and before the victims' releases are proven, so the count is an
-     * upper bound on completed Engine-owned preemptions.
+     * For a route with victim IDs, this counts route preparation, not successful
+     * publication or release of the victims' capacity.
      */
     public static final String AUTO_TPM_EVICTION_COMMIT_COUNT = "auto_tpm.eviction_commit.count";
 
@@ -856,36 +854,10 @@ public class MetricConstant {
     public static final String AUTO_TPM_DECODE_ACCEPTED_COUNT = "auto_tpm.decode.accepted.count";
 
     /**
-     * Auto-TPM engine cancel requests issued (QPS), tags: endpoint,
-     * priority (victim's normalized priority).
-     * Counted when an accepted-eviction commit fires a Cancel RPC.
-     */
-    public static final String AUTO_TPM_CANCEL_REQUEST_COUNT = "auto_tpm.cancel.request.count";
-
-    /**
-     * Auto-TPM engine cancel release confirmations (QPS), tags: endpoint,
-     * priority (victim's normalized priority; "0" when the settled item
-     * carried no Auto-TPM budget).
-     * Counted when a cancelled victim's release is confirmed — either inside
-     * the commit wait window or later via the WorkerStatus settle path.
-     */
-    public static final String AUTO_TPM_CANCEL_CONFIRM_COUNT = "auto_tpm.cancel.confirm.count";
-
-    /**
-     * Auto-TPM engine cancel wait-window timeouts (QPS), tags: endpoint,
-     * priority (the incoming request whose eviction plan failed).
-     * The plan failed; the victim stays CANCEL_REQUESTED until WorkerStatus
-     * settles it.
-     */
-    public static final String AUTO_TPM_CANCEL_TIMEOUT_COUNT = "auto_tpm.cancel.timeout.count";
-
-    /**
      * Auto-TPM cancel initiations (QPS), tags: priority (normalized priority
      * of the cancelled request, raw 1-100 value — matches the rest of the
      * auto_tpm family; "0" = not inflight / no budget), reason
-     * (PRIORITY_PREEMPTED / USER_CANCELLED / DEADLINE_EXCEEDED). Counted
-     * once per cancel intent injected into the EngineCancelChannel: the
-     * preemption path and the Frontend-initiated cancel path.
+     * (PRIORITY_PREEMPTED / USER_CANCELLED / DEADLINE_EXCEEDED).
      */
     public static final String AUTO_TPM_CANCEL_QPS = "auto_tpm.cancel.qps";
 

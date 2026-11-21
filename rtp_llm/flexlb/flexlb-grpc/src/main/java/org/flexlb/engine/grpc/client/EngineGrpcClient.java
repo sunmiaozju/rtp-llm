@@ -214,8 +214,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
     }
 
     static boolean retriesBrokenConnections(ServiceType serviceType) {
-        return serviceType != ServiceType.BATCH_ENQUEUE
-                && serviceType != ServiceType.ENGINE_CANCEL;
+        return serviceType != ServiceType.BATCH_ENQUEUE;
     }
 
     /**
@@ -305,22 +304,6 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
                 ServiceType.BATCH_ENQUEUE);
     }
 
-    /**
-     * Cancels a request asynchronously without transport retry because the original cancel may have succeeded.
-     */
-    public CompletableFuture<EngineRpcService.CancelResponsePB> cancelAsync(
-            String ip,
-            int port,
-            EngineRpcService.CancelRequestPB request,
-            long requestTimeoutMs) {
-        return executeGrpcCallAsync(
-                ip,
-                port,
-                stub -> stub.rpcServiceStub().cancel(request),
-                requestTimeoutMs,
-                ServiceType.ENGINE_CANCEL);
-    }
-
     public Executor getExecutor() {
         return channelFactory.getExecutor();
     }
@@ -371,9 +354,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
         WORKER_STATUS("worker", "GetWorkerStatus"),
         CACHE_STATUS("cache", "GetCacheStatus"),
         MULTIMODAL_WORKER_STATUS("multimodal_worker", "GetWorkerStatus"),
-        MULTIMODAL_CACHE_STATUS("multimodal_cache", "GetCacheStatus"),
-        BATCH_ENQUEUE("batch_enqueue", "EnqueueBatch"),
-        ENGINE_CANCEL("engine_cancel", "Cancel");
+        MULTIMODAL_CACHE_STATUS("multimodal_cache", "GetCacheStatus"), BATCH_ENQUEUE("batch_enqueue", "EnqueueBatch");
 
         private final String suffix;
         private final String operationName;
@@ -392,7 +373,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
         }
 
         boolean isStatusService() {
-            return this != BATCH_ENQUEUE && this != ENGINE_CANCEL;
+            return this != BATCH_ENQUEUE;
         }
 
         boolean isCacheStatusService() {

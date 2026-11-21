@@ -20,7 +20,6 @@ import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
 import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.EngineCancellationConfig;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -366,21 +365,19 @@ public final class DecodeQueueConsumer implements Runnable {
         DecodeEndpointSnapshot snapshot = DecodeEndpointSnapshot.capture(endpoint, requirement.capacity());
         DecodeEvictionProposal proposal = EvictionPlanner.planDecode(requirement.priority(),
                 requirement.inputKvTokens(), requirement.inputAndMaxOutputKvTokens(), List.of(snapshot),
-                V2_RETURN_PREEMPTION, null, new HashMap<>());
-        if (proposal == null || !proposal.requiresEngineCancel()) {
+                V2_RETURN_PREEMPTION, new HashMap<>());
+        if (proposal == null || !proposal.hasEngineFacingVictims()) {
             return null;
         }
         DecodePreemptionCoordinator.PreemptionCommand command = new DecodePreemptionCoordinator.PreemptionCommand(
                 endpoint, request.requestId(), requirement.inputKvTokens(), requirement.inputAndMaxOutputKvTokens(),
-                requirement.priority(), requirement.capacity(), proposal.victims(), 0L, configured.getTimeoutMs(),
-                () -> running.get() && !request.stage().isEnded(), "v2_decode_queue");
+                requirement.priority(), requirement.capacity(), proposal.victims());
 
-        DecodePreemptionCoordinator.PreemptionResult result =
-                preemptionCoordinator.prepareReturnedPreemption(command).join();
+        DecodeEndpoint.PreemptionBeginResult result = preemptionCoordinator.prepareReturnedPreemption(command);
 
-        if (!result.committed()) {
-            Logger.debug("V2 decode preemption not committed: request_id={} detail={}", request.requestId(),
-                    result.detail());
+        if (result != DecodeEndpoint.PreemptionBeginResult.SUCCESS) {
+            Logger.debug("V2 decode preemption reservation failed: request_id={} result={}", request.requestId(),
+                    result);
             return null;
         }
         DecodeEndpoint.ReservationHandle reservation = endpoint.reservationHandle(request.requestId());
@@ -422,7 +419,6 @@ public final class DecodeQueueConsumer implements Runnable {
     private static PreemptionConfig v2ReturnPreemption() {
         PreemptionConfig policy = new PreemptionConfig();
         policy.setAllowedVictimStages(EnumSet.of(VictimStage.DECODE_ENGINE_OWNED));
-        policy.getEngineCancellation().setMode(EngineCancellationConfig.Mode.RETURN);
         return policy;
     }
 

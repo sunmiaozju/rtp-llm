@@ -15,10 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_CONFIRM_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_QPS;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_REQUEST_COUNT;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_TIMEOUT_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_PREEMPTION_TARGET_INVALID_COUNT;
 import static org.flexlb.constant.MetricConstant.REQUEST_LIFECYCLE_FAILURES_TOTAL;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
@@ -50,9 +47,6 @@ class RequestSchedulerReporterTest {
         reporter.init();
 
         verify(monitor).register(AUTO_TPM_CANCEL_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        verify(monitor).register(AUTO_TPM_CANCEL_REQUEST_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        verify(monitor).register(AUTO_TPM_CANCEL_CONFIRM_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        verify(monitor).register(AUTO_TPM_CANCEL_TIMEOUT_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
     }
 
     @Test
@@ -69,27 +63,6 @@ class RequestSchedulerReporterTest {
 
         verify(monitor).report(AUTO_TPM_CANCEL_QPS,
                 FlexMetricTags.of("priority", "0", "reason", "USER_CANCELLED"), 1.0);
-    }
-
-    @Test
-    void should_report_cancel_request_with_priority_tag() {
-        reporter.reportCancelRequest("10.0.0.2:8081", 30);
-
-        verify(monitor).report(AUTO_TPM_CANCEL_REQUEST_COUNT, FlexMetricTags.of("priority", "30"), 1.0);
-    }
-
-    @Test
-    void should_report_cancel_confirm_with_priority_tag() {
-        reporter.reportCancelConfirm("10.0.0.2:8081", 30);
-
-        verify(monitor).report(AUTO_TPM_CANCEL_CONFIRM_COUNT, FlexMetricTags.of("priority", "30"), 1.0);
-    }
-
-    @Test
-    void should_report_cancel_timeout_with_incoming_priority_tag() {
-        reporter.reportCancelTimeout("10.0.0.2:8081", 70);
-
-        verify(monitor).report(AUTO_TPM_CANCEL_TIMEOUT_COUNT, FlexMetricTags.of("priority", "70"), 1.0);
     }
 
     @Test

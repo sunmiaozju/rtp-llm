@@ -149,6 +149,7 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 
 允许 `DECODE_ENGINE_OWNED` 抢占时，V2 将待抢占请求的字符串 ID 随 Decode 路由返回，
 由调用方处理；FlexLB 不在选路链路发送 Cancel RPC。
+旧部署配置可保留 `scheduler.ordering.preemption.engineCancellation` 和 `scheduler.ordering.preemption.timeoutMs`，这两个字段会被忽略。
 
 ### Prefill 缓存工作量权重
 
@@ -577,10 +578,9 @@ Decode 预留字段 `inputKvTokens = max(0, seqLen)`，
 
 `auto_tpm.preemption.target_invalid.count` 统计 Decode 抢占目标校验失败的尝试次数，
 使用 QPS + NORMAL（20 秒聚合）上报。一次计划即使包含多个目标也只计一次，标签仅有
-`mode=return/rpc` 和固定的 `reason`：`victim_state_changed`（预留或派发状态变化）、
-`victim_already_claimed`（目标已被其他抢占占用）、`priority_not_preemptible`（目标优先级不允许抢占）、
-`cancel_target_unavailable`（RPC 取消地址无法取得）、`request_claim_rejected`（RPC 无法锁定该请求进行抢占）。
-这类失败会结束本次高优先级请求的调度；容量不足、取消 RPC 返回 NOT_FOUND、超时不计入此指标。
+`mode=return` 和固定的 `reason`：`victim_state_changed`（预留或派发状态变化）、
+`victim_already_claimed`（目标已被其他抢占占用）、`priority_not_preemptible`（目标优先级不允许抢占）。
+容量不足不计入此指标。
 未发生事件时可能没有时间序列，不能据此断言上报链路正常。
 `auto_tpm.request.lifecycle.failures.total{stage}` 是 NORMAL COUNTER（20 秒聚合），
 `stage=registration` 记录注册异常，`stage=terminal_cleanup` 记录资源清理失败或请求最终状态提交异常。

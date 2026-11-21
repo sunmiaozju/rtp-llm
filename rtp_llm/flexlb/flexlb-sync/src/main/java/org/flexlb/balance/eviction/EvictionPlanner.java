@@ -3,7 +3,6 @@ package org.flexlb.balance.eviction;
 import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityDeficit;
 import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
-import org.flexlb.config.EngineCancellationConfig;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
 import org.flexlb.enums.DecodeTaskPhase;
@@ -22,10 +21,11 @@ public final class EvictionPlanner {
     private EvictionPlanner() {
     }
 
-    /** A decode plan never mixes Master-local removal with Engine Cancel. */
+    /**
+     * A Decode plan keeps Master-queued and engine-facing victims separate.
+     */
     private enum VictimOwnership {
-        MASTER_LOCAL,
-        ENGINE_CANCEL
+        MASTER_LOCAL, ENGINE_FACING
     }
 
     // ==================== Decode reserved-only eviction (design doc 11-13) ====================
@@ -57,8 +57,7 @@ public final class EvictionPlanner {
      *
      * <p>Candidates are the strictly lower-priority reserved entries when
      * {@link VictimStage#DECODE_RESERVED} is allowed, plus — only when
-     * {@link VictimStage#DECODE_ENGINE_OWNED} is allowed and the endpoint's
-     * engine supports the Cancel RPC — the strictly lower-priority
+     * {@link VictimStage#DECODE_ENGINE_OWNED} is allowed — the strictly lower-priority
      * engine-confirmed accepted/running entries. Running entries use a larger
      * stage cost, so an otherwise equivalent accepted-not-running victim is
      * preferred.
@@ -68,21 +67,20 @@ public final class EvictionPlanner {
      * @param inputAndMaxOutputKvTokens complete prompt and output KV demand
      * @param decodes  candidate decode endpoint snapshots
      * @param preemption immutable policy for the current admission attempt
-     * @param channel  engine cancel channel for the per-endpoint support gate;
-     *                 {@code null} disables confirmed layers entirely
      * @param failures out-param: per-endpoint infeasibility reason
      * @return the best proposal by {@link DecodeEvictionProposal#ORDER}, or
      *         {@code null} when no endpoint has a feasible plan
      */
-    public static DecodeEvictionProposal planDecode(int incomingPriority, long inputKvTokens, long inputAndMaxOutputKvTokens,
+    public static DecodeEvictionProposal planDecode(int incomingPriority,
+                                                    long inputKvTokens,
+                                                    long inputAndMaxOutputKvTokens,
                                                     List<DecodeEndpointSnapshot> decodes,
                                                     PreemptionConfig preemption,
-                                                    EngineCancelChannel channel,
                                                     Map<String, String> failures) {
         DecodeEvictionProposal best = null;
         for (DecodeEndpointSnapshot ep : decodes) {
             DecodeEvictionProposal proposal =
-                    planDecodeOne(incomingPriority, inputKvTokens, inputAndMaxOutputKvTokens, ep, preemption, channel, failures);
+                    planDecodeOne(incomingPriority, inputKvTokens, inputAndMaxOutputKvTokens, ep, preemption, failures);
             if (proposal != null
                     && (best == null || DecodeEvictionProposal.ORDER.compare(proposal, best) < 0)) {
                 best = proposal;
@@ -101,10 +99,11 @@ public final class EvictionPlanner {
         return deficit.needsKv() ? DecodeEvictionProposal.CASE_KV : null;
     }
 
-    private static DecodeEvictionProposal planDecodeOne(int incomingPriority, long inputKvTokens, long inputAndMaxOutputKvTokens,
+    private static DecodeEvictionProposal planDecodeOne(int incomingPriority,
+                                                        long inputKvTokens,
+                                                        long inputAndMaxOutputKvTokens,
                                                         DecodeEndpointSnapshot ep,
                                                         PreemptionConfig preemption,
-                                                        EngineCancelChannel channel,
                                                         Map<String, String> failures) {
         CapacityDeficit deficit = ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens);
         if (deficit.fits()) {
@@ -113,19 +112,20 @@ public final class EvictionPlanner {
         }
         boolean localEvictionEnabled = preemption != null
                 && preemption.allows(VictimStage.DECODE_RESERVED);
-        boolean engineCancelEnabled = preemption != null
-                && preemption.allows(VictimStage.DECODE_ENGINE_OWNED)
-                && (preemption.getEngineCancellation().getMode()
-                        == EngineCancellationConfig.Mode.RETURN
-                    || channel != null && channel.isSupported(ep.endpoint()));
+        boolean engineFacingEvictionEnabled = preemption != null && preemption.allows(VictimStage.DECODE_ENGINE_OWNED);
         DecodeEvictionProposal local = localEvictionEnabled
                 ? planDecodeOneOwnership(incomingPriority, inputKvTokens, inputAndMaxOutputKvTokens, ep, deficit,
                         VictimOwnership.MASTER_LOCAL, failures) : null;
-        DecodeEvictionProposal engine = engineCancelEnabled
+        DecodeEvictionProposal engine = engineFacingEvictionEnabled
                 ? planDecodeOneOwnership(incomingPriority, inputKvTokens, inputAndMaxOutputKvTokens, ep, deficit,
-                        VictimOwnership.ENGINE_CANCEL, failures) : null;
-        if (local == null) { return engine; }
-        if (engine == null) { return local; }
+                        VictimOwnership.ENGINE_FACING, failures)
+                : null;
+        if (local == null) {
+            return engine;
+        }
+        if (engine == null) {
+            return local;
+        }
         return DecodeEvictionProposal.ORDER.compare(local, engine) <= 0 ? local : engine;
     }
 
@@ -267,10 +267,10 @@ public final class EvictionPlanner {
      * either ownership class releases its placement request charge.
      */
     private static List<DecodeRequestView> lowerPriorityCandidates(int incomingPriority,
-                                                                       DecodeEndpointSnapshot ep,
-                                                                       Set<String> excludedVictimIds,
-                                                                       boolean releasableKvOnly,
-                                                                       VictimOwnership ownership) {
+                                                                   DecodeEndpointSnapshot ep,
+                                                                   Set<String> excludedVictimIds,
+                                                                   boolean releasableKvOnly,
+                                                                   VictimOwnership ownership) {
         List<DecodeRequestView> candidates = new ArrayList<>();
         for (DecodeRequestView entry : ep.reserved()) {
             boolean ownershipMatches = ownership == VictimOwnership.MASTER_LOCAL
@@ -285,7 +285,7 @@ public final class EvictionPlanner {
                 candidates.add(entry);
             }
         }
-        if (ownership == VictimOwnership.ENGINE_CANCEL) {
+        if (ownership == VictimOwnership.ENGINE_FACING) {
             addConfirmedCandidates(candidates, ep.accepted(), incomingPriority,
                     excludedVictimIds, releasableKvOnly);
             addConfirmedCandidates(candidates, ep.running(), incomingPriority,

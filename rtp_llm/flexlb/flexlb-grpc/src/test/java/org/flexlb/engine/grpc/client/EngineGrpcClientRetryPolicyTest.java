@@ -25,9 +25,4 @@ class EngineGrpcClientRetryPolicyTest {
                 EngineGrpcClient.ServiceType.MULTIMODAL_CACHE_STATUS));
     }
 
-    @Test
-    void cancelKeepsItsExistingSingleShotPolicy() {
-        assertFalse(EngineGrpcClient.retriesBrokenConnections(
-                EngineGrpcClient.ServiceType.ENGINE_CANCEL));
-    }
 }

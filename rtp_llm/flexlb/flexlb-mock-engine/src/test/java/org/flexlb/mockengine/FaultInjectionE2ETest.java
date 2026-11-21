@@ -57,8 +57,7 @@ class FaultInjectionE2ETest {
     @Test
     @Timeout(30)
     void c03_generate_delay_slows_prefill_execution_without_breaking_completion() throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(
-                BASE_PORT + 20, 1, 1, "5", 1.0, false)) {
+        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT + 20, 1, 1, "5", 1.0)) {
             arm(h);
             JavaMockEngineCluster.FastRpcService prefill = h.prefillEngines.get(0);
             prefill.setFaultConfig(FaultInjectionConfig.builder()
@@ -85,8 +84,7 @@ class FaultInjectionE2ETest {
     @Test
     @Timeout(30)
     void c04_generate_error_fails_direct_stream_and_scheduler_path_unaffected() throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(
-                BASE_PORT + 30, 2, 1, "5", 1.0, false)) {
+        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT + 30, 2, 1, "5", 1.0)) {
             arm(h);
             h.prefillEngines.get(0).setFaultConfig(FaultInjectionConfig.builder()
                     .generateError(true)
@@ -112,8 +110,7 @@ class FaultInjectionE2ETest {
     @Test
     @Timeout(30)
     void c07_kv_pressure_propagates_through_worker_status_and_clears() throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(
-                BASE_PORT + 60, 1, 1, "5", 1.0, false)) {
+        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT + 60, 1, 1, "5", 1.0)) {
             JavaMockEngineCluster.FastRpcService decode = h.decodeEngines.get(0);
             long totalKv = decode.getTotalKvTokens();
             // The scheduler fixture is already published at status version 1.

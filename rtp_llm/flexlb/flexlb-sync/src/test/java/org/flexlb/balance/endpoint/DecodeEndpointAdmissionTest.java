@@ -431,7 +431,7 @@ class DecodeEndpointAdmissionTest {
         assertNull(endpoint.tryHold());
         assertFalse(endpoint.replaceQueuedRequests(List.of(stale), "3", 100, 110, 50,
                 new DecodeEndpoint.CapacityLimit(1, 100)));
-        assertEquals(DecodeEndpoint.PreemptionBeginResult.ENDPOINT_RETIRED, endpoint.beginPreemption(101L,
+        assertEquals(DecodeEndpoint.PreemptionBeginResult.ENDPOINT_RETIRED, endpoint.beginReturnedPreemption(101L,
                 List.of(stale), "5", 100, 110, 50, new DecodeEndpoint.CapacityLimit(1, 100)));
 
         assertTrue(reserved().isEmpty());
@@ -1092,7 +1092,7 @@ class DecodeEndpointAdmissionTest {
                                                                  long requiredKv,
                                                                  long kvBudget,
                                                                  int priority) {
-        return endpoint.beginPreemption(attemptToken, victimIds.stream().map(reservations::get).toList(),
+        return endpoint.beginReturnedPreemption(attemptToken, victimIds.stream().map(reservations::get).toList(),
                 Long.toString(incomingRequestId), requiredKv, kvBudget, priority,
                 new DecodeEndpoint.CapacityLimit(Math.max(1, endpoint.routingView().totalLoad()), 100));
     }

@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.preemption.PreemptionCancelPhase;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.config.RoutingConfig;
@@ -343,25 +342,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
         }
     }
 
-    public PreemptionBeginResult beginPreemption(long attemptToken,
-                                                 List<ReservationHandle> victims,
-                                                 String incomingRequestId,
-                                                 long inputKvTokens,
-                                                 long inputAndMaxOutputKvTokens,
-                                                 int priority,
-                                                 CapacityLimit capacity) {
-        if (attemptToken <= 0 || victims == null || victims.isEmpty()) {
-            throw new IllegalArgumentException("attempt token and victims are required");
-        }
-        EndpointHold hold = tryHold();
-        if (hold == null) {
-            return PreemptionBeginResult.ENDPOINT_RETIRED;
-        }
-        try (hold) {
-            return state.beginPreemption(attemptToken, victims, incomingRequestId, inputKvTokens, inputAndMaxOutputKvTokens, priority, capacity);
-        }
-    }
-
     /** Atomically reserve an instruction-bearing route without issuing Cancel RPCs. */
     public PreemptionBeginResult beginReturnedPreemption(long attemptToken,
                                                          List<ReservationHandle> victims,
@@ -384,18 +364,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
         }
     }
 
-    public boolean updatePreemption(long attemptToken, PreemptionUpdate update) {
-        boolean changed = state.updatePreemption(attemptToken, update);
-        if (changed && update.releasesCapacity()) { publishCapacityRelease(); }
-        return changed;
-    }
-
-    public boolean finishPreemption(long attemptToken, PreemptionDecision decision) {
-        boolean changed = state.finishPreemption(attemptToken, decision);
-        if (changed && decision == PreemptionDecision.ABORT) { publishCapacityRelease(); }
-        return changed;
-    }
-
     public enum PreemptionBeginResult {
         SUCCESS,
         ENDPOINT_RETIRED,
@@ -405,48 +373,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
         INFEASIBLE,
         INCOMING_ALREADY_RESERVED,
         ATTEMPT_ALREADY_EXISTS
-    }
-
-    public enum PreemptionDecision { COMMIT, ABORT }
-
-    public record PreemptionUpdate(Kind kind, String requestId, ReservationHandle reservation,
-                                   PreemptionCancelPhase phase) {
-        public enum Kind { CANCEL_SENDING, CANCEL_REPLY, CANCELED, REQUEST_FENCED, ACTIVE, FINISHED }
-
-        public PreemptionUpdate {
-            java.util.Objects.requireNonNull(kind, "kind");
-            if (kind == Kind.CANCEL_REPLY) {
-                if (phase != PreemptionCancelPhase.CANCEL_REQUESTED
-                        && phase != PreemptionCancelPhase.NOT_FOUND_STALE
-                        && phase != PreemptionCancelPhase.CANCEL_UNKNOWN) {
-                    throw new IllegalArgumentException("Expected a Cancel reply phase");
-                }
-            } else if (phase != null) {
-                throw new IllegalArgumentException("Only a Cancel reply carries a phase");
-            }
-            if (kind != Kind.CANCEL_REPLY && kind != Kind.CANCEL_SENDING) {
-                if (!java.util.Objects.equals(requestId, reservation.requestId())) {
-                    throw new IllegalArgumentException("Victim identity mismatch");
-                }
-            } else if (reservation != null) {
-                throw new IllegalArgumentException("Cancel progress does not carry a reservation");
-            }
-        }
-        public static PreemptionUpdate cancelSending() {
-            return new PreemptionUpdate(Kind.CANCEL_SENDING, null, null, null);
-        }
-        public static PreemptionUpdate cancelReply(String requestId, PreemptionCancelPhase phase) {
-            return new PreemptionUpdate(Kind.CANCEL_REPLY, requestId, null, phase);
-        }
-
-        public static PreemptionUpdate canceled(ReservationHandle victim) { return victim(Kind.CANCELED, victim); }
-        public static PreemptionUpdate fenced(ReservationHandle victim) { return victim(Kind.REQUEST_FENCED, victim); }
-        public static PreemptionUpdate active(ReservationHandle victim) { return victim(Kind.ACTIVE, victim); }
-        public static PreemptionUpdate finished(ReservationHandle victim) { return victim(Kind.FINISHED, victim); }
-        private static PreemptionUpdate victim(Kind kind, ReservationHandle victim) {
-            return new PreemptionUpdate(kind, victim.requestId(), victim, null);
-        }
-        boolean releasesCapacity() { return kind != Kind.CANCEL_SENDING && kind != Kind.CANCEL_REPLY; }
     }
 
     // Calibration: publish facts only after the resource transaction returns.
