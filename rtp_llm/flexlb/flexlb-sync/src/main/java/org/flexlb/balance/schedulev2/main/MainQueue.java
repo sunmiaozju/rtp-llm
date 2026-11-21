@@ -1,6 +1,7 @@
 package org.flexlb.balance.schedulev2.main;
 
 import org.flexlb.balance.scheduler.QueueCapacity;
+import org.flexlb.balance.scheduler.SchedulerErrorMessages;
 import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestOrder;
@@ -11,7 +12,6 @@ import org.flexlb.service.monitor.V2QueueReporter;
 
 import java.util.Iterator;
 import java.util.concurrent.ConcurrentSkipListSet;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -23,19 +23,10 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public final class MainQueue {
 
-    public static final String QUEUE_FULL_MESSAGE = "Too many requests. Your requests are being throttled"
-            + " due to system capacity limits. Please try again later.";
-
-    /**
-     * 队满时最多挤掉几个低优先级请求再重试，避免并发入队时一直互相抢。
-     */
-    private static final int MAX_ADD_ATTEMPTS = 3;
-
     private final V2QueueReporter reporter;
     private final QueueCapacity queueCapacity;
     private final LoopSignal loopSignal;
     private final ConcurrentSkipListSet<Request> requests;
-    private final AtomicInteger size = new AtomicInteger();
     private final AtomicLong nextSeq = new AtomicLong();
 
     public MainQueue(QueueCapacity queueCapacity,
@@ -53,19 +44,18 @@ public final class MainQueue {
      * <ul>
      * <li>没开优先级排序，返回 QUEUE_FULL；</li>
      * <li>请求优先级低于高优先级阈值，返回 QUEUE_FULL_LOW_PRIORITY_REJECTED；</li>
-     * <li>否则挤掉主队列里一个更低优先级的请求（最低优先级里最晚入队的）再入队，
-     * 找不到可挤的请求时返回 QUEUE_FULL_HIGH_PRIORITY_REJECTED。</li>
+     * <li>否则尝试挤掉主队列里一个更低优先级的请求（最低优先级里最晚入队的），有剩余次数才重新申请名额。
+     * 找不到可挤的请求或用完尝试次数时返回 QUEUE_FULL_HIGH_PRIORITY_REJECTED。</li>
      * </ul>
      * 入队成功返回 null。
      */
     public StrategyErrorType add(Request request, FlexlbConfig config) {
         long limit = config.queueScheduler().getMaxQueuedRequests();
-        for (int attempt = 0; attempt < MAX_ADD_ATTEMPTS; attempt++) {
+        int maxAddAttempts = config.queueScheduler().getMainQueueMaxAddAttempts();
+        for (int attempt = 0; attempt < maxAddAttempts; attempt++) {
             if (queueCapacity.tryIncreaseTotalQueueCount(request.future(), limit)) {
                 request.setQueueSeq(nextSeq.incrementAndGet());
-                if (requests.add(request)) {
-                    size.incrementAndGet();
-                }
+                requests.add(request);
                 // 入队期间请求可能已结束，结束时的清理没看到它，这里补上
                 if (request.stage() != Stage.MAIN_WAITING) {
                     remove(request);
@@ -85,9 +75,9 @@ public final class MainQueue {
             if (victim == null) {
                 return StrategyErrorType.QUEUE_FULL_HIGH_PRIORITY_REJECTED;
             }
-            // 挤掉的请求结束时会同步减掉它占的排队总数，下一轮重试就能计入
+            // 挤掉的请求结束时会同步释放排队名额，当前请求的重试或其他请求都可以申请
             if (victim.fail(Stage.MAIN_WAITING, StrategyErrorType.queueRejectionFor(victim.priority(), threshold),
-                    QUEUE_FULL_MESSAGE)) {
+                    SchedulerErrorMessages.QUEUE_FULL)) {
                 reporter.mainPreempted(request.priority(), victim.priority());
             }
         }
@@ -111,9 +101,7 @@ public final class MainQueue {
      * 沿用原来的顺序号，所以排在原来的位置。
      */
     public void addBack(Request request) {
-        if (requests.add(request)) {
-            size.incrementAndGet();
-        }
+        requests.add(request);
         // 放回期间请求可能已结束，结束时的清理没看到它，这里补上
         if (request.stage() != Stage.MAIN_WAITING) {
             remove(request);
@@ -125,9 +113,7 @@ public final class MainQueue {
      * 只从主队列里拿掉这个请求，不改阶段，也不动排队总数和名额。
      */
     public void remove(Request request) {
-        if (requests.remove(request)) {
-            size.decrementAndGet();
-        }
+        requests.remove(request);
     }
 
     /**
@@ -138,6 +124,6 @@ public final class MainQueue {
     }
 
     public int size() {
-        return size.get();
+        return requests.size();
     }
 }

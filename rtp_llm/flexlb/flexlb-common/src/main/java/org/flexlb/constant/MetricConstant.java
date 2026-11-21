@@ -667,6 +667,8 @@ public class MetricConstant {
     public static final String SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS = "schedule_v2.queue.blocked_attempt.qps";
     public static final String SCHEDULE_V2_QUEUE_REJECTED_QPS = "schedule_v2.queue.rejected.qps";
     public static final String SCHEDULE_V2_QUEUE_WAIT_MS = "schedule_v2.queue.wait_ms";
+    public static final String SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS =
+            "schedule_v2.request_prepare.submit_rejected.qps";
     public static final String SCHEDULE_V2_PREFILL_INFLIGHT = "schedule_v2.prefill.inflight";
     public static final String SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT = "schedule_v2.prefill.inflight_limit";
     public static final String SCHEDULE_V2_METRICS_REPORT_DROPPED = "schedule_v2.metrics_report.dropped";

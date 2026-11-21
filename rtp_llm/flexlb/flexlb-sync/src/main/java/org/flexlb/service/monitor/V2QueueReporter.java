@@ -39,6 +39,7 @@ import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_DEPTH;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_REJECTED_QPS;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_WAIT_MS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS;
 
 /**
  * V2 的实际等待人数与出队检查结果。人数按请求阶段采样，不把共享名额当作 Prefill 队列长度。
@@ -67,6 +68,7 @@ public class V2QueueReporter {
         monitor.register(SCHEDULE_V2_QUEUE_BLOCKED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(SCHEDULE_V2_QUEUE_REJECTED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
+        monitor.register(SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
     }
 
     public void blocked(Request request, Stage stage, QueueBlockReason reason, String endpoint) {
@@ -133,7 +135,17 @@ public class V2QueueReporter {
         String reason = rejectionReason(request, response, progress.stage());
         BalanceMetrics metrics = request.ctx().getMetrics();
         boolean succeeded = response != null && response.isSuccess();
-        asyncRequestMetrics.submit(() -> reportCompletion(progress, priority, reason, metrics, succeeded));
+        MetricInput input = new MetricInput(progress, priority, reason, metrics, succeeded,
+                metrics.getPrepareSubmitRejectedCount());
+        asyncRequestMetrics.submit(() -> reportCompletion(input));
+    }
+
+    private record MetricInput(QueueProgress progress,
+                               int priority,
+                               String rejectionReason,
+                               BalanceMetrics metrics,
+                               boolean succeeded,
+                               int prepareSubmitRejectedCount) {
     }
 
     private static String rejectionReason(Request request, Response response, Stage stage) {
@@ -153,12 +165,22 @@ public class V2QueueReporter {
         return stage == Stage.CANCELLED ? "REQUEST_CANCELLED" : "UNKNOWN";
     }
 
-    private void reportCompletion(QueueProgress progress,
-                                  int priority,
-                                  String reason,
-                                  BalanceMetrics metrics,
-                                  boolean succeeded) {
-        reportBlockCounts(metrics, priority);
+    private void reportCompletion(MetricInput input) {
+        reportQueueCompletion(input);
+        reportPrepareSubmitRejected(input);
+        if (input.succeeded()) {
+            PrefillRouteMetrics sample = input.metrics().getPrefillRouteMetrics();
+            if (sample != null) {
+                reportPrefillRouteMetrics(sample);
+            }
+        }
+    }
+
+    private void reportQueueCompletion(MetricInput input) {
+        QueueProgress progress = input.progress();
+        int priority = input.priority();
+        String reason = input.rejectionReason();
+        reportBlockCounts(input.metrics(), priority);
         if (reason != null) {
             report(SCHEDULE_V2_QUEUE_REJECTED_QPS, blockTags(queueName(progress.previousStage()), reason, priority), 1L);
         }
@@ -166,11 +188,13 @@ public class V2QueueReporter {
         report(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricTags.of("queue", "main", "result", result), progress.mainMs());
         report(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricTags.of("queue", "prefill", "result", result), progress.prefillMs());
         report(SCHEDULE_V2_QUEUE_WAIT_MS, FlexMetricTags.of("queue", "decode", "result", result), progress.decodeMs());
-        if (succeeded) {
-            PrefillRouteMetrics sample = metrics.getPrefillRouteMetrics();
-            if (sample != null) {
-                reportPrefillRouteMetrics(sample);
-            }
+    }
+
+    private void reportPrepareSubmitRejected(MetricInput input) {
+        if (input.prepareSubmitRejectedCount() > 0) {
+            report(SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS,
+                    FlexMetricTags.of("priority", String.valueOf(input.priority())),
+                    input.prepareSubmitRejectedCount());
         }
     }
 

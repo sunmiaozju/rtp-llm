@@ -2,12 +2,11 @@ package org.flexlb.balance.schedulev2.main;
 
 import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.schedulev2.LoopSignal;
-import org.flexlb.balance.schedulev2.ProcessWorkers;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
+import org.flexlb.balance.schedulev2.RequestPreparePool;
 import org.flexlb.balance.schedulev2.SelectionResult;
 import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
@@ -24,29 +23,27 @@ import org.flexlb.dao.route.RoleType;
 import org.flexlb.service.monitor.V2QueueReporter;
 import org.flexlb.util.Logger;
 
-import java.util.HashSet;
 import java.util.Iterator;
-import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
- * 多个 worker 并行准备缓存匹配和请求自身耗时，主队列调度线程用最新负载作最终选择。
+ * 准备池并行计算缓存匹配和请求自身耗时，主队列消费者用最新负载作最终选择。
  * 每处理一份材料，紧接着占子队列名额、抢占并交给 Prefill 队列，再处理下一份材料。
  * <p>
  * 名额上限 = min(maxQueuedRequests, Prefill 机器数 × maxInflightPerPrefillWorker × prefillSubqueueLimitMultiplier)，
  * 名额满时，高优先级请求尝试将选中 Prefill 队列里的低优先级请求退回主队列。名额保留到发布时才归还。
- * 某个 group 暂时没有可选的 Prefill 或拿不到名额时，这一轮跳过同 group 的请求，
- * 其他 group 的请求照常出队。
+ * 请求暂时没有可选的 Prefill 或拿不到名额时，留在主队列，继续检查后续请求。
  */
-public final class MainQueueLoop {
+final class MainQueueConsumer {
 
     /**
      * 没事可做时最多等这么久再扫一遍，兜底没有发出变化通知的情况。
      */
     static final long IDLE_WAIT_MS = 50L;
     /**
-     * 每一轮最多为这么多个请求选机器；直接跳过的请求不占次数，避免后面的 group 一直扫不到。
+     * 每轮最多检查这么多个仍在主队列等待的请求。
      */
     static final int MAX_SCAN_PER_ROUND = 256;
 
@@ -55,11 +52,10 @@ public final class MainQueueLoop {
     private final RequestCleanup cleanup;
     private final QueueCapacity queueCapacity;
     private final EndpointRegistry endpointRegistry;
-    private final PlacementAvailability placementAvailability;
     private final ConfigService configService;
     private final PrefillPicker prefillPicker;
     private final PrefillQueueRegistry prefillQueues;
-    private final ProcessWorkers<PrefillInputs> processWorkers;
+    private final RequestPreparePool requestPreparePool;
     private final V2QueueReporter queueReporter;
     /**
      * 这个部署里 Prefill 用的角色：PD 分离时是 PREFILL，PD 合一时是 PDFUSION。
@@ -69,66 +65,35 @@ public final class MainQueueLoop {
      * 选好 Prefill 后把请求交给 Prefill 队列，请求上已经带着选好的 {@link SelectedPrefill}。
      */
     private final Consumer<Request> sendToPrefillQueue;
-    /**
-     * Prefill 机器上下线或容量变化时唤醒循环，让等待中的请求马上重试。
-     */
-    private final PlacementAvailability.Listener prefillChangeListener = this::handleAvailabilityChanged;
-    private final AtomicBoolean running = new AtomicBoolean();
-    private final Thread thread;
 
-    public MainQueueLoop(MainQueue mainQueue,
-                         LoopSignal loopSignal,
-                         RequestCleanup cleanup,
-                         QueueCapacity queueCapacity,
-                         EndpointRegistry endpointRegistry,
-                         PlacementAvailability placementAvailability,
-                         ConfigService configService,
-                         PrefillPicker prefillPicker,
-                         PrefillQueueRegistry prefillQueues,
-                         RoleType prefillRole,
-                         Consumer<Request> sendToPrefillQueue,
-                         ProcessWorkers<PrefillInputs> processWorkers,
-                         V2QueueReporter queueReporter) {
+    MainQueueConsumer(MainQueue mainQueue,
+                      LoopSignal loopSignal,
+                      RequestCleanup cleanup,
+                      QueueCapacity queueCapacity,
+                      EndpointRegistry endpointRegistry,
+                      ConfigService configService,
+                      PrefillPicker prefillPicker,
+                      PrefillQueueRegistry prefillQueues,
+                      RoleType prefillRole,
+                      Consumer<Request> sendToPrefillQueue,
+                      RequestPreparePool requestPreparePool,
+                      V2QueueReporter queueReporter) {
         this.queueReporter = queueReporter;
         this.mainQueue = mainQueue;
         this.loopSignal = loopSignal;
         this.cleanup = cleanup;
         this.queueCapacity = queueCapacity;
         this.endpointRegistry = endpointRegistry;
-        this.placementAvailability = placementAvailability;
         this.configService = configService;
         this.prefillPicker = prefillPicker;
         this.prefillQueues = prefillQueues;
-        this.processWorkers = processWorkers;
+        this.requestPreparePool = requestPreparePool;
         this.prefillRole = prefillRole;
         this.sendToPrefillQueue = sendToPrefillQueue;
-        this.thread = new Thread(this::run, "flexlb-v2-main-queue");
-        this.thread.setDaemon(true);
     }
 
-    public void start() {
-        if (running.compareAndSet(false, true)) {
-            placementAvailability.addListener(prefillChangeListener);
-            thread.start();
-        }
-    }
-
-    public void close() {
-        processWorkers.close();
-        if (running.compareAndSet(true, false)) {
-            placementAvailability.removeListener(prefillChangeListener);
-            loopSignal.wake();
-        }
-    }
-
-    private void handleAvailabilityChanged(PlacementAvailability.Event event) {
-        if (event.key().role() == prefillRole) {
-            loopSignal.wake();
-        }
-    }
-
-    private void run() {
-        while (running.get()) {
+    void run(BooleanSupplier running) {
+        while (running.getAsBoolean()) {
             boolean moved;
             try {
                 moved = runOnce();
@@ -146,11 +111,10 @@ public final class MainQueueLoop {
      * 扫一轮主队列，返回这一轮有没有请求离开主队列。
      */
     boolean runOnce() {
+        if (endpointRegistry.getEndpointCount(prefillRole) == 0) {
+            return false;
+        }
         FlexlbConfig config = configService.loadBalanceConfig();
-        long cacheTtlMs = config.getDispatcher().getCacheMatchResultTtlMs();
-        processWorkers.removeExpired(cacheTtlMs);
-        boolean noPrefill = endpointRegistry.getEndpointCount(prefillRole) == 0;
-        Set<String> blockedGroups = new HashSet<>();
         boolean moved = false;
         int scanned = 0;
         Iterator<Request> iterator = mainQueue.iterator();
@@ -161,48 +125,39 @@ public final class MainQueueLoop {
                 continue;
             }
             String group = prefillPicker.groupOf(request.ctx());
-            if (blockedGroups.contains(group)) {
-                continue;
-            }
             scanned++;
-            if (noPrefill) {
-                queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.NO_AVAILABLE_PREFILL, "all");
-                blockedGroups.add(group);
+            CompletableFuture<SelectionResult<PrefillInputs>> estimateFuture = request.getWorkLoadEstimate();
+            SelectionResult<PrefillInputs> estimatedCompleted =
+                    estimateFuture == null ? null : estimateFuture.getNow(null);
+            // 已经在执行中，但是未完成
+            if (estimateFuture != null && estimatedCompleted == null) {
                 continue;
             }
-            SelectionResult<PrefillInputs> completed = processWorkers.get(request, cacheTtlMs);
-            if (completed == null) {
-                processWorkers.submit(request, () -> prefillPicker.prepare(request.ctx(), prefillRole, group));
-                completed = processWorkers.get(request, cacheTtlMs);
-            }
-            if (completed == null) {
+            // 未开始执行或结果已过期
+            if (estimatedCompleted == null
+                    || estimatedCompleted.expired(config.getDispatcher().getCacheMatchResultTtlMs())) {
+                request.setWorkLoadEstimate(null);
+                requestPreparePool.submit(request, () -> prefillPicker.prepare(request.ctx(), prefillRole, group));
                 continue;
             }
-            SelectionResult<PrefillInputs> result = completed;
             try {
                 if (request.stage() != Stage.MAIN_WAITING) {
                     continue;
                 }
-                if (result.failure() != null) {
+                if (estimatedCompleted.failure() != null) {
                     request.fail(StrategyErrorType.DISPATCH_FAILED,
-                            "prefill selection failed: " + result.failure().getMessage());
+                            "prefill selection failed: " + estimatedCompleted.failure().getMessage());
                     moved = true;
-                } else if (!prefillPicker.inputsAreCurrent(result.value(), prefillRole, group)) {
+                } else if (!prefillPicker.inputsAreCurrent(estimatedCompleted.value(), prefillRole, group)) {
                     queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.CANDIDATES_CHANGED, "all");
-                    processWorkers.discard(request);
-                } else if (pickPrefill(request, group, result.value(), config)) {
+                    request.setWorkLoadEstimate(null);
+                } else if (pickPrefill(request, group, estimatedCompleted.value(), config)) {
                     moved = true;
-                } else {
-                    blockedGroups.add(group);
                 }
             } catch (Throwable failure) {
                 request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill selection failed: " + failure.getMessage());
                 Logger.error("V2 prefill selection result failed", failure);
                 moved = true;
-            } finally {
-                if (request.stage() != Stage.MAIN_WAITING) {
-                    processWorkers.discard(request);
-                }
             }
         }
         return moved;

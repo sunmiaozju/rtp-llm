@@ -8,13 +8,13 @@ import org.flexlb.balance.scheduler.DefaultRouter;
 import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.RequestState;
+import org.flexlb.balance.scheduler.SchedulerErrorMessages;
 import org.flexlb.balance.schedulev2.decode.DecodeQueue;
 import org.flexlb.balance.schedulev2.decode.DecodeQueueConsumer;
 import org.flexlb.balance.schedulev2.decode.DecodeQueueConsumerPoll;
 import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.balance.schedulev2.main.MainQueue;
-import org.flexlb.balance.schedulev2.main.MainQueueLoop;
-import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
+import org.flexlb.balance.schedulev2.main.MainQueueConsumerPool;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueLoop;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.schedulev2.request.Request;
@@ -22,7 +22,6 @@ import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeSelector;
-import org.flexlb.balance.strategy.PrefillInputs;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.BalanceContext;
@@ -41,13 +40,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * NON_BATCH_V2 链路的入口，只处理 Generation 请求，Encoder 请求仍由 RequestScheduler 处理。
@@ -57,8 +53,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Lazy
 @Component
 public class RequestSchedulerV2 {
-
-    static final String SHUTTING_DOWN_MESSAGE = "request scheduler is shutting down";
 
     private final ConfigService configService;
     private final Set<RoleType> deployedRoles;
@@ -73,7 +67,7 @@ public class RequestSchedulerV2 {
     private final DecodeQueue decodeQueue;
     private final RequestCleanup cleanup;
     private final PrefillPublishCheck prefillCheck;
-    private final MainQueueLoop mainQueueLoop;
+    private final MainQueueConsumerPool mainQueueConsumerPool;
     private final DecodeQueueConsumerPoll decodeQueueConsumerPoll;
     private final ScheduledThreadPoolExecutor deadlineTimer;
     private final AtomicBoolean closed = new AtomicBoolean();
@@ -107,9 +101,9 @@ public class RequestSchedulerV2 {
         this.decodeQueue = new DecodeQueue(priorityOrdering);
         this.cleanup =
                 new RequestCleanup(requestTable, mainQueue, queueCapacity, mainLoopSignal, prefillQueues, decodeQueue);
-        this.mainQueueLoop = new MainQueueLoop(mainQueue, mainLoopSignal, cleanup, queueCapacity, endpointRegistry,
-                placementAvailability, configService, new PrefillPicker(router, prefillStrategy),
-                prefillQueues, prefillRole, this::sendToPrefillQueue, prefillWorkers(), queueReporter);
+        this.mainQueueConsumerPool = new MainQueueConsumerPool(mainQueue, mainLoopSignal, cleanup, queueCapacity,
+                endpointRegistry, placementAvailability, configService, router, prefillStrategy, prefillQueues,
+                prefillRole, queueReporter);
         Runnable capacityWake = decodeQueue::wake;
         this.decodeQueueConsumerPoll =
                 new DecodeQueueConsumerPoll(configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(),
@@ -128,14 +122,15 @@ public class RequestSchedulerV2 {
             return new PrefillQueueLoop(queue, prefillQueues, cleanup, mainQueue, endpointRegistry, configService,
                     this::sendToDecodeQueue, queueReporter);
         });
-        mainQueueLoop.start();
+        mainQueueConsumerPool.start();
         decodeQueueConsumerPoll.start();
     }
 
     public CompletableFuture<Response> submit(BalanceContext context) {
         if (closed.get()) {
             return CompletableFuture.completedFuture(
-                    Response.buildErrorResponse(StrategyErrorType.DISPATCH_FAILED, SHUTTING_DOWN_MESSAGE));
+                    Response.buildErrorResponse(StrategyErrorType.DISPATCH_FAILED,
+                            SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
         }
         if (prefillRole == null || !rolesAreDeployed(context)) {
             return CompletableFuture.completedFuture(
@@ -146,13 +141,13 @@ public class RequestSchedulerV2 {
             return CompletableFuture.completedFuture(Response.buildErrorResponse(
                     StrategyErrorType.queueRejectionFor(context.getPriority(),
                             context.getConfig().queueScheduler().getOrdering().getHighPriorityThreshold()),
-                    "request scheduling deadline has expired before placement"));
+                    SchedulerErrorMessages.DEADLINE_EXPIRED_BEFORE_PLACEMENT));
         }
         CompletableFuture<Response> future = new CompletableFuture<>();
         Request request = new Request(context, future, nowMs);
         if (!requestTable.add(request)) {
             return CompletableFuture.completedFuture(Response.buildErrorResponse(StrategyErrorType.INVALID_REQUEST,
-                    "duplicate request_id: " + context.getRequestId()));
+                    SchedulerErrorMessages.duplicateRequestId(context.getRequestId())));
         }
         context.setEnqueueTime(nowMs);
         context.setFuture(future);
@@ -165,16 +160,16 @@ public class RequestSchedulerV2 {
             request.setDeadlineTask(deadlineTimer.schedule(() -> request.cancel(CancelReason.DEADLINE_EXCEEDED),
                     delayMs, TimeUnit.MILLISECONDS));
         } catch (RejectedExecutionException closing) {
-            request.fail(StrategyErrorType.DISPATCH_FAILED, SHUTTING_DOWN_MESSAGE);
+            request.fail(StrategyErrorType.DISPATCH_FAILED, SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN);
             return future;
         }
         StrategyErrorType rejection = mainQueue.add(request, configService.loadBalanceConfig());
         if (rejection != null) {
-            request.fail(rejection, MainQueue.QUEUE_FULL_MESSAGE);
+            request.fail(rejection, SchedulerErrorMessages.QUEUE_FULL);
             return future;
         }
         if (closed.get()) {
-            request.fail(StrategyErrorType.DISPATCH_FAILED, SHUTTING_DOWN_MESSAGE);
+            request.fail(StrategyErrorType.DISPATCH_FAILED, SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN);
         }
         return future;
     }
@@ -185,25 +180,6 @@ public class RequestSchedulerV2 {
     private boolean rolesAreDeployed(BalanceContext context) {
         Set<RoleType> requested = context.getRequestedRoles();
         return requested == null || deployedRoles.containsAll(requested);
-    }
-
-    private void sendToPrefillQueue(Request request) {
-        prefillQueues.addWaiting(request);
-    }
-
-    /**
-     * 主队列使用线程池查询缓存和预测 Prefill 耗时，线程数沿用原主队列的启动配置。
-     */
-    private ProcessWorkers<PrefillInputs> prefillWorkers() {
-        int count = configService.loadBalanceConfig().getInternalRuntime().getQueuePlannerThreads();
-        AtomicInteger workerId = new AtomicInteger();
-        ExecutorService executor = Executors.newFixedThreadPool(count, task -> {
-            Thread thread = new Thread(task, "flexlb-v2-main-worker-" + workerId.incrementAndGet());
-            thread.setDaemon(true);
-            return thread;
-        });
-        return new ProcessWorkers<>(executor, count, mainLoopSignal,
-                configService.loadBalanceConfig().isPriorityOrdering());
     }
 
     /**
@@ -314,9 +290,9 @@ public class RequestSchedulerV2 {
         }
         // 1. 先结束请求并通知消费者，再停止线程，消费者退出前归还未发布的两端资源。
         for (Request request : requestTable.list()) {
-            request.fail(StrategyErrorType.DISPATCH_FAILED, SHUTTING_DOWN_MESSAGE);
+            request.fail(StrategyErrorType.DISPATCH_FAILED, SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN);
         }
-        mainQueueLoop.close();
+        mainQueueConsumerPool.close();
         prefillQueues.close();
         decodeQueueConsumerPoll.close();
         deadlineTimer.shutdownNow();

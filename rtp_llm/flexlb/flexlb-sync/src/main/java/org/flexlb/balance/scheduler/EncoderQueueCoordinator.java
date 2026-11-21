@@ -230,7 +230,7 @@ final class EncoderQueueCoordinator implements AutoCloseable {
         }
         for (GlobalQueueEntry entry : abandoned) {
             fail(entry, Response.buildErrorResponse(StrategyErrorType.DISPATCH_FAILED,
-                    "request scheduler is shutting down"));
+                    SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
         }
         if (Thread.currentThread() != decisionThread) {
             try {

@@ -39,7 +39,8 @@ public final class FlexlbConfigValidator {
         if (dispatcher.isObject()) {
             rejectFieldsExcept(dispatcher, "dispatcher", "type", "maxInflightPerPrefillWorker",
                     "maxInflightPerEncoderWorker", "fetchAttachTimeoutMs", "prefillSubqueueLimitMultiplier",
-                    "dispatchStarvationThresholdMs", "cacheMatchResultTtlMs", "decodeQueueThreads");
+                    "dispatchStarvationThresholdMs", "cacheMatchResultTtlMs", "decodeQueueThreads",
+                    "mainQueueConsumerThreads", "requestPrepareThreads");
         }
 
         JsonNode decodeCostEstimator = document.path("router").path("roles")
@@ -164,6 +165,7 @@ public final class FlexlbConfigValidator {
     private static void validateQueue(SchedulerConfig queue) {
         positive(queue.getQueueTimeoutMs(), "scheduler.queueTimeoutMs");
         positive(queue.getMaxQueuedRequests(), "scheduler.maxQueuedRequests");
+        positive(queue.getMainQueueMaxAddAttempts(), "scheduler.mainQueueMaxAddAttempts");
         require(Double.isFinite(queue.getScanBudgetMultiplier()) && queue.getScanBudgetMultiplier() >= 1.0,
                 "scheduler.scanBudgetMultiplier", "must be finite and at least 1.0");
         require(queue.getOrdering() != null, "scheduler.ordering", "is required for QUEUE");

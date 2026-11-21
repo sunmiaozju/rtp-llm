@@ -26,9 +26,15 @@ public final class BalanceMetrics {
 
     private final ConcurrentHashMap<QueueBlockMetricKey, BlockCounts> blockedCounts = new ConcurrentHashMap<>();
 
+    private int prepareSubmitRejectedCount;
+
     @Setter
     private volatile Long lastCacheMatchUs;
 
     @Setter
     private PrefillRouteMetrics prefillRouteMetrics;
+
+    public void recordPrepareSubmitRejected() {
+        prepareSubmitRejectedCount++;
+    }
 }

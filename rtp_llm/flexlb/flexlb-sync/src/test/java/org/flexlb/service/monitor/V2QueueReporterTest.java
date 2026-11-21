@@ -37,6 +37,7 @@ import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_BLOCKED_QPS;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_DEPTH;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_REJECTED_QPS;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_WAIT_MS;
+import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -214,6 +215,22 @@ class V2QueueReporterTest {
     }
 
     @Test
+    void reportsPrepareSubmitRejectionsOnceAtCompletionAndSkipsZero() throws Exception {
+        Request request = add("1");
+        request.ctx().getMetrics().recordPrepareSubmitRejected();
+        request.ctx().getMetrics().recordPrepareSubmitRejected();
+        verify(monitor, never()).report(eq(SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS), any(), anyDouble());
+
+        request.cancel(CancelReason.CLIENT_CANCELLED);
+        reporter.completed(request, request.future().join());
+        reportSuccessfulCompletion("2");
+        finishReports();
+
+        verify(monitor).report(SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS, FlexMetricTags.of("priority", "50"), 2.0);
+        verify(monitor).report(eq(SCHEDULE_V2_REQUEST_PREPARE_SUBMIT_REJECTED_QPS), any(), anyDouble());
+    }
+
+    @Test
     void blockedMetricsWorkerDoesNotBlockCompletionAndDropsAreVisible() throws Exception {
         var executor = (ThreadPoolExecutor) ReflectionTestUtils.getField(asyncRequestMetrics, "reportExecutor");
         int processors = Runtime.getRuntime().availableProcessors();
@@ -330,7 +347,7 @@ class V2QueueReporterTest {
                 registered++;
             }
         }
-        assertEquals(9, registered);
+        assertEquals(10, registered);
     }
 
     @Test

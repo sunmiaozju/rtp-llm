@@ -52,8 +52,6 @@ import static org.flexlb.dao.loadbalance.Response.buildErrorResponse;
 @Component
 public class RequestRegistry {
 
-    public static final String PREEMPTED_BY_HIGHER_PRIORITY_MESSAGE = "preempted by higher-priority request";
-
     private final RequestCompletionPublisher completionPublisher;
     private final RequestTerminalCleanup terminalCleanup;
 
@@ -323,7 +321,7 @@ public class RequestRegistry {
         if (shuttingDown.get()) {
             return CompletableFuture.completedFuture(buildErrorResponse(
                     StrategyErrorType.DISPATCH_FAILED,
-                    "request scheduler is shutting down"));
+                    SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
         }
 
         RequestSlot slot = null;
@@ -336,11 +334,11 @@ public class RequestRegistry {
                 if (phaseSlots.containsKey(context.getRequestId())) {
                     return CompletableFuture.completedFuture(buildErrorResponse(
                             StrategyErrorType.INVALID_REQUEST,
-                            "duplicate request_id: " + context.getRequestId()));
+                            SchedulerErrorMessages.duplicateRequestId(context.getRequestId())));
                 }
                 if (context.requestExpired(System.currentTimeMillis())) {
                     Response failure = buildErrorResponse(StrategyErrorType.RESOURCE_EXHAUSTED,
-                            "request scheduling deadline has expired before placement");
+                            SchedulerErrorMessages.DEADLINE_EXPIRED_BEFORE_PLACEMENT);
                     if (globalQueue != null && context.getRequestPhase() != RequestPhase.ENCODER) {
                         context.setSchedulingDiagnostics(globalQueue.waitDiagnostics());
                     }
@@ -349,7 +347,7 @@ public class RequestRegistry {
                 if (shuttingDown.get()) {
                     return CompletableFuture.completedFuture(buildErrorResponse(
                             StrategyErrorType.DISPATCH_FAILED,
-                            "request scheduler is shutting down"));
+                            SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
                 }
                 slot = new RequestSlot(completionPublisher, context, expirationTimer, terminalCleanup,
                         this::exitAdmissionHandleGate, globalQueue);
@@ -367,7 +365,7 @@ public class RequestRegistry {
                 completeError(
                         future,
                         StrategyErrorType.DISPATCH_FAILED,
-                        "request scheduler is shutting down");
+                        SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN);
                 return future;
             }
             if (context.requestExpired(System.currentTimeMillis())) {
@@ -515,7 +513,7 @@ public class RequestRegistry {
     }
 
     void onQueuedItemPreempted(ScheduledRequest victim, ScheduledRequest incoming) {
-        finishYielded(victim, PREEMPTED_BY_HIGHER_PRIORITY_MESSAGE + " " + incoming.requestId());
+        finishYielded(victim, SchedulerErrorMessages.preemptedByHigherPriority(incoming.requestId()));
         requestReporter.reportVictim(victim.priority(), incoming.priority(),
                 "prefill_queued", "prefill_inflight_requests");
         requestReporter.reportPriorityPreempt("prefill_queued");

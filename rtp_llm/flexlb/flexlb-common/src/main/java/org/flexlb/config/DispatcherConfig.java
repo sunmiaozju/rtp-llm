@@ -25,10 +25,9 @@ public final class DispatcherConfig {
     }
 
     private Type type = Type.BATCH;
-    /**
-     * Decode 队列消费者线程数，默认 JVM 当前可用的 CPU 核数，只在启动时读取，修改后需重启。
-     */
     private int decodeQueueThreads = Runtime.getRuntime().availableProcessors();
+    private int mainQueueConsumerThreads = Runtime.getRuntime().availableProcessors();
+    private int requestPrepareThreads = Runtime.getRuntime().availableProcessors();
     private int maxInflightPerPrefillWorker = DEFAULT_MAX_INFLIGHT_PER_PREFILL_WORKER;
     /** Shared waiting capacity = endpoint count * in-flight limit * this multiplier. */
     private int prefillSubqueueLimitMultiplier = DEFAULT_PREFILL_SUBQUEUE_LIMIT_MULTIPLIER;
@@ -67,6 +66,12 @@ public final class DispatcherConfig {
         }
         if (decodeQueueThreads <= 0) {
             throw new ConfigValidationException("dispatcher.decodeQueueThreads", "must be greater than zero");
+        }
+        if (mainQueueConsumerThreads <= 0) {
+            throw new ConfigValidationException("dispatcher.mainQueueConsumerThreads", "must be greater than zero");
+        }
+        if (requestPrepareThreads <= 0) {
+            throw new ConfigValidationException("dispatcher.requestPrepareThreads", "must be greater than zero");
         }
         if (maxInflightPerPrefillWorker <= 0) {
             throw new ConfigValidationException("dispatcher.maxInflightPerPrefillWorker",

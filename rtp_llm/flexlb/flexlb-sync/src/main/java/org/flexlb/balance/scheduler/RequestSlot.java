@@ -1400,7 +1400,7 @@ public final class RequestSlot {
     TerminalAction claimShutdownAction() {
         synchronized (this) {
             if (!currentGeneration || !canClaimLocalTerminalLocked()) { return null; }
-            String message = "request scheduler is shutting down";
+            String message = SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN;
             return claimTerminalActionLocked(null, TerminalOutcome.fail(message),
                     buildErrorResponse(StrategyErrorType.DISPATCH_FAILED, message), true);
         }

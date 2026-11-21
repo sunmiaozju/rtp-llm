@@ -40,6 +40,7 @@ import static org.mockito.Mockito.when;
 class RequestSchedulerV2Test {
 
     private final FlexlbConfig config = SchedulingTestConfig.newConfig();
+    private final ConfigService configService = mock(ConfigService.class);
     private final QueueCapacity queueCapacity = new QueueCapacity();
     private RequestSchedulerV2 scheduler;
 
@@ -78,6 +79,8 @@ class RequestSchedulerV2Test {
         Response rejected = scheduler.submit(context("2", 50, 60_000L)).join();
 
         assertEquals(StrategyErrorType.QUEUE_FULL.getErrorCode(), rejected.getCode());
+        assertEquals("Too many requests. Your requests are being throttled"
+                + " due to system capacity limits. Please try again later.", rejected.getErrorMessage());
         assertEquals(1, scheduler.trackedRequestCount());
     }
 
@@ -98,6 +101,38 @@ class RequestSchedulerV2Test {
         assertEquals(StrategyErrorType.QUEUE_FULL_LOW_PRIORITY_REJECTED.getErrorCode(), newer.join().getCode());
         assertFalse(high.isDone());
         assertEquals(2L, queueCapacity.globalQueueAndEngineSubQueueCount());
+    }
+
+    @Test
+    void nextSubmissionUsesUpdatedMainQueueAddAttempts() throws Exception {
+        SchedulingTestConfig.usePriorityQueue(config);
+        config.priorityOrdering().setHighPriorityThreshold(60);
+        config.queueScheduler().setMaxQueuedRequests(1);
+        config.queueScheduler().setMainQueueMaxAddAttempts(1);
+        scheduler = scheduler();
+        CompletableFuture<Response> low = scheduler.submit(context("low-before-update", 10, 60_000L));
+
+        Response rejected = scheduler.submit(context("high-before-update", 80, 60_000L)).get(5, TimeUnit.SECONDS);
+
+        assertEquals(StrategyErrorType.QUEUE_FULL_HIGH_PRIORITY_REJECTED.getErrorCode(), rejected.getCode());
+        assertEquals(StrategyErrorType.QUEUE_FULL_LOW_PRIORITY_REJECTED.getErrorCode(),
+                low.get(5, TimeUnit.SECONDS).getCode());
+        CompletableFuture<Response> nextLow = scheduler.submit(context("low-after-preemption", 10, 60_000L));
+        assertFalse(nextLow.isDone());
+
+        FlexlbConfig updated = SchedulingTestConfig.newConfig();
+        SchedulingTestConfig.usePriorityQueue(updated);
+        updated.priorityOrdering().setHighPriorityThreshold(60);
+        updated.queueScheduler().setMaxQueuedRequests(1);
+        updated.queueScheduler().setMainQueueMaxAddAttempts(2);
+        when(configService.loadBalanceConfig()).thenReturn(updated);
+
+        CompletableFuture<Response> high = scheduler.submit(context("high-after-update", 80, 60_000L));
+
+        assertEquals(StrategyErrorType.QUEUE_FULL_LOW_PRIORITY_REJECTED.getErrorCode(),
+                nextLow.get(5, TimeUnit.SECONDS).getCode());
+        assertFalse(high.isDone());
+        assertEquals(1L, queueCapacity.globalQueueAndEngineSubQueueCount());
     }
 
     @Test
@@ -136,6 +171,7 @@ class RequestSchedulerV2Test {
         Response response = scheduler.submit(context("1", 50, -1L)).join();
 
         assertEquals(StrategyErrorType.QUEUE_FULL_HIGH_PRIORITY_REJECTED.getErrorCode(), response.getCode());
+        assertEquals("request scheduling deadline has expired before placement", response.getErrorMessage());
         assertEquals(0, scheduler.trackedRequestCount());
     }
 
@@ -160,7 +196,7 @@ class RequestSchedulerV2Test {
         Response rejected = scheduler.submit(context("2", 50, 60_000L)).join();
 
         assertEquals(StrategyErrorType.DISPATCH_FAILED.getErrorCode(), waiting.join().getCode());
-        assertEquals(RequestSchedulerV2.SHUTTING_DOWN_MESSAGE, rejected.getErrorMessage());
+        assertEquals("request scheduler is shutting down", rejected.getErrorMessage());
         assertEquals(0L, queueCapacity.globalQueueAndEngineSubQueueCount());
     }
 
@@ -168,15 +204,18 @@ class RequestSchedulerV2Test {
      * Prefill 机器数为 0，主队列名额上限也是 0，请求会一直留在主队列。
      */
     private RequestSchedulerV2 scheduler() {
-        ConfigService configService = mock(ConfigService.class);
+        config.getDispatcher().setMainQueueConsumerThreads(1);
         when(configService.loadBalanceConfig()).thenReturn(config);
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
         when(modelMetaConfig.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
-        return new RequestSchedulerV2(configService, queueCapacity, mock(EndpointRegistry.class),
-                new PlacementAvailability(), mock(DefaultRouter.class), mock(CostBasedPrefillStrategy.class),
-                mock(DecodeSelector.class), new PrefillQueueRegistry(), modelMetaConfig,
-                mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class), new DecodeReservations(),
-                mock(V2QueueReporter.class));
+        EndpointRegistry endpointRegistry = mock(EndpointRegistry.class);
+        PlacementAvailability placementAvailability = new PlacementAvailability();
+        PrefillQueueRegistry prefillQueues = new PrefillQueueRegistry();
+        V2QueueReporter queueReporter = mock(V2QueueReporter.class);
+        return new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, placementAvailability,
+                mock(DefaultRouter.class), mock(CostBasedPrefillStrategy.class), mock(DecodeSelector.class),
+                prefillQueues, modelMetaConfig, mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class),
+                new DecodeReservations(), queueReporter);
     }
 
     private BalanceContext context(String requestId, int priority, long expiresInMs) {

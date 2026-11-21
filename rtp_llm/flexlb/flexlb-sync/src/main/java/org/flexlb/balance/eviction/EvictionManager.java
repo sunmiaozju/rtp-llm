@@ -7,6 +7,7 @@ import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.scheduler.RequestSlot.AdmissionHandle;
 import org.flexlb.balance.scheduler.RouteAdmission;
 import org.flexlb.balance.scheduler.ScheduledRequest;
+import org.flexlb.balance.scheduler.SchedulerErrorMessages;
 import org.flexlb.balance.scheduler.decode.DecodeMode;
 import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.config.EngineCancellationConfig;
@@ -369,7 +370,7 @@ public class EvictionManager {
                                        DecodeEndpoint decodeEp,
                                        DecodeRequirement request,
                                        RouteAdmission admission) {
-        String detail = RequestRegistry.PREEMPTED_BY_HIGHER_PRIORITY_MESSAGE + " " + ctx.getRequestId();
+        String detail = SchedulerErrorMessages.preemptedByHigherPriority(ctx.getRequestId());
         boolean returnInstructions = preemption.getEngineCancellation().getMode()
                 == EngineCancellationConfig.Mode.RETURN;
         DecodePreemptionCoordinator.PreemptionCommand command =

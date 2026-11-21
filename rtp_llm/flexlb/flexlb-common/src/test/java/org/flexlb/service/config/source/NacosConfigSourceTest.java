@@ -314,6 +314,31 @@ class NacosConfigSourceTest {
     }
 
     @Test
+    void hotUpdatesMainQueueAddAttemptsAndKeepsLastValidConfig() throws Exception {
+        com.alibaba.nacos.api.config.ConfigService client = mock(com.alibaba.nacos.api.config.ConfigService.class);
+        when(client.getConfig("flexlb-test", "FLEXLB_GROUP", 3000L)).thenReturn("{\"schemaVersion\":3}");
+        NacosConfigSource source = createSource(client, "test-namespace");
+        source.initialize();
+        ConfigService configService = new ConfigService(List.of(
+                new StandardConfigDocumentParser(), new V0ConfigDocumentParser()));
+        try {
+            assertThat(configService.loadBalanceConfig().queueScheduler().getMainQueueMaxAddAttempts()).isEqualTo(3);
+
+            ArgumentCaptor<Listener> listener = ArgumentCaptor.forClass(Listener.class);
+            verify(client).addListener(
+                    org.mockito.ArgumentMatchers.eq("flexlb-test"),
+                    org.mockito.ArgumentMatchers.eq("FLEXLB_GROUP"), listener.capture());
+            listener.getValue().receiveConfigInfo("{\"schemaVersion\":3,\"scheduler\":{\"mainQueueMaxAddAttempts\":1}}");
+            assertThat(configService.loadBalanceConfig().queueScheduler().getMainQueueMaxAddAttempts()).isEqualTo(1);
+
+            listener.getValue().receiveConfigInfo("{\"schemaVersion\":3,\"scheduler\":{\"mainQueueMaxAddAttempts\":0}}");
+            assertThat(configService.loadBalanceConfig().queueScheduler().getMainQueueMaxAddAttempts()).isEqualTo(1);
+        } finally {
+            configService.close();
+        }
+    }
+
+    @Test
     void shutsDownClientWhenRemovingListenerFails() throws Exception {
         com.alibaba.nacos.api.config.ConfigService client =
                 mock(com.alibaba.nacos.api.config.ConfigService.class);

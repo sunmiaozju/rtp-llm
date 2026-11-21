@@ -31,6 +31,36 @@ class ConfigServiceTest {
     }
 
     @Test
+    void mainQueueConsumerThreadsDefaultsToAvailableProcessorsAndAllowsOverride() {
+        assertEquals(Runtime.getRuntime().availableProcessors(),
+                ConfigTestFixtures.parse("{}").getDispatcher().getMainQueueConsumerThreads());
+        for (int count : new int[]{1, 24}) {
+            DispatcherConfig dispatcher = ConfigTestFixtures.parse("""
+                    {"dispatcher":{"mainQueueConsumerThreads":%d,"requestPrepareThreads":8}}
+                    """.formatted(count)).getDispatcher();
+            assertEquals(count, dispatcher.getMainQueueConsumerThreads());
+            assertEquals(8, dispatcher.getRequestPrepareThreads());
+        }
+        for (String count : new String[]{"0", "-1", "1.5", "\"2\"", "null"}) {
+            assertThrows(ConfigValidationException.class, () -> ConfigTestFixtures.parse("""
+                    {"dispatcher":{"mainQueueConsumerThreads":%s}}
+                    """.formatted(count)), count);
+        }
+    }
+
+    @Test
+    void requestPrepareThreadsDefaultsToAvailableProcessorsAndAllowsOverride() {
+        assertEquals(Runtime.getRuntime().availableProcessors(),
+                ConfigTestFixtures.parse("{}").getDispatcher().getRequestPrepareThreads());
+        assertEquals(8, ConfigTestFixtures.parse("""
+                {"dispatcher":{"requestPrepareThreads":8}}
+                """).getDispatcher().getRequestPrepareThreads());
+        assertThrows(ConfigValidationException.class, () -> ConfigTestFixtures.parse("""
+                {"dispatcher":{"requestPrepareThreads":0}}
+                """));
+    }
+
+    @Test
     void configuresCacheHitFeedbackTimeoutWithDefault() {
         var defaults = JsonUtils.strictValueToTree(ConfigTestFixtures.parse("{}"));
         assertEquals(60_000L, defaults.at("/observability/cacheHit/feedbackTimeoutMs").longValue());

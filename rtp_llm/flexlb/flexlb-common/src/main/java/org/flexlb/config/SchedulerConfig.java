@@ -21,6 +21,10 @@ public final class SchedulerConfig {
      * Maximum Generation requests waiting for or undergoing global placement.
      */
     private int maxQueuedRequests = 100_000;
+    /**
+     * Maximum attempts to add a request to the NON_BATCH_V2 main queue, including the first attempt.
+     */
+    private int mainQueueMaxAddAttempts = 3;
     /** Maximum queue entries examined per candidate requested by the planner. */
     private double scanBudgetMultiplier = 2.0;
     private QueueOrderingConfig ordering = new QueueOrderingConfig();

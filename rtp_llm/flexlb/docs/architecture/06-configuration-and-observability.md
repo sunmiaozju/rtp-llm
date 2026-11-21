@@ -79,10 +79,6 @@ UniConfig 和 Nacos 的内容直接使用同一种配置 JSON，不增加包装�
 当前模式。部分更新中已知但不同的模式值会被忽略，同一对象中的数值参数仍继续合并；未知模式值
 仍会校验失败并保留当前快照。切换模式需要重启 Master，并在启动文档中配置完整的目标分支。
 其余业务组件每次读取快照的参数可以热生效；在 Bean 初始化时缓存的值，则在重启后生效。
-
-`dispatcher.decodeQueueThreads` 控制 `NON_BATCH_V2` 的 Decode 消费线程数，默认
-`Runtime.getRuntime().availableProcessors()`
-
 当前 `NON_BATCH_V2` Decode 消费模型按单一流量 group 使用，不提供跨 group 的消费者隔离或公平调度保证。
 
 `router.roles.decode.availability.maxEngineRequests` 和 `maxKvUsagePercent` 随配置快照更新。
@@ -205,6 +201,9 @@ UniConfig / Nacos 的 v3 部分更新示例：
 ```json
 {
   "schemaVersion": 3,
+  "scheduler": {
+    "mainQueueMaxAddAttempts": 4
+  },
   "router": {
     "availabilityHysteresisPercent": 12
   },
@@ -222,6 +221,9 @@ UniConfig / Nacos 的 v3 部分更新示例：
 公共 schema 当前为 version 3，按责任分区：
 
 - `scheduler`：`type` 取 `QUEUE`（配置 `DIRECT` 时校验失败）；QUEUE 拥有 ordering、capacity 和 lifecycle。
+  `mainQueueMaxAddAttempts` 控制 `NON_BATCH_V2` 主队列一次入队的总尝试次数（含首次），默认 `3`，
+  必须是正整数。最后一次申请名额失败后仍可抢占；发起抢占的请求不再重试，释放的名额可由其他请求使用。
+  热更新后，新发起的入队操作使用新值，已开始的入队操作沿用原值。
 - `dispatcher`：`BATCH` / `NON_BATCH`。可用
   `maxInflightPerEncoderWorker` 限制每台 Encoder 的在途请求数；未配置时不设额外上限，
   不影响未配置 Encoder 的模型。

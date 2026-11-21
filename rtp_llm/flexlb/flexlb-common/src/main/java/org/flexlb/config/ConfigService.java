@@ -221,6 +221,14 @@ public class ConfigService {
                 }
                 currentFlexlbConfig.set(updated);
                 configSchemaVersion = normalized.sourceSchemaVersion();
+                int previousThreads = previous.getDispatcher().getRequestPrepareThreads();
+                int updatedThreads = updated.getDispatcher().getRequestPrepareThreads();
+                if (previousThreads != updatedThreads) {
+                    log.warn(
+                            "dispatcher.requestPrepareThreads changed from {} to {}; "
+                                    + "the running thread pool is not resized. Restart Master to apply.",
+                            previousThreads, updatedThreads);
+                }
                 notifyUpdateListeners(updated);
                 logEffectiveConfig(updated, configSchemaVersion);
                 log.info("Applied FlexLB configuration update from {} source", source.name());
@@ -237,7 +245,7 @@ public class ConfigService {
      * merge validation runs.
      *
      * <p>These modes select threads and strategy beans at startup, so a
-     * type or Decode consumer count update cannot take effect safely. Other numeric fields are left in
+     * type or consumer count update cannot take effect safely. Other numeric fields are left in
      * the document and continue through the regular hot-update path. Fields
      * belonging only to a requested-but-inactive fixed-window mode are removed
      * with its type rather than rejected as a whole update.
@@ -267,6 +275,16 @@ public class ConfigService {
                 log.warn(
                         "Ignored runtime update to startup-fixed dispatcher.decodeQueueThreads: requested={}, active={}",
                         threads.intValue(), startupDecisionTopology.decodeQueueThreads());
+            }
+            JsonNode mainQueueThreads = dispatcher.get("mainQueueConsumerThreads");
+            if (mainQueueThreads != null && mainQueueThreads.isIntegralNumber() && mainQueueThreads.canConvertToInt()
+                    && mainQueueThreads.intValue() > 0
+                    && mainQueueThreads.intValue() != startupDecisionTopology.mainQueueConsumerThreads()) {
+                dispatcher.remove("mainQueueConsumerThreads");
+                changed = true;
+                log.warn("Ignored runtime update to startup-fixed {}: requested={}, active={}",
+                        "dispatcher.mainQueueConsumerThreads", mainQueueThreads.intValue(),
+                        startupDecisionTopology.mainQueueConsumerThreads());
             }
         }
         return changed ? JsonUtils.toStrictString(document) : content;
@@ -317,7 +335,8 @@ public class ConfigService {
 
     private record StartupDecisionTopology(DispatcherConfig.Type dispatcherType,
                                            DecisionPolicyConfig.Type decisionType,
-                                           int decodeQueueThreads) {
+                                           int decodeQueueThreads,
+                                           int mainQueueConsumerThreads) {
 
         /**
          * Captures the scheduling modes selected when the application starts.
@@ -325,7 +344,8 @@ public class ConfigService {
         private static StartupDecisionTopology from(FlexlbConfig config) {
             SchedulerConfig scheduler = config.getScheduler();
             return new StartupDecisionTopology(config.getDispatcher().getType(), scheduler.getDecision().getType(),
-                    config.getDispatcher().getDecodeQueueThreads());
+                    config.getDispatcher().getDecodeQueueThreads(),
+                    config.getDispatcher().getMainQueueConsumerThreads());
         }
     }
 

@@ -118,7 +118,7 @@ public final class RequestScheduler {
         try {
             if (!encoderQueue.offer(context, future)) {
                 future.complete(error(StrategyErrorType.DISPATCH_FAILED,
-                        "request scheduler is shutting down"));
+                        SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
             }
         } catch (RuntimeException failure) {
             future.complete(error(StrategyErrorType.DISPATCH_FAILED,
@@ -131,14 +131,15 @@ public final class RequestScheduler {
             switch (globalQueue.offer(context, future, context.getPriority())) {
                 case ENQUEUED, COMPLETED -> { }
                 case QUEUE_FULL -> future.complete(error(StrategyErrorType.QUEUE_FULL,
-                        GlobalQueueCoordinator.QUEUE_FULL_REJECTION_MESSAGE));
+                        SchedulerErrorMessages.QUEUE_FULL));
                 case QUEUE_FULL_HIGH_PRIORITY_REJECTED -> future.complete(error(
                         StrategyErrorType.QUEUE_FULL_HIGH_PRIORITY_REJECTED,
-                        GlobalQueueCoordinator.QUEUE_FULL_REJECTION_MESSAGE));
+                        SchedulerErrorMessages.QUEUE_FULL));
                 case QUEUE_FULL_LOW_PRIORITY_REJECTED -> future.complete(error(
                         StrategyErrorType.QUEUE_FULL_LOW_PRIORITY_REJECTED,
-                        GlobalQueueCoordinator.QUEUE_FULL_REJECTION_MESSAGE));
-                case CLOSED -> future.complete(error(StrategyErrorType.DISPATCH_FAILED, "request scheduler is shutting down"));
+                        SchedulerErrorMessages.QUEUE_FULL));
+                case CLOSED -> future.complete(error(StrategyErrorType.DISPATCH_FAILED,
+                        SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
             }
         } catch (Throwable failure) {
             future.complete(error(StrategyErrorType.DISPATCH_FAILED,

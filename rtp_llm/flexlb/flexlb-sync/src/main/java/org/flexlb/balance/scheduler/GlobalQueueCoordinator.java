@@ -52,8 +52,6 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 final class GlobalQueueCoordinator implements AutoCloseable {
 
-    static final String QUEUE_FULL_REJECTION_MESSAGE = "Too many requests. Your requests are being throttled due to system capacity limits. Please try again later.";
-
     private static final int MIN_PLANNER_THREADS = 1;
 
     enum OfferResult {
@@ -196,7 +194,7 @@ final class GlobalQueueCoordinator implements AutoCloseable {
         if (victim != null) {
             completeDecisionResponse(victim, error(
                     StrategyErrorType.queueRejectionFor(victim.priority, highPriorityThreshold),
-                    QUEUE_FULL_REJECTION_MESSAGE));
+                    SchedulerErrorMessages.QUEUE_FULL));
         }
         return OfferResult.ENQUEUED;
     }
@@ -693,7 +691,7 @@ final class GlobalQueueCoordinator implements AutoCloseable {
             queueCapacity.decreaseTotalQueueCount(entry.future);
             completeDecisionResponse(entry, error(
                     StrategyErrorType.DISPATCH_FAILED,
-                    "request scheduler is shutting down"));
+                    SchedulerErrorMessages.SCHEDULER_SHUTTING_DOWN));
         }
     }
 

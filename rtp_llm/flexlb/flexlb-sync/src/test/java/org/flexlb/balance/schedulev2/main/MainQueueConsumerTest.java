@@ -5,16 +5,17 @@ import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.scheduler.CancelReason;
-import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
 import org.flexlb.balance.schedulev2.DirectExecutorService;
 import org.flexlb.balance.schedulev2.LoopSignal;
-import org.flexlb.balance.schedulev2.ProcessWorkers;
 import org.flexlb.balance.schedulev2.RequestCleanup;
+import org.flexlb.balance.schedulev2.RequestPreparePool;
+import org.flexlb.balance.schedulev2.SelectionResult;
 import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.balance.schedulev2.decode.DecodeQueue;
 import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
+import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestTable;
@@ -37,7 +38,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,12 +51,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-class MainQueueLoopTest {
+class MainQueueConsumerTest {
 
     private final FlexlbConfig config = SchedulingTestConfig.newConfig();
     private final ConfigService configService = mock(ConfigService.class);
@@ -70,9 +75,9 @@ class MainQueueLoopTest {
     private final PrefillInputs inputs =
             new PrefillInputs(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC), List.of());
     private final List<Request> sent = new ArrayList<>();
-    private final MainQueueLoop loop;
+    private final MainQueueConsumer loop;
 
-    MainQueueLoopTest() {
+    MainQueueConsumerTest() {
         config.getDispatcher().setType(org.flexlb.config.DispatcherConfig.Type.NON_BATCH_V2);
         when(configService.loadBalanceConfig()).thenReturn(config);
         when(picker.prepare(any(), any(), any())).thenReturn(inputs);
@@ -82,11 +87,15 @@ class MainQueueLoopTest {
         cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, loopSignal, prefillQueues,
                 new DecodeQueue(false));
         when(endpointRegistry.getEndpointCount(RoleType.PREFILL)).thenReturn(1);
-        loop = new MainQueueLoop(mainQueue, loopSignal, cleanup, queueCapacity, endpointRegistry,
-                new PlacementAvailability(), configService, picker, prefillQueues, RoleType.PREFILL, request -> {
+        loop = createConsumer(new RequestPreparePool(new DirectExecutorService(), loopSignal));
+    }
+
+    private MainQueueConsumer createConsumer(RequestPreparePool workers) {
+        return new MainQueueConsumer(mainQueue, loopSignal, cleanup, queueCapacity, endpointRegistry, configService,
+                picker, prefillQueues, RoleType.PREFILL, request -> {
                     prefillQueues.addWaiting(request);
                     sent.add(request);
-                }, new ProcessWorkers<>(new DirectExecutorService(), 2, loopSignal, true), reporter);
+                }, workers, reporter);
     }
 
     @Test
@@ -96,6 +105,7 @@ class MainQueueLoopTest {
         WorkerEndpoint.EndpointHold hold = selected.takeEndpointHold();
         when(picker.pick(request, RoleType.PREFILL, "g", inputs)).thenReturn(PlacementResult.success(selected));
 
+        assertFalse(loop.runOnce());
         assertTrue(loop.runOnce());
 
         assertEquals(List.of(request), sent);
@@ -110,7 +120,7 @@ class MainQueueLoopTest {
     }
 
     @Test
-    void requestWaitsWhenQueueSlotsAreFull() {
+    void noPrefillNodesLeaveRequestsQueuedWithoutPreparingOrReporting() {
         when(endpointRegistry.getEndpointCount(RoleType.PREFILL)).thenReturn(0);
         Request request = add("1", "g");
 
@@ -118,22 +128,24 @@ class MainQueueLoopTest {
 
         assertEquals(Stage.MAIN_WAITING, request.stage());
         assertEquals(1, mainQueue.size());
+        assertNull(request.getWorkLoadEstimate());
+        verifyNoInteractions(picker, reporter);
     }
 
     @Test
-    void blockedGroupDoesNotStopOtherGroups() {
-        Request blocked = add("1", "a");
-        Request other = add("2", "b");
-        Request sameGroup = add("3", "a");
-        when(picker.pick(blocked, RoleType.PREFILL, "a", inputs)).thenReturn(PlacementResult.blocked(RoleType.PREFILL));
+    void blockedRequestDoesNotStopAnotherRequestInTheSameGroup() {
+        Request blocked = add("1", "g");
+        Request next = add("2", "g");
+        when(picker.pick(blocked, RoleType.PREFILL, "g", inputs)).thenReturn(PlacementResult.blocked(RoleType.PREFILL));
         SelectedRole selected = V2TestSupport.selected(endpoint, 0L, 10L);
-        when(picker.pick(other, RoleType.PREFILL, "b", inputs)).thenReturn(PlacementResult.success(selected));
+        when(picker.pick(next, RoleType.PREFILL, "g", inputs)).thenReturn(PlacementResult.success(selected));
 
+        assertFalse(loop.runOnce());
         assertTrue(loop.runOnce());
 
-        assertEquals(List.of(other), sent);
+        assertEquals(List.of(next), sent);
         assertEquals(Stage.MAIN_WAITING, blocked.stage());
-        assertEquals(Stage.MAIN_WAITING, sameGroup.stage());
+        assertEquals(Stage.PREFILL_WAITING, next.stage());
         assertNull(blocked.takeQueueSlot());
         assertEquals(1, queueCapacity.engineSubQueueWaiting(RoleType.PREFILL));
     }
@@ -144,6 +156,7 @@ class MainQueueLoopTest {
         Response failure = Response.buildErrorResponse(StrategyErrorType.INVALID_REQUEST, "bad request");
         when(picker.pick(request, RoleType.PREFILL, "g", inputs)).thenReturn(PlacementResult.rejected(failure));
 
+        assertFalse(loop.runOnce());
         assertTrue(loop.runOnce());
 
         assertSame(failure, request.future().join());
@@ -161,6 +174,7 @@ class MainQueueLoopTest {
             return PlacementResult.success(selected);
         });
 
+        assertFalse(loop.runOnce());
         loop.runOnce();
 
         verify(selected).close();
@@ -187,20 +201,21 @@ class MainQueueLoopTest {
     }
 
     @Test
-    void skippedRequestsDoNotHideAnotherGroupBeyondScanLimit() {
+    void blockedRequestsStillCountAgainstTheScanLimit() {
         config.getScheduler().setMaxQueuedRequests(1_000);
-        Request first = add("1", "a");
-        when(picker.pick(first, RoleType.PREFILL, "a", inputs)).thenReturn(PlacementResult.blocked(RoleType.PREFILL));
-        for (int i = 2; i <= 300; i++) {
-            add(Integer.toString(i), "a");
+        for (int i = 1; i <= MainQueueConsumer.MAX_SCAN_PER_ROUND; i++) {
+            add(Integer.toString(i), "g");
         }
-        Request other = add("301", "b");
-        doAnswer(call -> PlacementResult.success(V2TestSupport.selected(endpoint, 0L, 10L))).when(picker)
-                .pick(other, RoleType.PREFILL, "b", inputs);
+        Request beyondLimit = add(Integer.toString(MainQueueConsumer.MAX_SCAN_PER_ROUND + 1), "g");
+        when(picker.pick(any(), eq(RoleType.PREFILL), eq("g"), eq(inputs)))
+                .thenReturn(PlacementResult.blocked(RoleType.PREFILL));
 
-        assertTrue(loop.runOnce());
+        assertFalse(loop.runOnce());
+        assertFalse(loop.runOnce());
 
-        assertEquals(List.of(other), sent);
+        verify(picker, times(MainQueueConsumer.MAX_SCAN_PER_ROUND)).pick(any(), eq(RoleType.PREFILL), eq("g"),
+                eq(inputs));
+        assertNull(beyondLimit.getWorkLoadEstimate());
     }
 
     @Test
@@ -231,7 +246,8 @@ class MainQueueLoopTest {
                 .pick(any(), any(), any(), any());
         Request older = add("1", "g", 10);
         Request newer = add("2", "g", 10);
-        loop.runOnce();
+        assertFalse(loop.runOnce());
+        assertTrue(loop.runOnce());
         Request high = add("3", "g", 80);
 
         assertFalse(loop.runOnce());
@@ -256,7 +272,8 @@ class MainQueueLoopTest {
         Request low = add("1", "g", 10);
         doAnswer(call -> PlacementResult.success(V2TestSupport.selected(endpoint, 0L, 10L))).when(picker)
                 .pick(low, RoleType.PREFILL, "g", inputs);
-        loop.runOnce();
+        assertFalse(loop.runOnce());
+        assertTrue(loop.runOnce());
         Request high = add("2", "g", 80);
         PrefillEndpoint other = V2TestSupport.prefillEndpoint("p2:8000");
         doAnswer(call -> PlacementResult.success(V2TestSupport.selected(other, 0L, 10L))).when(picker)
@@ -285,12 +302,27 @@ class MainQueueLoopTest {
             return 0;
         }).when(endpointRegistry).getEndpointCount(RoleType.PREFILL);
 
-        loop.start();
+        AtomicBoolean running = new AtomicBoolean(true);
+        Thread consumerThread = newConsumerThread(loop, running);
+        consumerThread.start();
         try {
             assertTrue(nextRound.await(5, TimeUnit.SECONDS));
         } finally {
-            loop.close();
+            stopConsumer(consumerThread, running);
         }
+    }
+
+    private static Thread newConsumerThread(MainQueueConsumer consumer, AtomicBoolean running) {
+        Thread thread = new Thread(() -> consumer.run(running::get), "test-main-queue-consumer");
+        thread.setDaemon(true);
+        return thread;
+    }
+
+    private void stopConsumer(Thread thread, AtomicBoolean running) throws InterruptedException {
+        running.set(false);
+        loopSignal.wake();
+        thread.join(5_000L);
+        assertFalse(thread.isAlive());
     }
 
     @Test
@@ -308,31 +340,36 @@ class MainQueueLoopTest {
             }
             return inputs;
         }).when(picker).prepare(any(), any(), any());
-        AtomicInteger decisions = new AtomicInteger();
-        doAnswer(call -> {
-            assertEquals("flexlb-v2-main-queue", Thread.currentThread().getName());
-            int waiting = prefillQueues.find(endpoint) == null ? 0 : prefillQueues.find(endpoint).waitingCount();
-            assertEquals(decisions.getAndIncrement(), waiting);
-            return PlacementResult.success(V2TestSupport.selected(endpoint, 0L, 10L));
-        }).when(picker).pick(any(), any(), any(), any());
         ExecutorService executor = Executors.newFixedThreadPool(2);
-        MainQueueLoop parallelLoop = new MainQueueLoop(mainQueue, loopSignal, cleanup, queueCapacity, endpointRegistry,
-                new PlacementAvailability(), configService, picker, prefillQueues, RoleType.PREFILL, request -> {
-                    prefillQueues.addWaiting(request);
-                    (request == first ? firstSent : secondSent).complete(request);
-                }, new ProcessWorkers<>(executor, 2, loopSignal, true), mock(V2QueueReporter.class));
-        parallelLoop.start();
-        try {
-            assertTrue(bothStarted.await(5, TimeUnit.SECONDS));
-            assertSame(second, secondSent.get(5, TimeUnit.SECONDS));
-            assertEquals(Stage.MAIN_WAITING, first.stage());
-            finishFirst.countDown();
-            assertSame(first, firstSent.get(5, TimeUnit.SECONDS));
-        } finally {
-            finishFirst.countDown();
-            parallelLoop.close();
-            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
+        try (RequestPreparePool workers = new RequestPreparePool(executor, loopSignal)) {
+            MainQueueConsumer consumer = new MainQueueConsumer(mainQueue, loopSignal, cleanup, queueCapacity,
+                    endpointRegistry, configService, picker, prefillQueues, RoleType.PREFILL, request -> {
+                        prefillQueues.addWaiting(request);
+                        (request == first ? firstSent : secondSent).complete(request);
+                    }, workers, reporter);
+            AtomicBoolean running = new AtomicBoolean(true);
+            Thread consumerThread = newConsumerThread(consumer, running);
+            AtomicInteger decisions = new AtomicInteger();
+            doAnswer(call -> {
+                assertSame(consumerThread, Thread.currentThread());
+                PrefillQueue queue = prefillQueues.find(endpoint);
+                assertEquals(decisions.getAndIncrement(), queue == null ? 0 : queue.waitingCount());
+                return PlacementResult.success(V2TestSupport.selected(endpoint, 0L, 10L));
+            }).when(picker).pick(any(), any(), any(), any());
+
+            consumerThread.start();
+            try {
+                assertTrue(bothStarted.await(5, TimeUnit.SECONDS));
+                assertSame(second, secondSent.get(5, TimeUnit.SECONDS));
+                assertEquals(Stage.MAIN_WAITING, first.stage());
+                finishFirst.countDown();
+                assertSame(first, firstSent.get(5, TimeUnit.SECONDS));
+            } finally {
+                finishFirst.countDown();
+                stopConsumer(consumerThread, running);
+            }
         }
+        assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS));
     }
 
     @Test
@@ -356,14 +393,56 @@ class MainQueueLoopTest {
     }
 
     @Test
-    void changedTtlExpiresExistingMaterialsAndCandidateChangesInvalidateThem() throws Exception {
+    void rejectedPreparationDoesNotSkipLaterSubmissionsOrReadyRequests() {
+        Request first = add("1", "g");
+        Request second = add("2", "g");
+        Request ready = add("3", "g");
+        ready.setWorkLoadEstimate(
+                CompletableFuture.completedFuture(new SelectionResult<>(inputs, null, System.nanoTime())));
+        SelectedRole selected = V2TestSupport.selected(endpoint, 0L, 10L);
+        when(picker.pick(ready, RoleType.PREFILL, "g", inputs)).thenReturn(PlacementResult.success(selected));
+        ExecutorService executor = mock(ExecutorService.class);
+        doThrow(new RejectedExecutionException()).when(executor).execute(any());
+        try (RequestPreparePool workers = new RequestPreparePool(executor, loopSignal)) {
+            MainQueueConsumer consumer = createConsumer(workers);
+            assertTrue(consumer.runOnce());
+            verify(executor, times(2)).execute(any());
+            assertEquals(1, first.ctx().getMetrics().getPrepareSubmitRejectedCount());
+            assertEquals(1, second.ctx().getMetrics().getPrepareSubmitRejectedCount());
+            assertEquals(2, mainQueue.size());
+            assertEquals(List.of(ready), sent);
+        }
+    }
+
+    @Test
+    void returnedRequestReusesItsEstimateIfItIsStillValid() {
+        Request request = add("1", "g");
+        doAnswer(call -> PlacementResult.success(V2TestSupport.selected(endpoint, 0L, 10L))).when(picker)
+                .pick(request, RoleType.PREFILL, "g", inputs);
+        assertFalse(loop.runOnce());
+        var estimate = request.getWorkLoadEstimate();
+        assertTrue(loop.runOnce());
+
+        cleanup.returnToMain(request, Stage.PREFILL_WAITING);
+        assertEquals(Stage.MAIN_WAITING, request.stage());
+        assertSame(estimate, request.getWorkLoadEstimate());
+        assertTrue(loop.runOnce());
+
+        assertEquals(List.of(request, request), sent);
+        verify(picker).prepare(request.ctx(), RoleType.PREFILL, "g");
+        verify(picker, times(2)).inputsAreCurrent(inputs, RoleType.PREFILL, "g");
+    }
+
+    @Test
+    void changedTtlExpiresExistingMaterialsAndCandidateChangesInvalidateThem() {
         Request request = add("1", "g");
         when(picker.pick(request, RoleType.PREFILL, "g", inputs)).thenReturn(PlacementResult.blocked(RoleType.PREFILL));
         loop.runOnce();
         loop.runOnce();
         verify(picker).prepare(request.ctx(), RoleType.PREFILL, "g");
 
-        Thread.sleep(25L);
+        request.setWorkLoadEstimate(CompletableFuture.completedFuture(
+                new SelectionResult<>(inputs, null, System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(25L))));
         config.getDispatcher().setCacheMatchResultTtlMs(10L);
         loop.runOnce();
         verify(picker, times(2)).prepare(request.ctx(), RoleType.PREFILL, "g");
@@ -371,6 +450,7 @@ class MainQueueLoopTest {
         config.getDispatcher().setCacheMatchResultTtlMs(30_000L);
         when(picker.inputsAreCurrent(any(), any(), any())).thenReturn(false);
         loop.runOnce();
+        assertNull(request.getWorkLoadEstimate());
         when(picker.inputsAreCurrent(any(), any(), any())).thenReturn(true);
         loop.runOnce();
         verify(picker, times(3)).prepare(request.ctx(), RoleType.PREFILL, "g");

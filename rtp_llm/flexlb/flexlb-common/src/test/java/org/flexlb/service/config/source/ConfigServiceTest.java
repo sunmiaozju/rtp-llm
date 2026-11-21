@@ -455,6 +455,39 @@ class ConfigServiceTest {
     }
 
     @Test
+    void runtimeUpdateKeepsStartupMainQueueConsumerThreadsWhileUpdatingOtherFields() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH_V2","mainQueueConsumerThreads":1}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+
+        source.emit("""
+                {"schemaVersion":3,"dispatcher":{"mainQueueConsumerThreads":24,"maxInflightPerPrefillWorker":9}}
+                """);
+
+        FlexlbConfig previous = service.loadBalanceConfig();
+        assertThat(previous.getDispatcher().getMainQueueConsumerThreads()).isEqualTo(1);
+        assertThat(previous.getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"mainQueueConsumerThreads\":0}}");
+        assertThat(service.loadBalanceConfig()).isSameAs(previous);
+    }
+
+    @Test
+    void runtimeUpdateStoresNewRequestPrepareThreadsInConfigSnapshot() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH_V2","requestPrepareThreads":8}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        assertThat(service.loadBalanceConfig().getDispatcher().getRequestPrepareThreads()).isEqualTo(8);
+
+        source.emit("""
+                {"schemaVersion":3,"dispatcher":{"requestPrepareThreads":3,"maxInflightPerPrefillWorker":9}}
+                """);
+        assertThat(service.loadBalanceConfig().getDispatcher().getRequestPrepareThreads()).isEqualTo(3);
+        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
+    }
+
+    @Test
     void runtimeUpdateChangesDispatchStarvationThreshold() {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},

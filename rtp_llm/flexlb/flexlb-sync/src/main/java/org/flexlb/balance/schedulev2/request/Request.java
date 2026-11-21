@@ -1,8 +1,12 @@
 package org.flexlb.balance.schedulev2.request;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.balance.scheduler.DeliveryClaimKind;
 import org.flexlb.balance.scheduler.RequestState;
+import org.flexlb.balance.schedulev2.SelectionResult;
+import org.flexlb.balance.strategy.PrefillInputs;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -45,6 +49,12 @@ public final class Request {
      * 到期后把请求按超时取消的定时任务，请求结束时取消。
      */
     private volatile ScheduledFuture<?> deadlineTask;
+    /**
+     * 主队列为本请求准备的候选节点耗时，不含节点当前排队时间。短时退回主队列时可复用。
+     */
+    @Getter
+    @Setter
+    private CompletableFuture<SelectionResult<PrefillInputs>> workLoadEstimate;
     /**
      * 主队列给它选的 Prefill。进入 PREFILL_WAITING 前设置；这台 Prefill 下线、请求退回主队列时清空。
      */
