@@ -1,9 +1,7 @@
 package org.flexlb.mock.grpc;
 
 import org.flexlb.config.FlexlbConfig;
-import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.mock.FlexLBMockTestBase;
 import org.flexlb.mock.MockPrefillWorker;
@@ -11,16 +9,11 @@ import org.flexlb.mock.MockWorkerBehavior;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.reset;
-import static org.mockito.Mockito.when;
 
 /**
  * Multiple workers: start two mock prefill workers and verify that requests
@@ -69,16 +62,6 @@ class MultipleWorkersTest extends FlexLBMockTestBase {
         workerBHttpPort = workerB.getHttpPort();
         workerBIpPort = workerIpPort(workerB);
 
-        // 2. Reconfigure DefaultRouter to alternate between worker A and B
-        AtomicInteger routeCounter = new AtomicInteger(0);
-        reset(router);
-        when(router.select(any(BalanceContext.class), any())).thenAnswer(inv -> {
-            BalanceContext ctx = inv.getArgument(0);
-            boolean useB = routeCounter.getAndIncrement() % 2 == 1;
-            return admittedRoute(
-                    ctx, buildRouteResponse(ctx.getRequestId(), useB));
-        });
-
         // 3. Submit 4 requests — should alternate A, B, A, B
         long[] requestIds = {40001, 40002, 40003, 40004};
         CompletableFuture<Response>[] futures = new CompletableFuture[requestIds.length];
@@ -106,43 +89,4 @@ class MultipleWorkersTest extends FlexLBMockTestBase {
 
     // ==================== Helper: build routing response ====================
 
-    /**
-     * Build a routing response that points to either worker A or worker B
-     * for the prefill role, and always to the shared decode worker.
-     */
-    private Response buildRouteResponse(String requestId, boolean useWorkerB) {
-        Response response = new Response();
-        response.setSuccess(true);
-
-        // Prefill: worker A or B
-        ServerStatus prefill = new ServerStatus();
-        prefill.setSuccess(true);
-        prefill.setRole(RoleType.PREFILL);
-        if (useWorkerB) {
-            prefill.setServerIp("127.0.0.1");
-            prefill.setHttpPort(workerBHttpPort);
-            prefill.setGrpcPort(workerBGrpcPort);
-        } else {
-            prefill.setServerIp(prefillIp);
-            prefill.setHttpPort(prefillHttpPort);
-            prefill.setGrpcPort(prefillGrpcPort);
-        }
-        prefill.setDpRank(0);
-        prefill.setGroup("test-group");
-        prefill.setRequestId(requestId);
-
-        // Decode: shared decode worker (always worker A's decode)
-        ServerStatus decode = new ServerStatus();
-        decode.setSuccess(true);
-        decode.setRole(RoleType.DECODE);
-        decode.setServerIp(decodeIp);
-        decode.setHttpPort(decodeHttpPort);
-        decode.setGrpcPort(decodeGrpcPort);
-        decode.setDpRank(0);
-        decode.setGroup("test-group");
-        decode.setRequestId(requestId);
-
-        response.setServerStatus(List.of(prefill, decode));
-        return response;
-    }
 }

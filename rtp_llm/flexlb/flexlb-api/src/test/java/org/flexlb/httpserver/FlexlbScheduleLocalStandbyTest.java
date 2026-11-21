@@ -10,7 +10,6 @@ import org.flexlb.cache.match.localstandby.LocalStandbyCacheMatchProvider;
 import org.flexlb.cache.telemetry.CacheMetricsReporter;
 import org.flexlb.config.CacheMatchConfiguration;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.LocalStandbyConfig;
 import org.flexlb.consistency.LBStatusConsistencyService;
@@ -124,7 +123,7 @@ class FlexlbScheduleLocalStandbyTest {
     private FlexlbServiceImpl service(RouteService router, CacheAwareService cache) {
         ConfigService config = mock(ConfigService.class);
         FlexlbConfig routingConfig = new FlexlbConfig();
-        routingConfig.setDispatcher(DispatcherConfig.nonBatch());
+        routingConfig.setDispatcher(new org.flexlb.config.DispatcherConfig());
         when(config.loadBalanceConfig()).thenReturn(routingConfig);
         return new FlexlbServiceImpl(router, mock(LBStatusConsistencyService.class),
                 mock(EngineHealthReporter.class), mock(FlexlbGrpcForwarder.class), config,

@@ -1,10 +1,7 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.delivery.DeliveryStrategy;
-import org.flexlb.balance.estimate.PrefillTtftEstimator;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
@@ -128,10 +125,7 @@ public class EndpointRegistry {
     private final EndpointEventHandler endpointEvents;
     private final BatchSchedulerReporter reporter;
     private final RequestSchedulerReporter requestReporter;
-    private final DeliveryStrategy deliveryStrategy;
-    private final PrefillTtftEstimator ttftEstimator;
     private final PlacementAvailability placementAvailability;
-    private final QueueCapacity queueCapacity;
     private final PrefillQueueRegistry prefillQueueRegistry;
     private final Object lifecycleGate = new Object();
     private RegistryPhase registryPhase = RegistryPhase.OPEN;
@@ -162,19 +156,13 @@ public class EndpointRegistry {
     public EndpointRegistry(ConfigService configService,
                             EndpointEventHandler endpointEvents,
                             BatchSchedulerReporter reporter,
-                            DeliveryStrategy deliveryStrategy,
-                            PrefillTtftEstimator ttftEstimator,
                             PlacementAvailability placementAvailability,
-                            QueueCapacity queueCapacity,
                             PrefillQueueRegistry prefillQueueRegistry,
                             RequestSchedulerReporter requestReporter) {
         this.configService = configService;
         this.endpointEvents = endpointEvents;
         this.reporter = reporter;
-        this.deliveryStrategy = deliveryStrategy;
-        this.ttftEstimator = ttftEstimator;
         this.placementAvailability = placementAvailability;
-        this.queueCapacity = queueCapacity;
         this.prefillQueueRegistry = prefillQueueRegistry;
         this.requestReporter = requestReporter;
     }
@@ -347,7 +335,6 @@ public class EndpointRegistry {
                         status, observation);
                 publication = new EndpointPublication(
                         candidate, statusNotifier);
-                startCandidate(candidate);
                 status.publishPreparedStatus(prepared);
             } catch (Throwable reductionOrCommitFailure) {
                 closeCandidate(candidate, reductionOrCommitFailure);
@@ -560,12 +547,6 @@ public class EndpointRegistry {
         }
     }
 
-    private static void startCandidate(WorkerEndpoint candidate) {
-        if (candidate instanceof PrefillEndpoint prefill) {
-            prefill.startGeneration();
-        }
-    }
-
     private static void addSuppressedNoFail(
             Throwable primary,
             Throwable leaf) {
@@ -699,8 +680,7 @@ public class EndpointRegistry {
         return switch (role) {
             case PREFILL,
                     PDFUSION ->
-                new PrefillEndpoint(status, configService::loadBalanceConfig, deliveryStrategy, ttftEstimator,
-                        endpointEvents, reporter, placementAvailability, this, queueCapacity, prefillQueueRegistry,
+                new PrefillEndpoint(status, configService::loadBalanceConfig, endpointEvents, prefillQueueRegistry,
                         requestReporter);
             case DECODE -> new DecodeEndpoint(
                     status, endpointEvents, placementAvailability);
@@ -903,19 +883,13 @@ public class EndpointRegistry {
     }
 
     /**
-     * Trigger TTL eviction on all prefill and decode endpoints.
+     * Trigger TTL eviction of unobserved Decode reservations.
      *
      * @param ttlMs max age before eviction
      * @param retainForSchedulerCleanup current directory lookup, called under endpoint locks;
      *                                  must not acquire request locks or use a historical snapshot
      */
     public void evictExpiredOrphans(long ttlMs, Predicate<String> retainForSchedulerCleanup) {
-        getEndpointsByRole(RoleType.PREFILL).forEach((endpoint, worker) -> {
-            PrefillEndpoint ep = (PrefillEndpoint) worker;
-            logEndpointEviction(RoleType.PREFILL, endpoint,
-                    ep.evictExpiredInflight(
-                            ttlMs, retainForSchedulerCleanup), ttlMs);
-        });
         getEndpointsByRole(RoleType.DECODE).forEach((endpoint, worker) -> {
             DecodeEndpoint ep = (DecodeEndpoint) worker;
             logEndpointEviction(RoleType.DECODE, endpoint,

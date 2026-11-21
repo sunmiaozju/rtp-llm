@@ -2,29 +2,16 @@ package org.flexlb.mockengine;
 
 import com.google.protobuf.ByteString;
 import io.grpc.stub.StreamObserver;
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.eviction.EngineCancelChannel;
 import org.flexlb.balance.preemption.CancelTarget;
 import org.flexlb.balance.scheduler.DefaultRouter;
-import org.flexlb.balance.scheduler.PlacementKey;
 import org.flexlb.balance.scheduler.RequestScheduler;
 import org.flexlb.balance.scheduler.RequestSchedulerTestRuntime;
-import org.flexlb.balance.scheduler.RouteAdmission;
-import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
-import org.flexlb.balance.strategy.DecodeSelector;
-import org.flexlb.balance.strategy.EncoderStrategy;
-import org.flexlb.balance.strategy.RandomStrategy;
-import org.flexlb.cache.domain.CacheMatchResult;
-import org.flexlb.cache.domain.CacheMatchSource;
-import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DecisionPolicyConfig;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
-import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.QueueOrderingConfig;
 import org.flexlb.config.VictimStage;
@@ -39,9 +26,7 @@ import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.engine.grpc.client.EngineGrpcClient;
 import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
-import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
-import org.flexlb.sync.status.WorkerDirectory;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -61,7 +46,6 @@ import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 import static org.flexlb.mockengine.MockEngineTestSupport.unary;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -86,11 +70,9 @@ import static org.mockito.Mockito.when;
 final class AutoTpmE2EHarness implements AutoCloseable {
 
     final FlexlbConfig config;
-    final DecisionPolicyConfig fixedWindowDecision;
     final ConfigService configService = mock(ConfigService.class);
     private final java.util.concurrent.atomic.AtomicReference<Throwable> pumpFailure =
             new java.util.concurrent.atomic.AtomicReference<>();
-    final DefaultRouter router = mock(DefaultRouter.class);
     final EngineGrpcClient grpcClient = mock(EngineGrpcClient.class);
     final BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
     final RequestSchedulerReporter requestReporter = mock(RequestSchedulerReporter.class);
@@ -119,55 +101,8 @@ final class AutoTpmE2EHarness implements AutoCloseable {
     private final Path tempDir;
 
     AutoTpmE2EHarness(int basePort, int nPrefill, int nDecode,
-                      String prefillFormulaMs, double decodeStepMs,
-                      boolean realCancelChannel) {
-        this(basePort, nPrefill, nDecode, prefillFormulaMs, decodeStepMs,
-                realCancelChannel, true, defaultFixedWindowDecision(), false);
-    }
-
-    AutoTpmE2EHarness(int basePort, int nPrefill, int nDecode,
-                      String prefillFormulaMs, double decodeStepMs,
-                      boolean realCancelChannel, DecisionPolicyConfig decisionPolicy) {
-        this(basePort, nPrefill, nDecode, prefillFormulaMs, decodeStepMs,
-                realCancelChannel, true, decisionPolicy, false);
-    }
-
-    /**
-     * @param autoTpm must be decided at construction time: {@code PrefillQueue}
-     *                freezes its queue comparator from the configured ordering
-     *                when the endpoint is registered — flipping the switch after
-     *                construction does NOT change the batch queue ordering.
-     */
-    AutoTpmE2EHarness(int basePort, int nPrefill, int nDecode,
-                      String prefillFormulaMs, double decodeStepMs,
-                      boolean realCancelChannel, boolean autoTpm) {
-        this(basePort, nPrefill, nDecode, prefillFormulaMs, decodeStepMs,
-                realCancelChannel, autoTpm, defaultFixedWindowDecision(), false);
-    }
-
-    AutoTpmE2EHarness(int basePort, int nPrefill, int nDecode,
-                      String prefillFormulaMs, double decodeStepMs,
-                      boolean realCancelChannel, boolean autoTpm,
-                      DecisionPolicyConfig decisionPolicy,
-                      boolean productionRouting) {
-        this(basePort, nPrefill, nDecode, prefillFormulaMs, decodeStepMs, realCancelChannel,
-                autoTpm, decisionPolicy, productionRouting, null);
-    }
-
-    AutoTpmE2EHarness(int basePort,
-                      int nPrefill,
-                      int nDecode,
-                      String prefillFormulaMs,
-                      double decodeStepMs,
-                      boolean realCancelChannel,
-                      boolean autoTpm,
-                      DecisionPolicyConfig decisionPolicy,
-                      boolean productionRouting,
-                      FlexlbConfig initialConfig) {
-        this.config = initialConfig == null ? new FlexlbConfig() : initialConfig;
-        this.fixedWindowDecision = decisionPolicy.getType()
-                == DecisionPolicyConfig.Type.FIXED_WINDOW
-                ? decisionPolicy : null;
+                      String prefillFormulaMs, double decodeStepMs, boolean realCancelChannel) {
+        this.config = new FlexlbConfig();
         try {
             tempDir = Files.createTempDirectory("auto-tpm-e2e");
         } catch (IOException e) {
@@ -202,30 +137,20 @@ final class AutoTpmE2EHarness implements AutoCloseable {
 
         // Conservative defaults; scenarios override before submitting traffic.
         // Priority ordering must be set BEFORE registerEndpoint (PrefillQueue freezes it).
-        if (initialConfig == null) {
-            if (autoTpm) {
-                config.queueScheduler().setOrdering(QueueOrderingConfig.priority());
-            }
-            config.setDispatcher(DispatcherConfig.nonBatch());
-            config.queueScheduler().setDecision(decisionPolicy);
-        }
-        // the default fixed_window algorithm reads fixedWaitMs (not windowMs):
-        // hold dispatch by default so scenarios can assert stable queue state
+        config.queueScheduler().setOrdering(QueueOrderingConfig.priority());
+        config.getDispatcher().setMainQueueConsumerThreads(2);
+        config.getDispatcher().setDecodeQueueThreads(2);
+        config.getDispatcher().setMaxInflightPerPrefillWorker(64);
         config.getRequestLifecycle().getRequest().setTimeoutMs(3_600_000L);
         config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(3_600_000L);
         config.getRequestLifecycle().getDecision().setLifetime(2.0);
         when(configService.loadBalanceConfig()).thenReturn(config);
 
-        when(router.select(any(BalanceContext.class), any()))
-                .thenAnswer(inv -> routeResult(inv.getArgument(0)));
-        EngineCancelChannel cancelChannel = realCancelChannel
-                ? new MockEngineCancelChannel(services)
-                : new UnsupportedCancelStub();
         schedulerRuntime = new RequestSchedulerTestRuntime(
                 configService,
                 reporter,
                 requestReporter,
-                cancelChannel);
+                context -> httpPort(prefillEngines.get(prefillSelector.apply(context)).getGrpcPort()));
         endpointRegistry = schedulerRuntime.endpointRegistry();
         scheduler = schedulerRuntime.scheduler();
 
@@ -235,37 +160,19 @@ final class AutoTpmE2EHarness implements AutoCloseable {
         for (JavaMockEngineCluster.FastRpcService svc : decodeEngines) {
             registerEndpoint(RoleType.DECODE, svc);
         }
-        schedulerRuntime.bindRouter(
-                productionRouting ? productionRouter() : router);
     }
 
     // ==================== endpoint / route wiring ====================
 
-    DecisionPolicyConfig fixedWindowDecision() {
-        if (fixedWindowDecision == null) {
-            throw new IllegalStateException("FIXED_WINDOW decision is not active");
-        }
-        return fixedWindowDecision;
-    }
-
-    private static DecisionPolicyConfig defaultFixedWindowDecision() {
-        DecisionPolicyConfig decision = new DecisionPolicyConfig();
-        decision.setMaxRequests(100);
-        decision.setMaxCollectionWaitMs(10_000);
-        return decision;
-    }
-
     private void registerEndpoint(RoleType role, JavaMockEngineCluster.FastRpcService svc) {
         int grpcPort = svc.getGrpcPort();
-        int httpPort = httpPort(grpcPort);
         WorkerStatus ws = publishEndpoint(role, svc);
-        String ipPort = "127.0.0.1:" + httpPort;
         statusByPort.put(grpcPort, ws);
-        ipPortByEnginePort.put(grpcPort, ipPort);
+        ipPortByEnginePort.put(grpcPort, ws.getLogicalIpPort());
     }
 
     private static int httpPort(int grpcPort) {
-        return grpcPort + 2000;
+        return grpcPort - org.flexlb.constant.CommonConstants.GRPC_PORT_OFFSET;
     }
 
     private WorkerStatus publishEndpoint(RoleType role, JavaMockEngineCluster.FastRpcService svc) {
@@ -317,11 +224,6 @@ final class AutoTpmE2EHarness implements AutoCloseable {
         config.priorityOrdering().setPreemption(preemption);
     }
 
-    CompletableFuture<Response> preemptDecodeAndGenerate(BalanceContext context, int decodeIndex) {
-        return schedulerRuntime.preemptDecode(context, decodeEndpoint(decodeIndex))
-                .thenApply(response -> generate(context, response));
-    }
-
     private ServerStatus prefillServer(int index, String requestId) {
         int grpcPort = prefillEngines.get(index).getGrpcPort();
         return server(
@@ -350,29 +252,6 @@ final class AutoTpmE2EHarness implements AutoCloseable {
                 prefill,
                 decodeServer(0, ctx.getRequestId())));
         return response;
-    }
-
-    private PlacementResult<RouteAdmission, PlacementKey> routeResult(BalanceContext context) {
-        return schedulerRuntime.routeResult(context, defaultRoute(context));
-    }
-
-    private DefaultRouter productionRouter() {
-        WorkerDirectory workers = new WorkerDirectory(endpointRegistry);
-        CacheAwareService cache = mock(CacheAwareService.class);
-        when(cache.findMatchingEngines(any()))
-                .thenReturn(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC));
-        EngineHealthReporter healthReporter = mock(EngineHealthReporter.class);
-        ModelMetaConfig modelMeta = mock(ModelMetaConfig.class);
-        when(modelMeta.requiredRoles()).thenReturn(
-                List.of(RoleType.DECODE, RoleType.PREFILL));
-        return new DefaultRouter(
-                new CostBasedPrefillStrategy(
-                        workers, cache, healthReporter),
-                new DecodeSelector(workers),
-                new RandomStrategy(workers),
-                mock(EncoderStrategy.class),
-                configService,
-                modelMeta);
     }
 
     private static ServerStatus server(

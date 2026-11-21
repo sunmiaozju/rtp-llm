@@ -46,8 +46,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * NON_BATCH_V2 链路的入口，只处理 Generation 请求，Encoder 请求仍由 RequestScheduler 处理。
- * <p>
- * 只有 dispatcher.type 是 NON_BATCH_V2 时，RequestScheduler 才会创建它。
  */
 @Lazy
 @Component

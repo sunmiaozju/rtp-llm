@@ -14,13 +14,10 @@
         ],
         "timeoutMs": 1000
       }
-    },
-    "decision": {
-      "type": "SINGLE"
     }
   },
   "dispatcher": {
-    "type": "NON_BATCH",
+    "type": "NON_BATCH_V2",
     "maxInflightPerPrefillWorker": 2
   },
   "router": {

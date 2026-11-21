@@ -1,35 +1,22 @@
 package org.flexlb.balance.strategy;
 
-import org.flexlb.balance.delivery.BlockedRequest;
-import org.flexlb.balance.delivery.DeliveryBlockReason;
-import org.flexlb.balance.delivery.DeliveryGroup;
-import org.flexlb.balance.delivery.DeliveryMetrics;
-import org.flexlb.balance.delivery.DeliveryStrategy;
-import org.flexlb.balance.delivery.DeliveryTransaction;
-import org.flexlb.balance.delivery.NonBatchDeliveryStrategy;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.estimate.NonBatchTtftEstimator;
-import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.RequestRegistry;
-import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
-import org.flexlb.enums.PrefillQueueEnqueueResult;
 import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
+import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.mockito.Mockito;
 
-import java.util.List;
 import java.util.Map;
 
 /** Package-local fixtures built only from the frozen endpoint-facing ports. */
@@ -46,12 +33,12 @@ final class StrategyTestSupport {
     }
 
     static EndpointRegistry endpointRegistry(ConfigService configService) {
-        TestRequestRuntime runtime = new TestRequestRuntime();
-        DeliveryStrategy delivery = parkedDelivery(runtime.requests());
-        return new EndpointRegistry(configService, runtime.events(), Mockito.mock(BatchSchedulerReporter.class),
-                delivery, new NonBatchTtftEstimator(), new PlacementAvailability(), new QueueCapacity(),
-                new PrefillQueueRegistry(),
-                org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
+        var queues = new PrefillQueueRegistry();
+        var reporter = Mockito.mock(RequestSchedulerReporter.class);
+        var events = new EndpointEventHandler(Mockito.mock(RequestRegistry.class), queues, configService,
+                new org.flexlb.balance.schedulev2.decode.DecodeReservations(), reporter);
+        return new EndpointRegistry(configService, events, Mockito.mock(BatchSchedulerReporter.class),
+                new PlacementAvailability(), queues, reporter);
     }
 
     static WorkerStatus workerStatus(RoleType role,
@@ -129,12 +116,6 @@ final class StrategyTestSupport {
         }
     }
 
-    static boolean offer(PrefillEndpoint endpoint, ScheduledRequest exactItem) {
-        try (WorkerEndpoint.EndpointHold hold = endpoint.tryHold()) {
-            return hold != null && endpoint.offerHeldResult(hold, exactItem) == PrefillQueueEnqueueResult.ACCEPTED;
-        }
-    }
-
     static void setCacheStatus(WorkerStatus status, long blockSize, long availableKv) {
         WorkerStatusPB.Builder response = response(status.getRole(), status.pollHealth().reportedAlive(),
                 status.getAvailableKvCacheTokens(), status.getTotalKvCacheTokens(),
@@ -143,60 +124,4 @@ final class StrategyTestSupport {
         publish(status, response);
     }
 
-    private static final class TestRequestRuntime {
-        private final RequestRegistry requests =
-                Mockito.mock(RequestRegistry.class);
-        private final EndpointEventHandler events = org.flexlb.balance.endpoint.EndpointTestSupport.noopEventSink();
-
-        RequestRegistry requests() {
-            return requests;
-        }
-
-        EndpointEventHandler events() {
-            return events;
-        }
-    }
-
-    /** Keep selection-owned queues parked without replacing admission internals. */
-    private static DeliveryStrategy parkedDelivery(RequestRegistry requests) {
-        NonBatchDeliveryStrategy route = new NonBatchDeliveryStrategy(
-                requests, NOOP_METRICS);
-        DeliveryStrategy delivery = Mockito.mock(DeliveryStrategy.class);
-        Mockito.when(delivery.prepare(
-                        Mockito.any()))
-                .thenAnswer(invocation -> {
-                    List<ScheduledRequest> candidates = ((DeliveryGroup) invocation.getArgument(0)).requests();
-            DeliveryTransaction transaction = Mockito.mock(DeliveryTransaction.class);
-            Mockito.when(transaction.requests()).thenReturn(List.of());
-                    Mockito.when(transaction.blocked())
-                            .thenReturn(new BlockedRequest(candidates.getFirst(), PARKED_BOUNDARY));
-                    return transaction;
-                });
-        return delivery;
-    }
-
-    private static final DeliveryBlockReason PARKED_BOUNDARY =
-            DeliveryBlockReason.unavailable(
-                    new DeliveryBlockReason.Availability() {
-                        @Override
-                        public boolean isAvailable() {
-                            return false;
-                        }
-
-                        @Override
-                        public void addListener(Runnable listener) {
-                        }
-
-                        @Override
-                        public void removeListener(Runnable listener) {
-                        }
-                    },
-                    new PrefillTtftEstimate.AdmissionBlockSemantics(
-                            "test delivery parked",
-                            PrefillTtftEstimate.AfterProbeAdmission.BLOCKED,
-                            "test delivery parked",
-                            RoleType.PREFILL));
-
-    private static final DeliveryMetrics NOOP_METRICS =
-            Mockito.mock(DeliveryMetrics.class);
 }

@@ -48,7 +48,7 @@ flexlb-sync 内部包结构（`org.flexlb`）：
 ```
 balance/
 ├── scheduler/      DefaultRouter / PriorityScheduler / Dispatcher
-├── queue/          WorkerBatcher
+├── schedulev2/     Generation 主队列、Prefill 队列和 Decode 队列
 ├── endpoint/       EndpointRegistry / PrefillEndpoint / DecodeEndpoint / 本地预留账本
 ├── strategy/       LoadBalanceStrategy + Prefill / Decode / Random 策略
 └── resource/       PrefillResourceMeasure / DecodeResourceMeasure / ResourceMeasureFactory
@@ -74,23 +74,16 @@ gRPC FlexlbService.Schedule (FlexlbGrpcServer, HTTP 端口 + 100)
     ↓ 若启用一致性且本机非 master → 转发给 master（master 不可达则降级本地路由）
     ↓ 校验客户端提供的 block_cache_keys 与 cache_key_block_size
 RouteService.route()
-    └─ scheduler.type=QUEUE：PriorityScheduler.submit()
-           ├─ ordering.type=FIFO：普通路由后提交到 Prefill WorkerBatcher
-           └─ ordering.type=PRIORITY：PriorityAdmissionScheduler 做优先级准入/抢占
-    ↓
-DefaultRouter：按非空角色 map 固定顺序路由 PDFUSION → DECODE → PREFILL → VIT，
-               首个成功角色的 worker group 约束后续角色的候选（group 亲和链）
-    ↓
-LoadBalancer 策略选 worker（读 EngineWorkerStatus 共享状态 + CacheAwareService 匹配）
-    ↓ 选中即 WorkerStatus.putLocalTask()：本地乐观记账（队列时间 / KV token 预扣）
-后阶段失败 → DefaultRouter.rollBackRoutingFailure() 逐个 LoadBalancer.rollBack() 撤销记账
+    ├─ ViT：查询缓存或选择 ViT 端点
+    ├─ Encoder：Encoder 队列选点并返回地址
+    └─ Generation：V2 主队列准备缓存匹配与选 Prefill
+           → Prefill 队列 → Decode 队列 → 返回 P/D 地址
+           PD 合一时返回 PDFUSION 地址，不单独选 Decode。
 ```
 
-Schedule 入口读取当前配置快照；`enableFallback=true` 时，在构建调度上下文、校验 batch 载荷、
-主从判断和转发之前返回 `success=false`、`code=8600`、`enqueued_by_master=false`，不进入调度或派发。
+Schedule 入口读取当前配置快照；`enableFallback=true` 时，在构建调度上下文、主从判断和转发之前返回 `success=false`、`code=8600`、`enqueued_by_master=false`，不进入调度或派发。
 开关关闭时将请求字段转换为 `BalanceContext` / `Request`，本地路由、排队和转发完成回调使用内部上下文。
 原始 `FlexlbScheduleRequestPB` 仅用于入口解析和向 Master 发起 gRPC 转发；转发 RPC 回调使用提取出的 request ID。
-批量下发所需的 `generate_input` 字节由 `BalanceContext` 保存至下发阶段。
 
 ## 核心不变量
 

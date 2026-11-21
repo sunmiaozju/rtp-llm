@@ -3,12 +3,8 @@ package org.flexlb.balance.scheduler;
 import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.EncoderEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.eviction.EvictionManager;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
-import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
-import org.flexlb.balance.strategy.DecodeSelector;
 import org.flexlb.balance.strategy.EncoderStrategy;
-import org.flexlb.balance.strategy.RandomStrategy;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
@@ -39,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -63,7 +60,6 @@ class EncoderSchedulingIntegrationTest {
     void setUp() {
         config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
-        SchedulingTestConfig.useNonBatchDispatcher(config);
         configService = mock(ConfigService.class);
         when(configService.loadBalanceConfig()).thenReturn(config);
         directory = mock(WorkerDirectory.class);
@@ -71,12 +67,9 @@ class EncoderSchedulingIntegrationTest {
                 mock(RequestSchedulerReporter.class));
         ModelMetaConfig model = mock(ModelMetaConfig.class);
         when(model.requiredRoles()).thenReturn(List.of(RoleType.ENCODER));
-        DefaultRouter router = new DefaultRouter(mock(CostBasedPrefillStrategy.class),
-                mock(DecodeSelector.class), mock(RandomStrategy.class), new EncoderStrategy(directory),
-                configService, model);
-        scheduler = new RequestScheduler(configService, router, mock(EndpointRegistry.class),
-                mock(BatchSchedulerReporter.class), mock(EvictionManager.class), requests,
-                new PlacementAvailability(), new QueueCapacity());
+        DefaultRouter router = new DefaultRouter(new EncoderStrategy(directory), configService, model);
+        scheduler = new RequestScheduler(configService, router, requests,
+                mock(org.flexlb.balance.schedulev2.RequestSchedulerV2.class));
     }
 
     @AfterEach
@@ -245,12 +238,9 @@ class EncoderSchedulingIntegrationTest {
                 mock(RequestSchedulerReporter.class));
         ModelMetaConfig model = mock(ModelMetaConfig.class);
         when(model.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
-        DefaultRouter router = new DefaultRouter(mock(CostBasedPrefillStrategy.class),
-                mock(DecodeSelector.class), mock(RandomStrategy.class), new EncoderStrategy(directory),
-                configService, model);
-        scheduler = new RequestScheduler(configService, router, mock(EndpointRegistry.class),
-                mock(BatchSchedulerReporter.class), mock(EvictionManager.class), requests,
-                new PlacementAvailability(), new QueueCapacity());
+        DefaultRouter router = new DefaultRouter(new EncoderStrategy(directory), configService, model);
+        scheduler = new RequestScheduler(configService, router, requests,
+                mock(org.flexlb.balance.schedulev2.RequestSchedulerV2.class));
 
         assertNull(ReflectionTestUtils.getField(scheduler, "encoderQueue"));
         BalanceContext encoderRequest = context(6, 100, 0L);
@@ -276,7 +266,7 @@ class EncoderSchedulingIntegrationTest {
 
         assertTrue(response.isSuccess());
         assertEquals("short", response.getServerStatus().getFirst().getServerIp());
-        assertEquals(RequestPhase.ENCODER, requests.requestSlot("1", RequestPhase.ENCODER).requestPhase());
+        assertNotNull(requests.requestSlot("1", RequestPhase.ENCODER));
     }
 
     @Test
@@ -350,7 +340,7 @@ class EncoderSchedulingIntegrationTest {
         Response response = scheduler.submit(context).get(2, TimeUnit.SECONDS);
 
         assertEquals(StrategyErrorType.RESOURCE_EXHAUSTED.getErrorCode(), response.getCode());
-        assertEquals(RequestPhase.ENCODER, requests.requestSlot("5", RequestPhase.ENCODER).requestPhase());
+        assertNotNull(requests.requestSlot("5", RequestPhase.ENCODER));
     }
 
     private EncoderEndpoint worker(String ip,

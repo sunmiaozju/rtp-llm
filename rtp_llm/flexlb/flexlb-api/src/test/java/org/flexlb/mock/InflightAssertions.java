@@ -25,7 +25,7 @@ public final class InflightAssertions {
      * Assert that the PrefillEndpoint for the given ip:port has no inflight batches.
      */
     public static void assertPrefillInflightEmpty(PrefillEndpoint prefillEp) {
-        int batchCount = prefillEp.getCommittedRequestCount();
+        int batchCount = prefillEp.prefillQueue().dispatchedCount();
         assertEquals(0, batchCount,
                 "PrefillEndpoint inflightBatches should be empty but has " + batchCount + " batches");
     }
@@ -61,7 +61,7 @@ public final class InflightAssertions {
                                                     long timeoutMs, long pollMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            boolean prefillOk = prefillEp == null || prefillEp.getCommittedRequestCount() == 0;
+            boolean prefillOk = prefillEp == null || prefillEp.prefillQueue().dispatchedCount() == 0;
             boolean decodeOk = decodeEp == null || decodeEp.getInflightCount() == 0;
             if (prefillOk && decodeOk) {
                 return true;
@@ -84,7 +84,7 @@ public final class InflightAssertions {
                                                      long timeoutMs) {
         assertTrue(waitForResourcesReleased(prefillEp, decodeEp, timeoutMs, 50),
                 "Inflight resources not released within " + timeoutMs + "ms"
-                        + " (prefill batches=" + (prefillEp != null ? prefillEp.getCommittedRequestCount() : "null")
+                        + " (prefill batches=" + (prefillEp != null ? prefillEp.prefillQueue().dispatchedCount() : "null")
                         + ", decode inflight=" + (decodeEp != null ? decodeEp.getInflightCount() : "null") + ")");
     }
 }

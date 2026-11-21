@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.balance.eviction.DecodeEndpointSnapshot;
 import org.flexlb.balance.preemption.PreemptionCancelPhase;
@@ -517,58 +516,6 @@ class DecodeEndpointLayeredViewTest {
     }
 
     // ==================== helpers ====================
-
-    @Test
-    void failureSettlementAnswersExactObligationWithoutReleasingEngineCapacity() {
-        var reservation = reserve(701L, 400, 408, 30);
-        DeliverySettlementTestSupport.dispatchDecode(endpoint, reservation);
-        assertFalse(endpoint.settleFailedRequest(reservation, DeliveryResult.Status.PREFILL_REJECTED));
-        assertEquals(1, endpoint.routingView().engineCapacityUsed());
-        assertEquals(400, endpoint.routingView().inputKvReserved());
-
-        updateStatus(Map.of("701", runningTask(701L, TaskPhase.RUNNING, 400)), null, 19_600);
-        assertFalse(endpoint.settleFailedRequest(reservation, DeliveryResult.Status.PREFILL_REJECTED));
-        assertEquals(1, endpoint.routingView().engineCapacityUsed());
-        assertEquals(19_600, endpoint.routingView().realKvAvailable());
-
-        updateStatus(Map.of(), Map.of("701", runningTask(701L, TaskPhase.RUNNING, 400)), 20_000);
-        assertTrue(endpoint.settleFailedRequest(reservation, DeliveryResult.Status.PREFILL_REJECTED));
-        assertTrue(endpoint.settleFailedRequest(reservation, DeliveryResult.Status.PREFILL_REJECTED));
-        assertEquals(0, endpoint.routingView().engineCapacityUsed());
-    }
-
-    @Test
-    void absentOldReservationIsCompleteWithoutTouchingTheReplacement() {
-        var replacement = reserve(702L, 400, 408, 30);
-        var old = new DecodeEndpoint.ReservationHandle(replacement.endpointGenerationId(),
-                replacement.requestId(), replacement.reservationToken() + 1000);
-        assertTrue(endpoint.settleFailedRequest(old, DeliveryResult.Status.NOT_SENT));
-        assertTrue(endpoint.settleFailedRequest(old, DeliveryResult.Status.PREFILL_REJECTED));
-        assertEquals(400, endpoint.routingView().inputKvReserved());
-        assertTrue(endpoint.settleFailedRequest(replacement, DeliveryResult.Status.NOT_SENT));
-        assertTrue(endpoint.settleFailedRequest(replacement, DeliveryResult.Status.NOT_SENT));
-        assertEquals(0, endpoint.routingView().inputKvReserved());
-    }
-
-    @Test
-    void rejectedVictimCannotCompletePreemptionOrReleaseItsCapacity() {
-        var victim = reserve(703L, 400, 408, 30);
-        updateStatus(Map.of("703", runningTask(703L, TaskPhase.RUNNING, 400)), null, 19_600);
-        assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
-                beginPreemption(704L, List.of(703L), 705L, 700, 708, 70));
-        assertTrue(endpoint.updatePreemption(704L, DecodeEndpoint.PreemptionUpdate.cancelSending()));
-        assertTrue(endpoint.updatePreemption(
-                704L,
-                DecodeEndpoint.PreemptionUpdate.cancelReply("703", PreemptionCancelPhase.CANCEL_UNKNOWN)));
-        var before = endpoint.routingView();
-
-        assertFalse(endpoint.settleFailedRequest(victim, DeliveryResult.Status.PREFILL_REJECTED));
-
-        assertTrue(confirmedView(703L).claimedForPreemption());
-        assertEquals(before.engineCapacityUsed(), endpoint.routingView().engineCapacityUsed());
-        assertEquals(before.inputKvReserved(), endpoint.routingView().inputKvReserved());
-        assertFalse(endpoint.finishPreemption(704L, DecodeEndpoint.PreemptionDecision.COMMIT));
-    }
 
     private static List<String> ids(List<DecodeRequestView> entries) {
         return entries.stream().map(DecodeRequestView::requestId).toList();

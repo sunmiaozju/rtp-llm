@@ -162,12 +162,11 @@ class ConfigServiceTest {
     }
 
     @Test
-    void rejectsRemovedKvcmQueryFieldNames() {
-        for (String queryField : new String[]{
-                "\"globalKvsHostCount\":3", "\"enableP2p\":true"}) {
-            assertThrows(ConfigValidationException.class, () -> ConfigTestFixtures.parse(
-                    "{\"cacheMatching\":{\"type\":\"KVCM\"," + queryField + "}}"), queryField);
-        }
+    void ignoresRemovedKvcmQueryFieldNames() {
+        FlexlbConfig config = ConfigTestFixtures.parse("""
+                {"cacheMatching":{"type":"KVCM","globalKvsHostCount":7,"enableP2p":true}}
+                """);
+        assertEquals(3, config.getKvcmAndStandbyConfig().getTopKHostCount());
     }
 
     @Test
@@ -185,10 +184,11 @@ class ConfigServiceTest {
     }
 
     @Test
-    void rejectsRemovedCacheAffinityOutstandingTokenLimit() {
-        assertInvalid("""
-                        {"router":{"roles":{"prefill":{"cacheAffinity":{"maxOutstandingUncachedTokens":50000}}}}}
-                """, "maxOutstandingUncachedTokens");
+    void ignoresRemovedCacheAffinityOutstandingTokenLimit() {
+        FlexlbConfig config = ConfigTestFixtures.parse("""
+                {"router":{"roles":{"prefill":{"cacheAffinity":{"maxOutstandingUncachedTokens":50000}}}}}
+                """);
+        assertEquals(0L, config.getRouter().getRoles().getPrefill().getCacheAffinity().getMaxExtraTtftMs());
     }
 
     @Test
@@ -328,11 +328,7 @@ class ConfigServiceTest {
         assertEquals(3, config.getSchemaVersion());
         assertEquals(SchedulerConfig.Type.QUEUE, config.getScheduler().getType());
         assertFalse(config.isPriorityOrdering());
-        assertTrue(config.isFixedWindowDecision());
         assertEquals(3600000L, config.queueScheduler().getQueueTimeoutMs());
-        assertEquals(8, config.fixedWindowDecision().getMaxRequests());
-        assertEquals(300L, config.fixedWindowDecision().getMaxCollectionWaitMs());
-        assertNull(config.fixedWindowDecision().getMaxPredictedExecutionMs());
         assertEquals(2, config.getDispatcher().getMaxInflightPerPrefillWorker());
         var prefill = config.getRouter().getRoles().getPrefill();
         assertEquals(RoutingConfig.EstimatorType.FORMULA, prefill.getExecutionTimeEstimator().getType());
@@ -379,7 +375,7 @@ class ConfigServiceTest {
             ConfigService.parse(examples.group(1));
             parsed++;
         }
-        assertEquals(2, parsed, "README FLEXLB_CONFIG example count changed");
+        assertEquals(1, parsed, "README FLEXLB_CONFIG example count changed");
     }
 
     @Test
@@ -430,8 +426,7 @@ class ConfigServiceTest {
         FlexlbConfig config = ConfigTestFixtures.parse("""
                 {
                   "scheduler":{"ordering":{"type":"PRIORITY","defaultPriority":60,
-                    "preemption":{"allowedVictimStages":["DECODE_RESERVED","DECODE_ENGINE_OWNED"]}},
-                    "decision":{"maxRequests":12,"maxCollectionWaitMs":40,"maxPredictedExecutionMs":90}},
+                    "preemption":{"allowedVictimStages":["DECODE_RESERVED","DECODE_ENGINE_OWNED"]}}},
                   "dispatcher":{"maxInflightPerPrefillWorker":4},
                   "router":{
                     "groupSelector":{"defaultTargets":[{"group":"blue"}],"rules":[{
@@ -448,8 +443,6 @@ class ConfigServiceTest {
         assertTrue(config.isPriorityOrdering());
         assertEquals(60, config.priorityOrdering().getDefaultPriority());
         assertTrue(config.priorityOrdering().getPreemption().allows(VictimStage.DECODE_ENGINE_OWNED));
-        assertEquals(12, config.fixedWindowDecision().getMaxRequests());
-        assertEquals(90L, config.fixedWindowDecision().getMaxPredictedExecutionMs());
         assertEquals(4, config.getDispatcher().getMaxInflightPerPrefillWorker());
         assertEquals(25L, config.getRouter().getRoles().getPrefill().getCacheAffinity().getMaxExtraTtftMs());
         assertEquals(128L, config.getRouter().getRoles().getDecode().getAvailability().getMaxEngineRequests());
@@ -641,7 +634,7 @@ class ConfigServiceTest {
     }
 
     @Test
-    void removed_control_fields_fail_instead_of_becoming_hidden_settings() throws Exception {
+    void removed_control_fields_are_ignored_without_changing_effective_config() throws Exception {
         Map<String, String> removed = Map.ofEntries(
                 Map.entry("autoTpmEnabled", "true"),
                 Map.entry("autoTpmSloLengthBuckets", "\"*:100\""),
@@ -672,16 +665,20 @@ class ConfigServiceTest {
                 Map.entry("router.roles.decode.outlierRejection.maxEngineLoadVsAverageMultiplier", "3"),
                 Map.entry("router.roles.decode.outlierRejection.maxKvUsedVsAverageMultiplier", "3"));
         ObjectMapper json = new ObjectMapper();
+        String document = ConfigTestFixtures.document("""
+                {"scheduler":{"ordering":{"type":"PRIORITY",
+                  "preemption":{"allowedVictimStages":["DECODE_ENGINE_OWNED"]}}}}
+                """);
+        var expected = JsonUtils.strictValueToTree(ConfigService.parse(document));
         for (var entry : removed.entrySet()) {
-            ObjectNode root = (ObjectNode) json.readTree(ConfigTestFixtures.document(
-                    "{\"scheduler\":{\"ordering\":{\"type\":\"PRIORITY\",\"preemption\":{\"allowedVictimStages\":[\"DECODE_ENGINE_OWNED\"]}}}}"));
+            ObjectNode root = (ObjectNode) json.readTree(document);
             String[] names = entry.getKey().split("\\.");
             ObjectNode node = root;
             for (int i = 0; i < names.length - 1; i++) {
                 node = node.with(names[i]);
             }
             node.set(names[names.length - 1], json.readTree(entry.getValue()));
-            assertThrows(ConfigValidationException.class, () -> ConfigService.parse(root.toString()), entry.getKey());
+            assertEquals(expected, JsonUtils.strictValueToTree(ConfigService.parse(root.toString())), entry.getKey());
         }
     }
 
@@ -753,7 +750,7 @@ class ConfigServiceTest {
                 java.nio.file.Path.of("../docs/config-examples", "flexlb-queue-priority-non-batch.json"));
         FlexlbConfig config = ConfigService.parse(document);
         assertEquals(3, config.getSchemaVersion());
-        assertEquals(DispatcherConfig.Type.NON_BATCH, config.getDispatcher().getType());
+        assertEquals(DispatcherConfig.Type.NON_BATCH_V2, config.getDispatcher().getType());
     }
 
     private static void assertInvalid(String patch, String field) {

@@ -1,9 +1,8 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.balance.scheduler.QueueCapacity;
+import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
@@ -48,11 +47,8 @@ class EndpointRegistryRoleTest {
         }
         ConfigService configService = Mockito.mock(ConfigService.class);
         Mockito.when(configService.loadBalanceConfig()).thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
-        EndpointTestSupport.TestRequestRuntime requestRuntime =
-                EndpointTestSupport.requestRuntime();
-        registry = new EndpointRegistry(configService, requestRuntime.events(),
-                Mockito.mock(BatchSchedulerReporter.class), EndpointTestSupport.routeStrategy(requestRuntime),
-                new NonBatchTtftEstimator(), new PlacementAvailability(), new QueueCapacity(),
+        registry = new EndpointRegistry(configService, EndpointTestSupport.noopEventSink(),
+                Mockito.mock(BatchSchedulerReporter.class), new PlacementAvailability(),
                 new PrefillQueueRegistry(), Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
     }
 
@@ -69,14 +65,12 @@ class EndpointRegistryRoleTest {
         config.getDispatcher().setType(dispatcherType);
         Mockito.when(service.loadBalanceConfig()).thenReturn(config);
         var queues = Mockito.spy(new PrefillQueueRegistry());
-        var runtime = EndpointTestSupport.requestRuntime();
         var availability = Mockito.mock(PlacementAvailability.class);
-        var events = new EndpointEventHandler(runtime.requests(), queues, service,
+        var events = new EndpointEventHandler(Mockito.mock(RequestRegistry.class), queues, service,
                 new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         var localRegistry = new EndpointRegistry(service, events, Mockito.mock(BatchSchedulerReporter.class),
-                EndpointTestSupport.routeStrategy(runtime), new NonBatchTtftEstimator(), availability,
-                new QueueCapacity(), queues, Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
+                availability, queues, Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         String address = "127.0.0.1:8001";
         Mockito.doAnswer(call -> {
             PrefillEndpoint endpoint = call.getArgument(0);

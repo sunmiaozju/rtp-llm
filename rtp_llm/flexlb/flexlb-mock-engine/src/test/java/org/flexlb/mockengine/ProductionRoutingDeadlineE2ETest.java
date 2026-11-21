@@ -1,6 +1,5 @@
 package org.flexlb.mockengine;
 
-import org.flexlb.config.DecisionPolicyConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.SchedulingMetadata;
 import org.flexlb.dao.loadbalance.Response;
@@ -21,30 +20,19 @@ class ProductionRoutingDeadlineE2ETest {
     @Timeout(10)
     void requestDeadlineIsNotMisclassifiedAsAPlacementCapacityMiss()
             throws Exception {
-        DecisionPolicyConfig decision = new DecisionPolicyConfig();
-        decision.setMaxRequests(2);
-        decision.setMaxCollectionWaitMs(10_000L);
-
-        // The first request's deadline is shorter than an unfilled collection
-        // window. Endpoint selection must still publish it: the second request
-        // immediately completes the batch, and the real mock engine can serve
-        // both well before that deadline. The request registry, not route
-        // status handling, is the sole owner of terminal request deadlines.
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(
-                BASE_PORT, 1, 1, "1", 1.0,
-                false, true, decision, true)) {
+        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT, 1, 1, "1", 1.0, false)) {
             h.startAutoPump(5L);
 
             long nearDeadlineId = 88_001L;
-            long batchFollowerId = 88_002L;
+            long secondRequestId = 88_002L;
             BalanceContext nearDeadline = h.context(
                     Long.toString(nearDeadlineId), 50, 10_000L, 8);
             nearDeadline.setSchedulingMetadata(SchedulingMetadata.explicit(
                     50, System.currentTimeMillis() + 2_000L));
 
-            CompletableFuture<Response> first = h.scheduler.submit(nearDeadline);
-            CompletableFuture<Response> second = h.scheduler.submit(
-                    h.context(Long.toString(batchFollowerId), 50, 10_000L, 8));
+            CompletableFuture<Response> first = h.submitAndGenerate(nearDeadline);
+            CompletableFuture<Response> second = h.submitAndGenerate(
+                    h.context(Long.toString(secondRequestId), 50, 10_000L, 8));
             Response firstResponse = first.get(1, TimeUnit.SECONDS);
             Response secondResponse = second.get(1, TimeUnit.SECONDS);
 
@@ -53,10 +41,10 @@ class ProductionRoutingDeadlineE2ETest {
                             + firstResponse.getCode() + ": "
                             + firstResponse.getErrorMessage());
             assertTrue(secondResponse.isSuccess(),
-                    "batch follower must share the successful production route");
+                    "second request must also receive a route");
             AutoTpmE2EHarness.await(
                     () -> h.engineArrivalOrder.contains(nearDeadlineId)
-                            && h.engineArrivalOrder.contains(batchFollowerId),
+                            && h.engineArrivalOrder.contains(secondRequestId),
                     1_000L,
                     "both admitted requests must reach the mock engine");
         }

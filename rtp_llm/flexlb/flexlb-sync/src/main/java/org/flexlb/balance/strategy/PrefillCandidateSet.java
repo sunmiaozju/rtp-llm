@@ -1,7 +1,6 @@
 package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.dao.pv.RoutingDecision;
 
 import java.util.Arrays;
@@ -40,19 +39,17 @@ final class PrefillCandidateSet {
 
     void addCandidate(String address,
                       PrefillEndpoint endpoint,
-                      PrefillTtftEstimate.CandidateView candidate,
+                      long estimatedMs,
+                      long incomingMs,
                       long effectiveHitTokens,
+                      long routingHitTokens,
                       long ownershipVersion) {
-        if (!candidate.selectable() && !candidate.engineWorkUnmodeled()) {
-            throw new IllegalStateException("Prefill estimate cannot be scored: "
-                    + candidate.state() + " " + candidate.detail());
-        }
         endpointAddresses[size] = address;
         endpoints[size] = endpoint;
-        estimatedTtftMs[size] = candidate.estimatedTtftMsValue();
-        incomingPrefillMs[size] = candidate.incomingPrefillMs();
+        estimatedTtftMs[size] = estimatedMs;
+        incomingPrefillMs[size] = incomingMs;
         cacheHitTokens[size] = effectiveHitTokens;
-        routingCacheMatchTokens[size] = candidate.routingCacheMatchTokens();
+        routingCacheMatchTokens[size] = routingHitTokens;
         ownershipVersions[size] = ownershipVersion;
         hasKnownTtft |= estimatedTtftMs[size] >= 0L;
         minimumTtftRank = Math.min(minimumTtftRank, ttftRank(size));

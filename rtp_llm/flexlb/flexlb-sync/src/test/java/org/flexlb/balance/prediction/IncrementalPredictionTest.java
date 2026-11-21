@@ -1,6 +1,5 @@
 package org.flexlb.balance.prediction;
 
-import org.flexlb.balance.planner.GroupPlanner;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -10,7 +9,6 @@ import java.util.Random;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
 class IncrementalPredictionTest {
     static String formula() throws Exception {
@@ -46,32 +44,6 @@ class IncrementalPredictionTest {
     }
 
     @Test
-    void freshSessionsHandleRemovalInsertionReorderAndModelReplacement() throws Exception {
-        var random = new Random(73);
-        var source = new ArrayList<GroupPlanner.Item>();
-        var model = new FormulaPredictor(formula());
-        for (int i = 0; i < 64; i++) source.add(item(i, 100 + random.nextInt(32768), i % 4, 100_000));
-        for (int round = 0; round < 120; round++) {
-            if (round % 3 == 0 && !source.isEmpty()) source.remove(random.nextInt(source.size()));
-            else source.add(random.nextInt(source.size() + 1), item(1000 + round, 1000, 0, 100_000));
-            if (round % 5 == 0) java.util.Collections.reverse(source);
-            var constraints = new GroupPlanner.Constraints(64, 200_000, 300_000, 700, 700);
-            var full = GroupPlanner.select(source, GroupPlanner.itemAccess(), constraints,
-                    items -> model.predictBatchMs(PrefillBatchFeatures.from(items,
-                            GroupPlanner.Item::seqLen, GroupPlanner.Item::hitCache)));
-            var batch = model.newBatchPrediction();
-            var incremental = GroupPlanner.selectWithPrediction(source, GroupPlanner.itemAccess(), constraints,
-                    (added, prefix) -> batch.append(added.seqLen(), added.hitCache()));
-            assertEquals(full, incremental);
-            assertEquals(GroupPlanner.evaluateReadiness(full, constraints, 2000),
-                    GroupPlanner.evaluateReadiness(incremental, constraints, 2000));
-        }
-        var oldSession = model.newBatchPrediction();
-        var replacement = new FormulaPredictor("42");
-        assertNotEquals(oldSession.append(100, 0), replacement.newBatchPrediction().append(100, 0));
-    }
-
-    @Test
     void concurrentSessionsDoNotShareMutableAccumulators() throws Exception {
         var model = new FormulaPredictor(formula());
         try (var pool = Executors.newFixedThreadPool(8)) {
@@ -94,7 +66,4 @@ class IncrementalPredictionTest {
         }
     }
 
-    private static GroupPlanner.Item item(long id, long input, int priority, long expires) {
-        return new GroupPlanner.Item(Long.toString(id), priority, id, 1000, expires, input, input / 3);
-    }
 }

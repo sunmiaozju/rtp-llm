@@ -6,8 +6,7 @@ import lombok.Setter;
 
 /**
  * Public FLEXLB_CONFIG contract, organized by stable responsibility owner.
- * Mutually exclusive behavior is represented by tagged unions so inactive
- * variant fields fail during deserialization.
+ * Tagged unions select the active configuration for each subsystem.
  */
 @Getter
 @Setter
@@ -61,32 +60,6 @@ public final class FlexlbConfig {
     public boolean allowsPreemption(VictimStage stage) {
         return isPriorityOrdering() && scheduler.getOrdering().getPreemption() != null
                 && scheduler.getOrdering().getPreemption().allows(stage);
-    }
-
-    /** Resolve the QUEUE decision policy from its single configuration owner. */
-    @JsonIgnore
-    public DecisionPolicyConfig decisionPolicy() {
-        return queueScheduler().getDecision();
-    }
-
-    @JsonIgnore
-    public boolean isSingleDecision() {
-        return queueScheduler().getDecision().getType() == DecisionPolicyConfig.Type.SINGLE;
-    }
-
-    @JsonIgnore
-    public boolean isFixedWindowDecision() {
-        return queueScheduler().getDecision().getType() == DecisionPolicyConfig.Type.FIXED_WINDOW;
-    }
-
-    @JsonIgnore
-    public DecisionPolicyConfig fixedWindowDecision() {
-        DecisionPolicyConfig policy = decisionPolicy();
-        if (policy.getType() == DecisionPolicyConfig.Type.FIXED_WINDOW) {
-            return policy;
-        }
-        throw new IllegalStateException(
-                "fixed-window decision configuration is not active");
     }
 
     @JsonIgnore

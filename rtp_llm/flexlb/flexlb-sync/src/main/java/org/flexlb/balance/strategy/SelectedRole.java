@@ -1,7 +1,6 @@
 package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.route.RoleType;
@@ -20,15 +19,9 @@ public final class SelectedRole implements AutoCloseable {
 
     private WorkerEndpoint.EndpointHold endpointHold;
     private final ServerStatus serverStatus;
-    private final long prefillWorkMs;
     private final long placementVersion;
-    private static final Runnable NO_TELEMETRY = () -> { };
-
-    private Runnable commitTelemetry = NO_TELEMETRY;
-
     private SelectedRole(WorkerEndpoint.EndpointHold endpointHold,
                          ServerStatus serverStatus,
-                         long prefillWorkMs,
                          long placementVersion) {
         this.endpointHold = endpointHold;
         this.serverStatus = serverStatus;
@@ -44,44 +37,16 @@ public final class SelectedRole implements AutoCloseable {
                 || serverStatus.getHttpPort() != endpoint.getHttpPort()) {
             throw new IllegalArgumentException("selection metadata does not match held endpoint address");
         }
-        if (prefillWorkMs >= 0L
-                && (!(endpoint instanceof PrefillEndpoint)
-                        || serverStatus.getRole() != RoleType.PREFILL
-                                && serverStatus.getRole() != RoleType.PDFUSION)) {
-            throw new IllegalArgumentException(
-                    "Prefill selection requires a Prefill endpoint role");
-        }
         if (serverStatus.getRole() == RoleType.DECODE
                 && !(endpoint instanceof DecodeEndpoint)) {
             throw new IllegalArgumentException(
                     "Decode selection requires a Decode endpoint role");
         }
-        this.prefillWorkMs = prefillWorkMs;
         if (placementVersion < 0L) {
             throw new IllegalArgumentException(
                     "placementVersion must be non-negative");
         }
         this.placementVersion = placementVersion;
-    }
-
-    public static SelectedRole prefill(WorkerEndpoint.EndpointHold endpointHold,
-                                       ServerStatus serverStatus,
-                                       long prefillWorkMs) {
-        return prefill(endpointHold, serverStatus, prefillWorkMs, endpointPlacementVersion(endpointHold));
-    }
-
-    public static SelectedRole prefill(WorkerEndpoint.EndpointHold endpointHold,
-                                       ServerStatus serverStatus,
-                                       long prefillWorkMs,
-                                       long placementVersion) {
-        if (prefillWorkMs < 0L) {
-            if (endpointHold != null) {
-                endpointHold.close();
-            }
-            throw new IllegalArgumentException(
-                    "Prefill work must be non-negative");
-        }
-        return createOwned(endpointHold, serverStatus, prefillWorkMs, placementVersion);
     }
 
     public static SelectedRole decode(WorkerEndpoint.EndpointHold endpointHold, ServerStatus serverStatus) {
@@ -97,11 +62,11 @@ public final class SelectedRole implements AutoCloseable {
             }
             throw new IllegalArgumentException("Decode selection requires Decode metadata");
         }
-        return createOwned(endpointHold, serverStatus, -1L, placementVersion);
+        return createOwned(endpointHold, serverStatus, placementVersion);
     }
 
     public static SelectedRole stateless(WorkerEndpoint.EndpointHold endpointHold, ServerStatus serverStatus) {
-        return createOwned(endpointHold, serverStatus, -1L, 0L);
+        return createOwned(endpointHold, serverStatus, 0L);
     }
 
     /**
@@ -109,10 +74,9 @@ public final class SelectedRole implements AutoCloseable {
      */
     private static SelectedRole createOwned(WorkerEndpoint.EndpointHold endpointHold,
                                             ServerStatus serverStatus,
-                                            long prefillWorkMs,
                                             long placementVersion) {
         try {
-            return new SelectedRole(endpointHold, serverStatus, prefillWorkMs, placementVersion);
+            return new SelectedRole(endpointHold, serverStatus, placementVersion);
         } catch (RuntimeException | Error failure) {
             if (endpointHold != null) {
                 endpointHold.close();
@@ -125,33 +89,8 @@ public final class SelectedRole implements AutoCloseable {
         return serverStatus;
     }
 
-    public long prefillWorkMs() {
-        if (prefillWorkMs < 0L) {
-            throw new IllegalStateException(
-                    "selection does not carry Prefill work");
-        }
-        return prefillWorkMs;
-    }
-
     public long placementVersion() {
         return placementVersion;
-    }
-
-    /**
-     * Attach selection telemetry that runs only once this selection becomes a committed route.
-     */
-    public SelectedRole onCommit(Runnable telemetry) {
-        commitTelemetry = Objects.requireNonNull(telemetry, "telemetry");
-        return this;
-    }
-
-    /**
-     * Move the commit telemetry to the route admission that decides whether it runs.
-     */
-    public Runnable takeCommitTelemetry() {
-        Runnable owned = commitTelemetry;
-        commitTelemetry = NO_TELEMETRY;
-        return owned;
     }
 
     private static long endpointPlacementVersion(WorkerEndpoint.EndpointHold hold) {
@@ -159,9 +98,6 @@ public final class SelectedRole implements AutoCloseable {
             return 0L;
         }
         WorkerEndpoint endpoint = hold.endpoint();
-        if (endpoint instanceof PrefillEndpoint prefill) {
-            return prefill.placementVersion();
-        }
         if (endpoint instanceof DecodeEndpoint decode) {
             return decode.placementVersion();
         }

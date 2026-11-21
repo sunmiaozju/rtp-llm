@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -42,7 +41,7 @@ public class ConfigService {
     private final AtomicReference<FlexlbConfig> currentFlexlbConfig;
     private final AtomicReference<ServiceRoute> currentModelServiceConfig;
     private final List<Consumer<FlexlbConfig>> updateListeners = new ArrayList<>();
-    private final StartupDecisionTopology startupDecisionTopology;
+    private final StartupThreadCounts startupThreadCounts;
     private final Object updateLock = new Object();
     private int configSchemaVersion = ConfigSchemaVersion.V0_COMPATIBILITY;
 
@@ -63,7 +62,7 @@ public class ConfigService {
         FlexlbConfig config = parse(document);
         this.currentFlexlbConfig = new AtomicReference<>(config);
         this.currentModelServiceConfig = new AtomicReference<>();
-        this.startupDecisionTopology = StartupDecisionTopology.from(config);
+        this.startupThreadCounts = StartupThreadCounts.from(config);
         this.configSchemaVersion = config.getSchemaVersion();
     }
 
@@ -100,7 +99,7 @@ public class ConfigService {
         this.currentFlexlbConfig = new AtomicReference<>(defaults);
         this.currentModelServiceConfig = new AtomicReference<>();
         initializeConfigSources();
-        this.startupDecisionTopology = StartupDecisionTopology.from(currentFlexlbConfig.get());
+        this.startupThreadCounts = StartupThreadCounts.from(currentFlexlbConfig.get());
         logEffectiveConfig(currentFlexlbConfig.get(), configSchemaVersion);
     }
 
@@ -114,10 +113,11 @@ public class ConfigService {
     public static FlexlbConfig parse(String document) {
         try {
             JsonNode tree = JsonUtils.readStrictTree(document);
-            JsonUtils.rejectJsonNull(tree, "$", FLEXLB_CONFIG_ENV);
+            if (tree == null || !tree.isObject()) {
+                throw new ConfigValidationException(FLEXLB_CONFIG_ENV, "configuration must be a JSON object");
+            }
             FlexlbConfigValidator.validateDocumentShape(tree);
-            FlexlbConfig config = JsonUtils.strictTreeToValue(
-                    tree, FlexlbConfig.class);
+            FlexlbConfig config = JsonUtils.readFlexlbConfig(tree, FLEXLB_CONFIG_ENV);
             FlexlbConfigValidator.validate(config);
             return config;
         } catch (ConfigValidationException error) {
@@ -212,7 +212,7 @@ public class ConfigService {
             try {
                 FlexlbConfig previous = currentFlexlbConfig.get();
                 NormalizedConfig normalized = source.normalize(content);
-                String activeDocument = preserveStartupDecisionTopology(normalized.flexlbConfig());
+                String activeDocument = preserveStartupThreadCounts(normalized.flexlbConfig());
                 FlexlbConfig updated = FlexlbConfigMerger.merge(previous, activeDocument, source.name());
                 if (updated == previous) {
                     log.info("Ignored empty FlexLB configuration update from {} source",
@@ -243,17 +243,10 @@ public class ConfigService {
     }
 
     /**
-     * Removes runtime changes to scheduler, dispatcher and decision modes before normal
-     * merge validation runs.
-     *
-     * <p>These modes select threads and strategy beans at startup, so a
-     * type or consumer count update cannot take effect safely. Other numeric fields are left in
-     * the document and continue through the regular hot-update path. Fields
-     * belonging only to a requested-but-inactive fixed-window mode are removed
-     * with its type rather than rejected as a whole update.
+     * Keep the startup thread counts while applying hot updates to other settings.
      */
-    private String preserveStartupDecisionTopology(String content) throws Exception {
-        if (startupDecisionTopology == null || content == null || content.isBlank()) {
+    private String preserveStartupThreadCounts(String content) throws Exception {
+        if (startupThreadCounts == null || content == null || content.isBlank()) {
             return content;
         }
         JsonNode parsed = JsonUtils.readStrictTree(content);
@@ -261,92 +254,38 @@ public class ConfigService {
             return content;
         }
         boolean changed = false;
-        if (document.get("scheduler") instanceof ObjectNode scheduler) {
-            if (scheduler.get("decision") instanceof ObjectNode decision) {
-                changed |= preserveWorkerDecisionType(decision);
-            }
-        }
         if (document.get("dispatcher") instanceof ObjectNode dispatcher) {
-            changed |= preserveStartupMode(dispatcher, "dispatcher.type",
-                    startupDecisionTopology.dispatcherType().name(), Set.of("NON_BATCH", "NON_BATCH_V2"));
             JsonNode threads = dispatcher.get("decodeQueueThreads");
             if (threads != null && threads.isIntegralNumber() && threads.canConvertToInt() && threads.intValue() > 0
-                    && threads.intValue() != startupDecisionTopology.decodeQueueThreads()) {
+                    && threads.intValue() != startupThreadCounts.decodeQueueThreads()) {
                 dispatcher.remove("decodeQueueThreads");
                 changed = true;
                 log.warn(
                         "Ignored runtime update to startup-fixed dispatcher.decodeQueueThreads: requested={}, active={}",
-                        threads.intValue(), startupDecisionTopology.decodeQueueThreads());
+                        threads.intValue(), startupThreadCounts.decodeQueueThreads());
             }
             JsonNode mainQueueThreads = dispatcher.get("mainQueueConsumerThreads");
             if (mainQueueThreads != null && mainQueueThreads.isIntegralNumber() && mainQueueThreads.canConvertToInt()
                     && mainQueueThreads.intValue() > 0
-                    && mainQueueThreads.intValue() != startupDecisionTopology.mainQueueConsumerThreads()) {
+                    && mainQueueThreads.intValue() != startupThreadCounts.mainQueueConsumerThreads()) {
                 dispatcher.remove("mainQueueConsumerThreads");
                 changed = true;
                 log.warn("Ignored runtime update to startup-fixed {}: requested={}, active={}",
                         "dispatcher.mainQueueConsumerThreads", mainQueueThreads.intValue(),
-                        startupDecisionTopology.mainQueueConsumerThreads());
+                        startupThreadCounts.mainQueueConsumerThreads());
             }
         }
         return changed ? JsonUtils.toStrictString(document) : content;
     }
 
-    private boolean preserveStartupMode(ObjectNode settings, String path,
-                                        String activeType, Set<String> supportedTypes) {
-        JsonNode type = settings.get("type");
-        if (type == null || !type.isTextual() || !supportedTypes.contains(type.textValue())
-                || activeType.equals(type.textValue())) {
-            return false;
-        }
-        settings.remove("type");
-        log.warn("Ignored runtime update to startup-fixed {}: requested={}, active={}",
-                path, type.textValue(), activeType);
-        return true;
-    }
-
-    /**
-     * Keeps the per-worker decision type selected at startup while preserving
-     * numeric local-window fields when that startup type is FIXED_WINDOW.
-     */
-    private boolean preserveWorkerDecisionType(ObjectNode decision) {
-        JsonNode type = decision.get("type");
-        if (type == null || !type.isTextual()) {
-            return false;
-        }
-        DecisionPolicyConfig.Type requested;
-        try {
-            requested = DecisionPolicyConfig.Type.valueOf(type.textValue());
-        } catch (IllegalArgumentException ignored) {
-            return false;
-        }
-        DecisionPolicyConfig.Type active = startupDecisionTopology.decisionType();
-        if (requested == active) {
-            return false;
-        }
-        decision.remove("type");
-        if (active == DecisionPolicyConfig.Type.SINGLE) {
-            decision.remove("maxRequests");
-            decision.remove("maxCollectionWaitMs");
-            decision.remove("maxPredictedExecutionMs");
-        }
-        log.warn("Ignored runtime update to startup-fixed scheduler.decision.type: "
-                + "requested={}, active={}", requested, active);
-        return true;
-    }
-
-    private record StartupDecisionTopology(DispatcherConfig.Type dispatcherType,
-                                           DecisionPolicyConfig.Type decisionType,
-                                           int decodeQueueThreads,
+    private record StartupThreadCounts(int decodeQueueThreads,
                                            int mainQueueConsumerThreads) {
 
         /**
          * Captures the scheduling modes selected when the application starts.
          */
-        private static StartupDecisionTopology from(FlexlbConfig config) {
-            SchedulerConfig scheduler = config.getScheduler();
-            return new StartupDecisionTopology(config.getDispatcher().getType(), scheduler.getDecision().getType(),
-                    config.getDispatcher().getDecodeQueueThreads(),
+        private static StartupThreadCounts from(FlexlbConfig config) {
+            return new StartupThreadCounts(config.getDispatcher().getDecodeQueueThreads(),
                     config.getDispatcher().getMainQueueConsumerThreads());
         }
     }
@@ -364,11 +303,10 @@ public class ConfigService {
     private static void logEffectiveConfig(FlexlbConfig config, int configSchemaVersion) {
         String scheduler = config.getScheduler().getType().name();
         String ordering = config.isPriorityOrdering() ? "PRIORITY" : "FIFO";
-        String decision = config.isFixedWindowDecision() ? "FIXED_WINDOW" : "SINGLE";
         String dispatcher = config.getDispatcher().typeName();
-        log.info("FlexLB config loaded: schemaVersion={}, scheduler={}, ordering={}, decision={}, "
+        log.info("FlexLB config loaded: schemaVersion={}, scheduler={}, ordering={}, "
                         + "dispatcher={}, prefillEstimator={}, groupRules={}",
-                configSchemaVersion, scheduler, ordering, decision, dispatcher,
+                configSchemaVersion, scheduler, ordering, dispatcher,
                 config.getRouter().getRoles().getPrefill()
                         .getExecutionTimeEstimator().getType(),
                 config.getRouter().getGroupSelector() == null ? 0

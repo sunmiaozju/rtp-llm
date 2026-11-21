@@ -1,7 +1,6 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.config.ConfigService;
-import org.flexlb.util.Logger;
 
 import java.util.List;
 import java.util.OptionalLong;
@@ -36,25 +35,17 @@ final class ExpirationTimer implements AutoCloseable {
         CANCELED
     }
 
-    /** Exact capabilities detached together from one slot during shutdown. */
-    record DetachedDeadlines(
-            RequestDeadline requestDeadline,
-            DecisionDeadline decisionDeadline, InactivityDeadline inactivityDeadline) {
-    }
-
     /** Timers detached atomically at ACTIVE -> TERMINALIZING. */
     static final class DetachedRequestTimers {
         private final RequestDeadline requestDeadline;
         private final InactivityDeadline inactivityDeadline;
-        private final DecisionDeadline detachedDecisionDeadline;
         private boolean released;
 
         DetachedRequestTimers(
                 RequestDeadline requestDeadline,
-                DecisionDeadline detachedDecisionDeadline, InactivityDeadline inactivityDeadline) {
+                InactivityDeadline inactivityDeadline) {
             this.requestDeadline = requestDeadline;
             this.inactivityDeadline = inactivityDeadline;
-            this.detachedDecisionDeadline = detachedDecisionDeadline;
         }
 
         synchronized void release(ExpirationTimer timer) {
@@ -74,15 +65,11 @@ final class ExpirationTimer implements AutoCloseable {
                     failure = RequestTerminalCleanup.appendFailure(failure, timerFailure);
                 }
             }
-            if (detachedDecisionDeadline != null) {
-                try {
-                    timer.cancel(detachedDecisionDeadline);
-                } catch (Throwable admissionFailure) {
-                    failure = RequestTerminalCleanup.appendFailure(failure, admissionFailure);
-                }
-            }
             RequestTerminalCleanup.rethrowCleanup(failure);
         }
+    }
+
+    record DetachedDeadlines(RequestDeadline requestDeadline, InactivityDeadline inactivityDeadline) {
     }
 
     private enum CloseState {
@@ -173,14 +160,6 @@ final class ExpirationTimer implements AutoCloseable {
     }
 
     /** Exact one-shot capability for request visibility and PD handoff detection. */
-    static final class DecisionDeadline extends DeadlineRegistration {
-        private final long deadlineAtMs;
-        private DecisionDeadline(ExpirationTimer owner, long deadlineAtMs) {
-            super(owner);
-            this.deadlineAtMs = deadlineAtMs;
-        }
-        long deadlineAtMs() { return deadlineAtMs; }
-    }
 
     private final RequestRegistry lifecycle;
     private final ConfigService config;
@@ -251,62 +230,6 @@ final class ExpirationTimer implements AutoCloseable {
 
     private void requestDeadlineExpired(RequestSlot slot, RequestDeadline exact) {
         slot.onSchedulingDeadline(exact);
-    }
-
-    // ── 可见性期限：计划、注册、触发与取消 ──
-
-    void attachDecisionDeadline(RequestSlot slot) {
-        OptionalLong deadline = slot.decisionDeadlineAtMs();
-        if (deadline.isPresent()) { registerDecisionDeadline(slot, deadline.getAsLong()); }
-    }
-
-    /**
-     * Register one exact stage deadline from the current delivery evidence.
-     *
-     * @return its exact slot-owned capability, or null when the slot rejected
-     *         installation because another lifecycle transition already won
-     */
-    DecisionDeadline registerDecisionDeadline(
-            RequestSlot exactSlot,
-            long deadlineAtMs) {
-        if (lifecycle.isShuttingDown()) {
-            return null;
-        }
-        try {
-            return register(
-                    exactSlot,
-                    new DecisionDeadline(this, deadlineAtMs),
-                    delayUntil(deadlineAtMs),
-                    this::installDecisionDeadline,
-                    this::decisionDeadlineExpired);
-        } catch (RuntimeException timerStopped) {
-            if (lifecycle.isShuttingDown()) {
-                return null;
-            }
-            throw timerStopped;
-        }
-    }
-
-    private boolean installDecisionDeadline(
-            RequestSlot exactSlot,
-            DecisionDeadline exactDeadline) {
-        synchronized (exactSlot) {
-            return lifecycle.isCurrentSlot(exactSlot)
-                    && exactSlot.installDecisionDeadline(exactDeadline);
-        }
-    }
-
-    private void decisionDeadlineExpired(RequestSlot slot, DecisionDeadline exact) {
-        slot.onDecisionVisibilityDeadline(exact);
-    }
-
-    void releaseDecisionDeadline(DecisionDeadline exact) {
-        if (exact == null) { return; }
-        try {
-            release(exact);
-        } catch (Throwable failure) {
-            Logger.error("Decision deadline cancellation failed", failure);
-        }
     }
 
     // ── 沉默期限：计划、注册与续期检查 ──
@@ -439,21 +362,6 @@ final class ExpirationTimer implements AutoCloseable {
         return requireOwner(exactDeadline).cancel();
     }
 
-    boolean cancel(DecisionDeadline exactDeadline) {
-        return requireOwner(exactDeadline).cancel();
-    }
-
-    void release(DecisionDeadline cleanup) {
-        if (cleanup == null) {
-            return;
-        }
-        try {
-            cancel(cleanup);
-        } catch (Throwable failure) {
-            Logger.error("Decision timer cleanup failed", failure);
-        }
-    }
-
     private DeadlineRegistration requireOwner(DeadlineRegistration exact) {
         if (exact.owner != this) {
             throw new IllegalArgumentException(
@@ -490,7 +398,7 @@ final class ExpirationTimer implements AutoCloseable {
         }
 
         try {
-            exactSweeper.accept(ttlMs, lifecycle::retainForSchedulerCleanup);
+            exactSweeper.accept(ttlMs, requestId -> false);
         } catch (RuntimeException | Error sweepFailure) {
             failure = append(failure, sweepFailure);
         }
@@ -571,8 +479,6 @@ final class ExpirationTimer implements AutoCloseable {
             }
             failure = cancelDetached(
                     detached.requestDeadline(), failure);
-            failure = cancelDetached(
-                    detached.decisionDeadline(), failure);
             failure = cancelDetached(detached.inactivityDeadline(), failure);
         }
         return failure;

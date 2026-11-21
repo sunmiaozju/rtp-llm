@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.flexlb.config.ConfigSchemaVersion;
+import org.flexlb.config.FlexlbConfigValidator;
 import org.flexlb.service.config.ConfigSource;
 import org.flexlb.service.config.NormalizedConfig;
 import org.springframework.stereotype.Component;
@@ -84,12 +85,12 @@ public final class V0ConfigDocumentParser implements ConfigDocumentParser {
     }
 
     private static void configureScheduling(ObjectNode v0Config, ObjectNode flexlbConfig) {
+        FlexlbConfigValidator.validateRemovedDispatcherType(v0Config);
         if (!v0Config.path("enableQueueing").asBoolean(false)) {
             throw new IllegalArgumentException(
                     "V0 configuration requires enableQueueing=true; DIRECT scheduling is not supported");
         }
         flexlbConfig.putObject("scheduler").put("type", "QUEUE");
-        flexlbConfig.putObject("dispatcher").put("type", "NON_BATCH");
     }
 
     private static void configureRouting(ObjectNode v0Config, ObjectNode flexlbConfig) {

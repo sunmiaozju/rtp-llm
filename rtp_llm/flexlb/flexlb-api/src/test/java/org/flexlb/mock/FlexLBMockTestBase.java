@@ -2,16 +2,12 @@ package org.flexlb.mock;
 
 import com.google.protobuf.ByteString;
 import io.netty.channel.nio.NioEventLoopGroup;
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.scheduler.DefaultRouter;
-import org.flexlb.balance.scheduler.PlacementKey;
 import org.flexlb.balance.scheduler.RequestScheduler;
 import org.flexlb.balance.scheduler.RequestSchedulerTestRuntime;
-import org.flexlb.balance.scheduler.RouteAdmission;
 import org.flexlb.config.CacheMatchConfiguration;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
@@ -47,7 +43,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
@@ -85,7 +80,6 @@ public abstract class FlexLBMockTestBase {
     protected EndpointRegistry endpointRegistry;
     protected FlexlbConfig config;
     protected ConfigService configService;
-    protected DefaultRouter router;
     protected EngineGrpcClient grpcClient;
     protected BatchSchedulerReporter reporter;
     protected WorkerDirectory engineWorkerStatus;
@@ -202,8 +196,6 @@ public abstract class FlexLBMockTestBase {
         WorkerStatus decodeWs = decodeEndpoint.getStatus();
 
         // 11. Fixed routing by default; E2E subclasses can install production routing.
-        router = createRouter();
-        schedulerRuntime.bindRouter(router);
 
         // 12. Publish discovered status in the fixture's directory.
         discover(prefillWs);
@@ -274,22 +266,6 @@ public abstract class FlexLBMockTestBase {
         return new WorkerDirectory(endpointRegistry);
     }
 
-    protected DefaultRouter createRouter() {
-        DefaultRouter fixedRouter = mock(DefaultRouter.class);
-        when(fixedRouter.select(any(BalanceContext.class), any())).thenAnswer(inv -> {
-            BalanceContext ctx = inv.getArgument(0);
-            return schedulerRuntime.admittedRoute(
-                    ctx, successRoute(ctx.getRequestId()));
-        });
-        return fixedRouter;
-    }
-
-    /** Build the exact held queue admission for a fixture response. */
-    protected final PlacementResult<RouteAdmission, PlacementKey> admittedRoute(
-            BalanceContext context, Response response) {
-        return schedulerRuntime.admittedRoute(context, response);
-    }
-
     protected BatchSchedulerReporter createBatchSchedulerReporter() {
         return mock(BatchSchedulerReporter.class);
     }
@@ -298,18 +274,14 @@ public abstract class FlexLBMockTestBase {
         return mock(RequestSchedulerReporter.class);
     }
 
-    protected org.flexlb.balance.scheduler.RequestRegistry requestRegistry() {
-        return schedulerRuntime.requestRegistry();
-    }
-
     protected long enqueueTimeoutMillis() {
         return 5_000L;
     }
 
     protected FlexlbConfig createConfig() {
         FlexlbConfig cfg = org.flexlb.mock.TestFlexlbConfigs.create();
-        cfg.fixedWindowDecision().setMaxRequests(1); // single request triggers dispatch
-        cfg.fixedWindowDecision().setMaxCollectionWaitMs(300);
+        cfg.getDispatcher().setMainQueueConsumerThreads(1);
+        cfg.getDispatcher().setDecodeQueueThreads(1);
         return cfg;
     }
 

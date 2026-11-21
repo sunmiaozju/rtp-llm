@@ -140,7 +140,7 @@ class V0ConfigDocumentParserTest {
         assertThat(converted.sourceSchemaVersion()).isEqualTo(ConfigSchemaVersion.V0_COMPATIBILITY);
         assertThat(behavior.getFallbackBatchTokenCapacity()).isEqualTo(4_194_304L);
         assertThat(behavior.getDispatcher().getType())
-                .isEqualTo(DispatcherConfig.Type.NON_BATCH);
+                .isEqualTo(DispatcherConfig.Type.NON_BATCH_V2);
         assertThat(behavior.getCacheMatching()).isInstanceOf(KvcmCacheMatchingConfig.class);
         assertThat(behavior.getRouter().getRoles().getPrefill().getCacheAffinity()
                 .getMinPrefixHitPercent()).isEqualTo(15);

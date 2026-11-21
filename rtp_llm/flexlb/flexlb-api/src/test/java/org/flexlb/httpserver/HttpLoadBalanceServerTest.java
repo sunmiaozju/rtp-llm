@@ -95,6 +95,9 @@ class HttpLoadBalanceServerTest {
         ConfigService configService = mock(ConfigService.class);
         RequestScheduler scheduler = mock(RequestScheduler.class);
         PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
+        var queue = mock(org.flexlb.balance.schedulev2.prefill.PrefillQueue.class);
+        when(endpoint.prefillQueue()).thenReturn(queue);
+        when(queue.dispatchedCount()).thenReturn(3);
         WorkerStatus status = mock(WorkerStatus.class);
         when(configService.loadBalanceConfig()).thenReturn(new FlexlbConfig());
         when(endpoint.getStatus()).thenReturn(status);
@@ -121,6 +124,8 @@ class HttpLoadBalanceServerTest {
                     .expectStatus()
                     .isOk()
                     .expectBody()
+                    .jsonPath(endpointPath + ".inflight_requests").isEqualTo(3)
+                    .jsonPath(endpointPath + ".inflight_route_requests").isEqualTo(3)
                     .jsonPath(endpointPath + ".cache_version").isEqualTo(9)
                     .jsonPath(endpointPath + ".cache_indexed").isEqualTo(true)
                     .jsonPath(endpointPath + ".cache_indexed_version").isEqualTo(8)

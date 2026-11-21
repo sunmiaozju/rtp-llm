@@ -16,7 +16,6 @@ public final class DispatcherConfig {
     public static final long DEFAULT_DISPATCH_STARVATION_THRESHOLD_MS = 500L;
 
     public enum Type {
-        NON_BATCH,
         /**
          * 新的非 batch 链路：先选 Prefill，Prefill 出队后再选 Decode。
          */
@@ -43,12 +42,6 @@ public final class DispatcherConfig {
      * 默认 30 秒，支持热更新；候选节点变化时立即失效。
      */
     private long cacheMatchResultTtlMs = 30_000L;
-
-    public static DispatcherConfig nonBatch() {
-        DispatcherConfig config = new DispatcherConfig();
-        config.type = Type.NON_BATCH;
-        return config;
-    }
 
     public String typeName() {
         return type.name();

@@ -30,22 +30,10 @@ public final class FlexlbConfigValidator {
             if ("QUEUE".equals(type)) {
                 validateOrderingShape(scheduler.path("ordering"),
                         effectiveDocument.path("scheduler").path("ordering"));
-                validateDecisionShape(scheduler.path("decision"),
-                        effectiveDocument.path("scheduler").path("decision"));
             }
         }
 
-        JsonNode dispatcher = document.path("dispatcher");
-        if (dispatcher.isObject()) {
-            if ("BATCH".equals(dispatcher.path("type").asText())) {
-                throw new ConfigValidationException("dispatcher.type",
-                        "BATCH is no longer supported; use NON_BATCH or NON_BATCH_V2");
-            }
-            rejectFieldsExcept(dispatcher, "dispatcher", "type", "maxInflightPerPrefillWorker",
-                    "maxInflightPerEncoderWorker", "prefillSubqueueLimitMultiplier",
-                    "dispatchStarvationThresholdMs", "cacheMatchResultTtlMs", "decodeQueueThreads",
-                    "mainQueueConsumerThreads", "requestPrepareThreads", "requestPrepareMaxThreads");
-        }
+        validateRemovedDispatcherType(document);
 
         JsonNode decodeCostEstimator = document.path("router").path("roles")
                 .path("decode").path("costEstimator");
@@ -54,23 +42,16 @@ public final class FlexlbConfigValidator {
                     "router.roles.decode.costEstimator.expression", "must be a string");
         }
 
-        JsonNode prefill = document.path("router").path("roles").path("prefill");
-        if (prefill.isObject()) {
-            validateEstimatorShape(prefill.path("executionTimeEstimator"));
+        JsonNode estimator = document.path("router").path("roles").path("prefill").path("executionTimeEstimator");
+        if ("LEARNING".equals(estimator.path("type").asText())) {
+            rejectFields(estimator, "router.roles.prefill.executionTimeEstimator", "expression");
         }
     }
 
-    private static void validateEstimatorShape(JsonNode estimator) {
-        if (!estimator.isObject()) {
-            return;
-        }
-        String type = estimator.path("type").asText("FORMULA");
-        if ("FORMULA".equals(type)) {
-            rejectFieldsExcept(estimator, "router.roles.prefill.executionTimeEstimator", "type", "expression",
-                    "localWeight", "remoteWeight");
-        } else if ("LEARNING".equals(type)) {
-            rejectFieldsExcept(estimator, "router.roles.prefill.executionTimeEstimator", "type", "localWeight",
-                    "remoteWeight");
+    public static void validateRemovedDispatcherType(JsonNode document) {
+        String type = document.path("dispatcher").path("type").asText();
+        if ("BATCH".equals(type) || "NON_BATCH".equals(type)) {
+            throw new ConfigValidationException("dispatcher.type", type + " is no longer supported; use NON_BATCH_V2");
         }
     }
 
@@ -81,10 +62,8 @@ public final class FlexlbConfigValidator {
         }
         String type = effectiveOrdering.path("type").asText("FIFO");
         if ("FIFO".equals(type)) {
-            rejectFieldsExcept(ordering, "scheduler.ordering", "type");
+            rejectFields(ordering, "scheduler.ordering", "defaultPriority", "highPriorityThreshold", "preemption");
         } else if ("PRIORITY".equals(type)) {
-            rejectFieldsExcept(ordering, "scheduler.ordering", "type",
-                    "defaultPriority", "highPriorityThreshold", "preemption");
             validatePreemptionShape(ordering.path("preemption"));
         }
     }
@@ -103,31 +82,12 @@ public final class FlexlbConfigValidator {
                 "is supported only when DECODE_ENGINE_OWNED is enabled");
     }
 
-    private static void validateDecisionShape(
-            JsonNode decision, JsonNode effectiveDecision) {
-        if (!decision.isObject()) {
-            return;
-        }
-        String type = effectiveDecision.path("type").asText("FIXED_WINDOW");
-        if ("SINGLE".equals(type)) {
-            rejectFieldsExcept(decision, "scheduler.decision", "type");
-        } else if ("FIXED_WINDOW".equals(type)) {
-            rejectFieldsExcept(decision, "scheduler.decision", "type",
-                    "maxRequests", "maxCollectionWaitMs",
-                    "maxPredictedExecutionMs");
-        }
-    }
-
-    private static void rejectFieldsExcept(
-            JsonNode object, String path, String... allowed) {
-        java.util.Set<String> names = java.util.Set.of(allowed);
-        object.fieldNames().forEachRemaining(field -> {
-            if (!names.contains(field)) {
-                throw new ConfigValidationException(
-                        path + "." + field,
-                        "is not supported by the active mode");
+    private static void rejectFields(JsonNode object, String path, String... fields) {
+        for (String field : fields) {
+            if (object.has(field)) {
+                throw new ConfigValidationException(path + "." + field, "is not supported by the active mode");
             }
-        });
+        }
     }
 
     public static void validate(FlexlbConfig config) {
@@ -170,29 +130,7 @@ public final class FlexlbConfigValidator {
         positive(queue.getQueueTimeoutMs(), "scheduler.queueTimeoutMs");
         positive(queue.getMaxQueuedRequests(), "scheduler.maxQueuedRequests");
         positive(queue.getMainQueueMaxAddAttempts(), "scheduler.mainQueueMaxAddAttempts");
-        require(Double.isFinite(queue.getScanBudgetMultiplier()) && queue.getScanBudgetMultiplier() >= 1.0,
-                "scheduler.scanBudgetMultiplier", "must be finite and at least 1.0");
         require(queue.getOrdering() != null, "scheduler.ordering", "is required for QUEUE");
-        require(queue.getDecision() != null, "scheduler.decision", "is required for QUEUE");
-        DecisionPolicyConfig decision = queue.getDecision();
-        require(decision.getType() != null, "scheduler.decision.type", "is required");
-        if (decision.getType() == DecisionPolicyConfig.Type.FIXED_WINDOW) {
-            positive(decision.getMaxRequests(),
-                    "scheduler.decision.maxRequests");
-            nonNegative(decision.getMaxCollectionWaitMs(),
-                    "scheduler.decision.maxCollectionWaitMs");
-            if (decision.getMaxPredictedExecutionMs() != null) {
-                positive(decision.getMaxPredictedExecutionMs(),
-                        "scheduler.decision.maxPredictedExecutionMs");
-            }
-        } else {
-            require(decision.getMaxRequests() == DecisionPolicyConfig.DEFAULT_MAX_REQUESTS
-                            && decision.getMaxCollectionWaitMs()
-                            == DecisionPolicyConfig.DEFAULT_MAX_COLLECTION_WAIT_MS
-                            && decision.getMaxPredictedExecutionMs() == null,
-                    "scheduler.decision",
-                    "fixed-window fields are supported only with FIXED_WINDOW");
-        }
         QueueOrderingConfig ordering = queue.getOrdering();
         require(ordering.getType() != null, "scheduler.ordering.type", "is required");
         if (ordering.getType() == QueueOrderingConfig.Type.PRIORITY) {

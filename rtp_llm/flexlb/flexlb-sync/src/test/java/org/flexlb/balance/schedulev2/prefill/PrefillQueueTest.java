@@ -1,9 +1,6 @@
 package org.flexlb.balance.schedulev2.prefill;
 
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.estimate.PrefillTtftEstimate;
-import org.flexlb.balance.estimate.WorkView;
-import org.flexlb.balance.planner.GroupPlanner;
 import org.flexlb.balance.prediction.FormulaPredictor;
 import org.flexlb.balance.prediction.PrefillTimePredictor;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
@@ -23,7 +20,6 @@ import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.Test;
 
-import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -245,7 +241,7 @@ class PrefillQueueTest {
         publish(notReported);
         V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of("2", TaskPhase.RUNNING));
         long publishedAtMs = notReported.publishedAtMs();
-        record.updateStatus(WorkView.Phase.ENGINE_RUNNING, publishedAtMs + 50L);
+        record.updateStatus(DispatchedRequest.Phase.ENGINE_RUNNING, publishedAtMs + 50L);
 
         assertFalse(record.statusExpired(publishedAtMs + 129L, 80L));
         assertTrue(record.statusExpired(publishedAtMs + 130L, 80L));
@@ -318,32 +314,6 @@ class PrefillQueueTest {
         }
     }
 
-    @Test
-    void loadViewHasWaitingItemsDispatchedWorkAndUnknownCount() {
-        Request waiting = request("w");
-        waiting.setQueueSeq(1L);
-        V2TestSupport.choose(waiting, endpoint, 4L, 20L);
-        waiting.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
-        queue.addWaiting(waiting);
-        Request dispatched = request("d");
-        dispatched.setQueueSeq(2L);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(dispatched, 10L, 30L));
-        V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of("d", TaskPhase.RUNNING, "x", TaskPhase.PENDING));
-        GroupPlanner.Constraints constraints = new GroupPlanner.Constraints(1, Long.MAX_VALUE, Long.MAX_VALUE, 0L, 0L);
-        Comparator<GroupPlanner.Item> order = Comparator.comparingLong(GroupPlanner.Item::enqueueSeq);
-
-        PrefillTtftEstimate.LoadView view = queue.loadView(1_000L, order, constraints);
-
-        assertEquals(List.of("w"), view.queue().activeItems().stream().map(GroupPlanner.Item::requestId).toList());
-        assertEquals(4L, view.queue().activeItems().getFirst().hitCache());
-        assertEquals(List.of(new WorkView.RequestWork("d", WorkView.Phase.ENGINE_RUNNING, 30L)),
-                view.work().requests());
-        assertEquals(1L, view.work().unknownRequestCount());
-
-        queue.removeWaiting(waiting);
-        assertNotEquals(view.ownershipVersion(), queue.loadView(1_000L, order, constraints).ownershipVersion());
-    }
-
     private static void publish(Request request) {
         request.publish(Stage.DECODE_WAITING, List.of());
     }
@@ -387,9 +357,7 @@ class PrefillQueueTest {
         assertEquals(2304L, record.kvTokens());
         assertEquals(originalChoice, request.selectedPrefill());
         assertEquals(279L, request.selectedPrefill().predictedMs());
-        var order = Comparator.comparingLong(GroupPlanner.Item::enqueueSeq);
-        var constraints = new GroupPlanner.Constraints(1, Long.MAX_VALUE, Long.MAX_VALUE, 0L, 0L);
-        assertEquals(41_988L, queue.loadView(0L, order, constraints).work().requests().getFirst().remainingWorkMs());
+        assertEquals(41_988L, queue.dispatchedWorkMs().orElseThrow());
 
         reportTask(task);
         assertEquals(42_360L, queue.estimatedWorkMs(372L));
@@ -501,7 +469,7 @@ class PrefillQueueTest {
         assertEquals(16L, queue.estimatedWorkMs(0L));
         reportTask(cacheTask(record.request().requestId(), false, 0L, null, TaskPhase.PENDING));
         assertEquals(16L, queue.estimatedWorkMs(0L));
-        assertEquals(WorkView.Phase.ENGINE_QUEUED, record.phase());
+        assertEquals(DispatchedRequest.Phase.ENGINE_QUEUED, record.phase());
         reportTask(cacheTask(record.request().requestId(), true, 8L, null, TaskPhase.RUNNING));
         assertEquals(8L, queue.estimatedWorkMs(0L));
         reportTask(cacheTask(record.request().requestId(), true, 0L, null, TaskPhase.RUNNING));
@@ -638,20 +606,20 @@ class PrefillQueueTest {
         var missing = EngineStatusConverter.convertToStatusObservation(owner,
                 EngineRpcService.WorkerStatusPB.parseFrom(status.build().toByteArray()));
         assertEquals(null, missing.activeTasks().get(request.requestId()).remainingPrefillTokens());
-        events.onPrefillStatus(endpoint, missing, List.of());
+        events.onPrefillStatus(endpoint, missing);
         assertEquals(800L, queue.estimatedWorkMs(0L));
 
         status.setRunningTaskInfo(0, task.setRemainingPrefillTokens(500L));
         var progress = EngineStatusConverter.convertToStatusObservation(owner,
                 EngineRpcService.WorkerStatusPB.parseFrom(status.build().toByteArray()));
-        events.onPrefillStatus(endpoint, progress, List.of());
+        events.onPrefillStatus(endpoint, progress);
         assertEquals(500L, queue.estimatedWorkMs(0L));
 
         status.setRunningTaskInfo(0, task.setRemainingPrefillTokens(0L));
         var zeroRemaining = EngineStatusConverter.convertToStatusObservation(owner,
                 EngineRpcService.WorkerStatusPB.parseFrom(status.build().toByteArray()));
         assertEquals(0L, zeroRemaining.activeTasks().get(request.requestId()).remainingPrefillTokens());
-        events.onPrefillStatus(endpoint, zeroRemaining, List.of());
+        events.onPrefillStatus(endpoint, zeroRemaining);
         assertEquals(500L, queue.estimatedWorkMs(0L));
         assertEquals(1L, queue.inflightCount());
     }
@@ -700,7 +668,7 @@ class PrefillQueueTest {
             assertEquals(10L, queue.estimatedWorkMs(0L));
             assertTrue(record.seenByEngine());
             assertFalse(record.statusExpired(System.currentTimeMillis(), 1000L));
-            assertEquals(WorkView.Phase.ENGINE_QUEUED, record.phase());
+            assertEquals(DispatchedRequest.Phase.ENGINE_QUEUED, record.phase());
             assertEquals(1L, queue.inflightCount());
         }
         verifyNoInteractions(predictor, evaluator);
@@ -708,7 +676,7 @@ class PrefillQueueTest {
         reportTask(cacheTask(record.request().requestId(), true, 0L, 8L, TaskPhase.RUNNING));
         assertEquals(8L, record.predictedMs());
         assertEquals(8L, queue.estimatedWorkMs(0L));
-        assertEquals(WorkView.Phase.ENGINE_RUNNING, record.phase());
+        assertEquals(DispatchedRequest.Phase.ENGINE_RUNNING, record.phase());
         verify(evaluator).estimateMs(16L, 16L, 0L);
         verify(evaluator).estimateMs(16L, 8L, 0L);
         verifyNoMoreInteractions(evaluator);

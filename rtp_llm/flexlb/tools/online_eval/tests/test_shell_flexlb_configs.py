@@ -57,22 +57,18 @@ class ShellFlexlbConfigTest(unittest.TestCase):
                 env = dict(master["zone_process_setting"]["process_info"]["envs"])
                 self.assert_v3(json.loads(env["FLEXLB_CONFIG"]))
 
-    def test_smoke_matrix_preserves_its_two_mode_contracts(self):
+    def test_smoke_matrix_uses_fifo_and_priority_on_v2(self):
         script = (SCRIPT_DIR / "run_matrix_smoke.sh").read_text()
         documents = re.findall(r"FLEXLB_CONFIG='(\{.*?\})'", script, re.S)
         self.assertEqual(2, len(documents))
-        expected = (
-            ("QUEUE", "PRIORITY", "FIXED_WINDOW", "BATCH", 4),
-            ("QUEUE", "FIFO", "SINGLE", "NON_BATCH", 2),
-        )
-        for raw, (scheduler, ordering, decision, dispatcher, concurrency) in zip(documents, expected):
-            with self.subTest(scheduler=scheduler, ordering=ordering):
+        for raw, (ordering, concurrency) in zip(documents, (("PRIORITY", 4), ("FIFO", 2))):
+            with self.subTest(ordering=ordering):
                 config = json.loads(raw)
                 self.assert_v3(config)
-                self.assertEqual(scheduler, config["scheduler"]["type"])
+                self.assertEqual("QUEUE", config["scheduler"]["type"])
                 self.assertEqual(ordering, config["scheduler"].get("ordering", {}).get("type"))
-                self.assertEqual(decision, config["scheduler"].get("decision", {}).get("type"))
-                self.assertEqual({"type": dispatcher, "maxInflightPerPrefillWorker": concurrency},
+                self.assertNotIn("decision", config["scheduler"])
+                self.assertEqual({"type": "NON_BATCH_V2", "maxInflightPerPrefillWorker": concurrency},
                                  config["dispatcher"])
                 self.assertEqual(132, config["router"]["roles"]["decode"]["availability"]["maxEngineRequests"])
 

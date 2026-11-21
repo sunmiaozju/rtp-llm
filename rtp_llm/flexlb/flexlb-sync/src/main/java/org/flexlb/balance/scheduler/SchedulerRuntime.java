@@ -2,11 +2,9 @@ package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.route.RoleType;
@@ -18,9 +16,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.function.Predicate;
 
 /** Owns scheduler maintenance, metrics traversal, and ordered shutdown. */
@@ -103,9 +99,7 @@ final class SchedulerRuntime {
             return;
         }
         reportSchedulerInflight();
-        reportGlobalQueue();
         reportSharedQueueCapacity();
-        reportPrefillAndPdFusionEndpoints();
         reportDecodeEndpoints();
     }
 
@@ -126,19 +120,6 @@ final class SchedulerRuntime {
         }
     }
 
-    private void reportGlobalQueue() {
-        try {
-            RequestRegistry.GlobalQueueStats stats = requests.globalQueueStats();
-            if (stats != null) {
-                reporter.reportGlobalQueue(stats.depth(), stats.maxQueuedRequests());
-                reporter.reportGlobalQueueOldestWaitMs(stats.oldestWaitMs());
-            }
-        } catch (RuntimeException failure) {
-            warnIsolated(
-                    "Failed to report global queue metrics", failure);
-        }
-    }
-
     private void reportSharedQueueCapacity() {
         FlexlbConfig config;
         try {
@@ -151,9 +132,7 @@ final class SchedulerRuntime {
             return;
         }
         try {
-            if (config.getDispatcher().getType() == DispatcherConfig.Type.NON_BATCH_V2) {
-                reporter.reportGlobalQueueLimit(config.getScheduler().getMaxQueuedRequests());
-            }
+            reporter.reportGlobalQueueLimit(config.getScheduler().getMaxQueuedRequests());
             reporter.reportTotalQueueWaiting(queueCapacity.globalQueueAndEngineSubQueueCount());
         } catch (RuntimeException failure) {
             warnIsolated("Failed to report total queued requests", failure);
@@ -165,46 +144,6 @@ final class SchedulerRuntime {
                         queueCapacity.engineSubQueueLimit(config, logicalEndpointCount), logicalEndpointCount);
             } catch (RuntimeException failure) {
                 warnIsolated("Failed to report shared queue capacity for " + role, failure);
-            }
-        }
-    }
-
-    private void reportPrefillAndPdFusionEndpoints() {
-        reportRoutingEndpoints(RoleType.PREFILL);
-        reportRoutingEndpoints(RoleType.PDFUSION);
-    }
-
-    private void reportRoutingEndpoints(RoleType role) {
-        Map<Integer, Integer> queueSizes = new HashMap<>();
-        for (WorkerEndpoint worker : EndpointRegistry.getEndpointsByRole(role).values()) {
-            if (!(worker instanceof PrefillEndpoint endpoint)) {
-                continue;
-            }
-            try {
-                Map<Integer, Integer> endpointQueueSizes = endpoint.queuedRequestCountsByPriority();
-                endpointQueueSizes.forEach((priority, size) -> queueSizes.merge(priority, size, Integer::sum));
-            } catch (RuntimeException failure) {
-                warnIsolated("Failed to read priority queue metrics: endpoint=" + endpoint.ipPort(), failure);
-            }
-            try {
-                endpoint.reportBatchMetrics(reporter);
-            } catch (RuntimeException failure) {
-                warnIsolated("Failed to report " + role + " endpoint metrics: endpoint=" + endpoint.ipPort(), failure);
-            }
-            if (role == RoleType.PREFILL) {
-                try {
-                    admissionReporter.reportPrefillQueueDepth(endpoint.ipPort(), endpoint.queuedRequestCount());
-                } catch (RuntimeException failure) {
-                    warnIsolated("Failed to report Prefill admission metrics: endpoint=" + endpoint.ipPort(), failure);
-                }
-            }
-        }
-        for (Map.Entry<Integer, Integer> queueSize : queueSizes.entrySet()) {
-            try {
-                reporter.reportBatcherQueueDepthByPriority(role.name(), null, queueSize.getKey(), queueSize.getValue());
-            } catch (RuntimeException failure) {
-                warnIsolated("Failed to report priority queue metrics: role=" + role + ", priority=" + queueSize.getKey(),
-                        failure);
             }
         }
     }

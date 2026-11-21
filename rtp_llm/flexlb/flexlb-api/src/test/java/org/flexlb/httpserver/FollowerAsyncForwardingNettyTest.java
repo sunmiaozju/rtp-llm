@@ -9,7 +9,6 @@ import io.grpc.stub.StreamObserver;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.consistency.LBStatusConsistencyService;
 import org.flexlb.schedule.grpc.FlexlbScheduleProtocol;
 import org.flexlb.schedule.grpc.FlexlbServiceGrpc;
@@ -527,7 +526,7 @@ class FollowerAsyncForwardingNettyTest {
 
             ConfigService configService = mock(ConfigService.class);
             var routingConfig = org.flexlb.mock.TestFlexlbConfigs.create();
-            routingConfig.setDispatcher(DispatcherConfig.nonBatch());
+            routingConfig.setDispatcher(new org.flexlb.config.DispatcherConfig());
             when(configService.loadBalanceConfig()).thenReturn(routingConfig);
             EngineHealthReporter healthReporter = mock(EngineHealthReporter.class);
             channelEventLoop = new NioEventLoopGroup(1);

@@ -1,14 +1,10 @@
 package org.flexlb.balance.schedulev2.prefill;
 
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.estimate.PrefillTtftEstimate;
-import org.flexlb.balance.estimate.QueueView;
-import org.flexlb.balance.estimate.WorkView;
-import org.flexlb.balance.estimate.WorkView.Phase;
-import org.flexlb.balance.planner.GroupPlanner;
 import org.flexlb.balance.prediction.PrefillPredictionBoundary;
 import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
+import org.flexlb.balance.schedulev2.prefill.DispatchedRequest.Phase;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestOrder;
 import org.flexlb.balance.schedulev2.request.SelectedPrefill;
@@ -19,12 +15,10 @@ import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.util.Logger;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -472,28 +466,21 @@ public final class PrefillQueue {
         return totalPredictedWorkMs.sum() + predictedMs;
     }
 
+    public long statusVersion() {
+        return changeVersion.get();
+    }
+
     /**
-     * 选 Prefill 时用的负载视图：等待的请求按出队顺序排，已 dispatch 的请求带上预估耗时和引擎上的阶段。
+     * 已交给 Decode 的请求剩余 Prefill 工作量，不含等待队列。
      */
-    public PrefillTtftEstimate.LoadView loadView(long nowMs,
-                                                 Comparator<GroupPlanner.Item> itemOrder,
-                                                 GroupPlanner.Constraints constraints) {
-        long version = changeVersion.get();
-        List<GroupPlanner.Item> items = new ArrayList<>();
-        for (Request request : waiting) {
-            long seqLen = request.seqLen();
-            long hitCache = request.selectedPrefill() == null ? 0L : request.selectedPrefill().hitCacheTokens();
-            items.add(new GroupPlanner.Item(request.requestId(), request.priority(), request.queueSeq(),
-                    request.createdAtMs(), request.ctx().getRequestExpiresAtMs(), seqLen, Math.min(hitCache, seqLen)));
+    public OptionalLong dispatchedWorkMs() {
+        if (unknownRequestCount > 0L) {
+            return OptionalLong.empty();
         }
-        items.sort(itemOrder);
-        List<WorkView.RequestWork> works = new ArrayList<>();
+        long total = 0L;
         for (DispatchedRequest record : dispatched.values()) {
-            works.add(new WorkView.RequestWork(record.request().requestId(), record.phase(), record.predictedMs()));
+            total += record.predictedMs();
         }
-        works.sort(Comparator.comparing(WorkView.RequestWork::requestId));
-        QueueView queue = new QueueView(nowMs, itemOrder, constraints, items, null);
-        WorkView work = new WorkView(nowMs, works, unknownRequestCount);
-        return new PrefillTtftEstimate.LoadView(queue, work, version);
+        return OptionalLong.of(total);
     }
 }

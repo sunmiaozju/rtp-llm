@@ -4,9 +4,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.cache.domain.CacheMatchResult;
@@ -24,7 +22,6 @@ import org.flexlb.cache.match.localsync.LocalSyncCacheMatchProvider;
 import org.flexlb.cache.telemetry.CacheMetricsReporter;
 import org.flexlb.config.CacheMatchConfiguration;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.LocalStandbyConfig;
 import org.flexlb.config.RoutingConfig;
@@ -101,7 +98,6 @@ class CacheHitFeedbackFlowTest {
             }
         }
         config = new FlexlbConfig();
-        config.setDispatcher(DispatcherConfig.nonBatch());
         config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator().setExpression("sum(computeTokens)");
         var affinity = new RoutingConfig.CacheAffinityConfig();
         affinity.setRemoteDiscount(0.5);
@@ -110,12 +106,7 @@ class CacheHitFeedbackFlowTest {
         when(configs.loadBalanceConfig()).thenReturn(config);
         registry = new EndpointRegistry(configs, RunnerTestSupport.eventSink(),
                 mock(org.flexlb.service.monitor.BatchSchedulerReporter.class),
-                new org.flexlb.balance.delivery.NonBatchDeliveryStrategy(
-                        mock(org.flexlb.balance.scheduler.RequestRegistry.class),
-                        mock(org.flexlb.balance.delivery.DeliveryMetrics.class)),
-                new org.flexlb.balance.estimate.NonBatchTtftEstimator(),
-                new org.flexlb.balance.scheduler.PlacementAvailability(), new QueueCapacity(),
-                new PrefillQueueRegistry(), mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
+                new org.flexlb.balance.scheduler.PlacementAvailability(), new PrefillQueueRegistry(), mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         directory = new WorkerDirectory(registry);
         worker = RunnerTestSupport.discovered(RoleType.PREFILL, "group", "10.0.0.1", 8080, 8081, "test");
         directory.currentOrDiscover(RoleType.PREFILL, worker.getLogicalIpPort(), () -> worker);
@@ -373,9 +364,10 @@ class CacheHitFeedbackFlowTest {
         context.setRequest(request);
         context.getTheoryHitTokens().complete(600L);
         context.setSchedulingMetadata(SchedulingMetadata.explicit(50, System.currentTimeMillis() + 60_000));
-        var selected = strategy.select(context, RoleType.PREFILL, "group");
-        assertEquals(PlacementResult.Status.SUCCESS, selected.status());
-        selected.value().close();
+        var prepared = strategy.prepare(context, RoleType.PREFILL, "group");
+        assertNotNull(prepared);
+        strategy.selectPrepared(context, RoleType.PREFILL, "group", prepared,
+                candidate -> candidate.endpoint().prefillQueue().estimatedWorkMs(candidate.predictedMs()));
     }
 
     private void publish(WorkerStatus status) {

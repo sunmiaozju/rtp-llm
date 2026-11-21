@@ -1,7 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.eviction.EvictionManager;
 import org.flexlb.balance.schedulev2.RequestSchedulerV2;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
@@ -9,9 +7,7 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.route.RequestPhase;
-import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.util.concurrent.CompletableFuture;
 
@@ -32,7 +28,7 @@ class RequestSchedulerNonBatchV2Test {
         RequestRegistry registry = mock(RequestRegistry.class);
         RequestSchedulerV2 schedulerV2 = mock(RequestSchedulerV2.class);
         RequestScheduler scheduler = scheduler(config, registry, schedulerV2);
-        BalanceContext context = RequestLifecycleTestSupport.context(config, 1L);
+        BalanceContext context = org.flexlb.balance.schedulev2.V2TestSupport.request(config, "1", 50, 10).ctx();
         CompletableFuture<Response> future = new CompletableFuture<>();
         RequestState state = state();
         when(schedulerV2.submit(context)).thenReturn(future);
@@ -74,10 +70,6 @@ class RequestSchedulerNonBatchV2Test {
                                               RequestSchedulerV2 schedulerV2) {
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
-        ObjectProvider<RequestSchedulerV2> provider = mock(ObjectProvider.class);
-        when(provider.getObject()).thenReturn(schedulerV2);
-        return new RequestScheduler(service, mock(DefaultRouter.class), mock(EndpointRegistry.class),
-                mock(BatchSchedulerReporter.class), mock(EvictionManager.class), registry, new PlacementAvailability(),
-                new QueueCapacity(), provider);
+        return new RequestScheduler(service, mock(DefaultRouter.class), registry, schedulerV2);
     }
 }

@@ -1,20 +1,15 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.config.FlexlbConfig;
-import org.flexlb.dao.BalanceContext;
-import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.grpc.WorkerStatusPBs;
-import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -41,16 +36,8 @@ class WorkerEndpointTest {
         FlexlbConfig config = org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig();
         config.getRouter().getRoles().getPrefill().getExecutionTimeEstimator()
                 .setExpression("sum(computeTokens)");
-        EndpointTestSupport.TestRequestRuntime requestRuntime =
-                EndpointTestSupport.requestRuntime();
-        endpoint = EndpointTestSupport.standalonePrefillEndpoint(
-                status,
-                () -> config,
-                EndpointTestSupport.routeStrategy(requestRuntime),
-                requestRuntime.events(),
-                Mockito.mock(BatchSchedulerReporter.class),
-                new org.flexlb.balance.scheduler.PlacementAvailability());
-        endpoint.startGeneration();
+        endpoint = EndpointTestSupport.standalonePrefillEndpoint(status, config, EndpointTestSupport.noopEventSink(),
+                org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
     }
 
     @AfterEach
@@ -194,35 +181,6 @@ class WorkerEndpointTest {
         assertEquals("group-x", endpoint.getStatus().getGroup());
         assertEquals(5L, endpoint.getStatus().getDpRank());
         assertTrue(endpoint.getStatus().pollHealth().reportedAlive());
-    }
-
-    private void calibrate(Map<String, TaskInfoPB.Builder> finished, Map<String, TaskInfoPB.Builder> running) {
-        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
-        WorkerStatusPBs.setFinishedTasks(response, finished);
-        WorkerStatusPBs.setRunningTasks(response, running);
-        EndpointTestSupport.applyStatus(endpoint, response);
-    }
-
-    private ScheduledRequest item(long requestId, long seqLen) {
-        return new ScheduledRequest(
-                ctx(Long.toString(requestId), seqLen),
-                null,
-                null,
-                null,
-                null,
-                endpoint,
-                null,
-                null,
-                0L);
-    }
-
-    private BalanceContext ctx(String requestId, long seqLen) {
-        Request req = new Request();
-        req.setRequestId(requestId);
-        req.setSeqLen(seqLen);
-        BalanceContext ctx = new BalanceContext(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
-        ctx.setRequest(req);
-        return ctx;
     }
 
     private TaskInfoPB.Builder task(String requestId, long inputLength, long prefixLength, long batchId) {

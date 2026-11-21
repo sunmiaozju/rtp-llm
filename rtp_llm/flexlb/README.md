@@ -75,12 +75,12 @@ The following Maven Wrapper files are included in the project (do not delete):
 
 `FLEXLB_CONFIG` is a required JSON environment variable. It configures scheduling,
 delivery, routing, worker synchronization, and observability; file paths are not accepted.
-The online loader accepts schema 3 only. Duplicate keys, unknown or inactive fields,
-`null`, scalar coercion, numeric enums, and trailing JSON fail startup.
+Schema 3 rejects duplicate keys, unknown or inactive fields, `null`, scalar coercion,
+numeric enums, and trailing JSON. Only explicitly allowlisted retired fields are ignored.
 
 | Setting | Schema 3 behavior |
 | --- | --- |
-| `dispatcher.type` | `NON_BATCH_V2` (default) or `NON_BATCH`. Explicit `BATCH` configurations are rejected. |
+| `dispatcher.type` | `NON_BATCH_V2` (default and only mode). `BATCH` and `NON_BATCH` are rejected. |
 | `dispatcher.maxInflightPerPrefillWorker` | Positive request count, default 2. |
 | `dispatcher.dispatchStarvationThresholdMs` | NON_BATCH_V2: 500 ms by default; hot-reloadable; 0 means strict order. |
 | `dispatcher.cacheMatchResultTtlMs` | NON_BATCH_V2: default 30000 ms; positive; hot-reloadable. |
@@ -109,8 +109,7 @@ export FLEXLB_CONFIG='{
     "type": "QUEUE",
     "queueTimeoutMs": 3600000,
     "maxQueuedRequests": 100000,
-    "ordering": {"type": "FIFO"},
-    "decision": {"type": "FIXED_WINDOW", "maxRequests": 8, "maxCollectionWaitMs": 300}
+    "ordering": {"type": "FIFO"}
   },
   "dispatcher": {"type": "NON_BATCH_V2", "maxInflightPerPrefillWorker": 2},
   "requestLifecycle": {
@@ -250,45 +249,15 @@ response written in between, which fails every in-flight Schedule on that connec
 valid; when false each one is a strike. Keep `permitKeepAliveTimeMs` at or below the smallest PING
 interval any client uses (grpc-java clients never ping more often than every 10 s).
 
-### Scheduler, ordering, decision, and dispatcher
+### Generation scheduling
 
-With `dispatcher.type=NON_BATCH`, ordering and decision formation are independent:
+Generation uses `NON_BATCH_V2` with either `FIFO` or `PRIORITY` ordering. FlexLB
+selects Prefill first, then Decode when the request leaves the Prefill queue. A
+PD-fused deployment selects a single `PDFUSION` worker. The frontend sends each
+request to the selected worker. `scheduler.decision` (`SINGLE` / `FIXED_WINDOW`)
+is no longer supported. Use a single traffic group per V2 deployment.
 
-| Scheduler | Queue ordering | Decision | Dispatcher | Behavior |
-| --- | --- | --- | --- | --- |
-| `QUEUE` | `FIFO` | `SINGLE` | `NON_BATCH` | Form singleton decisions; frontend sends |
-| `QUEUE` | `FIFO` | `FIXED_WINDOW` | `NON_BATCH` | Form bounded groups; frontend sends each routed request |
-
-`PRIORITY` can replace `FIFO` in both combinations. `SINGLE`/`FIXED_WINDOW`
-choose how many requests form one decision group, not how the requests are sent.
-Both dispatchers return a route for each request; the frontend sends the request
-to the selected engine. `NON_BATCH_V2` selects Prefill and Decode in separate
-queue stages and does not use the legacy decision groups.
-
-`FIXED_WINDOW` uses `maxRequests` (positive integer, default 8),
-`maxCollectionWaitMs` (default 300 ms), and optional `maxPredictedExecutionMs`.
-Reaching the predicted-time cap dispatches the group; an indivisible singleton may
-exceed it. A zero collection window can still group already-waiting requests.
-`SINGLE` has no collection parameters. Omitting `scheduler.decision` selects
-`FIXED_WINDOW`.
-
-Configuration examples:
-
-- [QUEUE + PRIORITY + NON_BATCH](docs/config-examples/flexlb-queue-priority-non-batch.json)
-
-NON_BATCH uses `dispatcher.maxInflightPerPrefillWorker` as its per-worker request limit. Example:
-
-```bash
-export FLEXLB_CONFIG='{
-  "schemaVersion": 3,
-  "scheduler": {"type": "QUEUE"},
-  "dispatcher": {"type": "NON_BATCH", "maxInflightPerPrefillWorker": 2},
-  "requestLifecycle": {
-    "request": {"timeoutMs": 60000},
-    "decision": {"lifetime": 2.0}
-  }
-}'
-```
+See the [priority scheduling example](docs/config-examples/flexlb-queue-priority-non-batch.json).
 
 PREFILL and PDFUSION use fixed BEST_ONLY selection. With `cacheAffinity` configured,
 a cache leader is preferred when its reusable prefix meets `minPrefixHitPercent`
@@ -396,7 +365,7 @@ own request. This does not provide cross-node deduplication for frontend retries
 
 ## Configuration reference
 
-- **FlexLB behavior**: one strict JSON document in `FLEXLB_CONFIG`.
+- **FlexLB behavior**: one JSON document in `FLEXLB_CONFIG`; unknown keys are ignored.
 - **Prefill execution formula**:
   `router.roles.prefill.executionTimeEstimator.expression` when estimator type is
   `FORMULA`. The default expression is

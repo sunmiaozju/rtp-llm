@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.preemption.PreemptionCancelPhase;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
@@ -97,16 +96,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
                                             long inputAndMaxOutputKvTokens,
                                             int priority) {
         return state.reserveIfEmpty(requestId, inputKvTokens, inputAndMaxOutputKvTokens, priority);
-    }
-
-    /** Select no user outcome here: Prefill rejection alone cannot release Decode ownership. */
-    public boolean settleFailedRequest(ReservationHandle reservation, DeliveryResult.Status source) {
-        if (source != DeliveryResult.Status.NOT_SENT && source != DeliveryResult.Status.PREFILL_REJECTED) {
-            throw new IllegalArgumentException("expected a definite request failure");
-        }
-        if (reservation == null) { return true; }
-        if (source == DeliveryResult.Status.NOT_SENT) { release(reservation, ReleaseReason.NOT_SENT); }
-        return !state.hasOwnedResources(reservation);
     }
 
     /**
@@ -476,7 +465,7 @@ public class DecodeEndpoint extends WorkerEndpoint {
         if (result.capacityImproved()) {
             signalPlacementCapacityChanged();
         }
-        return () -> endpointEvents.onDecodeStatus(this, result.facts());
+        return () -> { };
     }
 
     public Runnable initializeFromPreparedStatus(WorkerStatus ws, WorkerStatus.StatusObservation observation) {
@@ -487,8 +476,8 @@ public class DecodeEndpoint extends WorkerEndpoint {
 
     public Runnable observeStatusHeartbeat(WorkerStatus ws, WorkerStatus.StatusObservation observation) {
         requireStatusGeneration(ws);
-        List<WorkerStatusFact> facts = state.observeHeartbeat(observation);
-        return () -> endpointEvents.onDecodeStatus(this, facts);
+        state.observeHeartbeat(observation);
+        return () -> { };
     }
 
     // Read-only resource and capacity views.
@@ -708,9 +697,11 @@ public class DecodeEndpoint extends WorkerEndpoint {
     public boolean isRetired() { return isGenerationRetiringOrRetired(); }
 
     protected void closeEndpoint() {
-        List<ReservationHandle> reservations = state.retire();
-        try { endpointEvents.onDecodeGenerationRetired(this, reservations); }
-        finally { notifyEngineDispatchCapacityListeners(); }
+        try {
+            state.retire();
+        } finally {
+            notifyEngineDispatchCapacityListeners();
+        }
     }
 
     public int evictExpiredRequests(long ttlMs, Predicate<String> retainForSchedulerCleanup) {

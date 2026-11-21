@@ -1,7 +1,6 @@
 package org.flexlb.balance.schedulev2.prefill;
 
 import lombok.Data;
-import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.dao.master.WorkerStatus;
 
@@ -17,6 +16,12 @@ import java.util.Objects;
  */
 @Data
 public final class DispatchedRequest {
+
+    public enum Phase {
+        COMMITTED,
+        ENGINE_QUEUED,
+        ENGINE_RUNNING
+    }
 
     private final Request request;
     /**
@@ -39,7 +44,7 @@ public final class DispatchedRequest {
      * 最近一次包含该请求的引擎上报时间；未上报时为零。
      */
     private volatile long lastStatusUpdatedAtMs;
-    private volatile WorkView.Phase phase = WorkView.Phase.COMMITTED;
+    private volatile Phase phase = Phase.COMMITTED;
 
     public DispatchedRequest(Request request, long kvTokens, long predictedMs) {
         this.request = request;
@@ -73,11 +78,11 @@ public final class DispatchedRequest {
         this.predictedMs = predictedMs;
     }
 
-    public WorkView.Phase phase() {
+    public Phase phase() {
         return phase;
     }
 
-    public void updateStatus(WorkView.Phase phase, long nowMs) {
+    public void updateStatus(Phase phase, long nowMs) {
         this.phase = phase;
         lastStatusUpdatedAtMs = nowMs;
     }

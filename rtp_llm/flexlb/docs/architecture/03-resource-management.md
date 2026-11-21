@@ -2,8 +2,8 @@
 
 容量约束分为三层：
 
-1. `GlobalQueueCoordinator` 用 `scheduler.maxQueuedRequests` 限制 Generation 排队总量；
-   NON_BATCH 和 NON_BATCH_V2 都计入主队列与 Prefill 子队列中等待交付的请求。
+1. V2 主队列用 `scheduler.maxQueuedRequests` 限制 Generation 排队总量；
+   V2 计入主队列与 Prefill 子队列中等待交付的请求。
    PRIORITY 模式中，达到 `scheduler.ordering.highPriorityThreshold` 的请求可在队列满时
    抢占当前未在规划、优先级严格低于自己的排队请求。容量与阈值配置更新后对后续入队生效。
 2. `ResourceMeasure` 在路由时判断单个 worker 是否可选。
@@ -43,9 +43,8 @@ WorkerStatus 的 `dp_master_address` 分组，没有该地址的 worker 独立�
 `router.roles.prefill.availability.maxPendingRequests`（默认 64）。上下线切换使用
 `router.availabilityHysteresisPercent`（默认 15）做滞回，避免在阈值附近抖动。
 
-QUEUE scheduler 选中 Prefill 后，请求进入该 endpoint 的 `WorkerBatcher`。
-`BatchDispatcherConfig.maxWaitingRequestsPerPrefillWorker`（默认 1024）是 batcher 等待队列的
-硬上限，与路由层的 worker 可用性阈值是不同责任。
+请求选中 Prefill 后进入该节点的 `PrefillQueue`。等待请求占全局与共享子队列名额，
+不占已发布请求的 Prefill 并发名额。
 
 ## Decode 容量与本地预留
 
@@ -60,8 +59,7 @@ Decode 选择先排除缺失可路由 rank 的 DP 组，再对剩余 endpoint �
 DP 组使用 WorkerStatus 的 `dp_master_address` 识别；没有该地址的 worker 独立参与选择。
 
 `DecodeEndpoint.reserve()` 在对外发布前建立 shadow 预留，记录并发槽位、硬 KV
-和预期 KV。已在 Prefill 队列中的预留继续保护 KV，但不计入引擎面的
-concurrency，避免引擎空闲时被本地排队预留假性压满。
+和预期 KV。请求离开 Prefill 队列进入 Decode 调度之后，才选择 Decode 并预留。
 
 WorkerStatus 到达后，`DecodeEndpoint.calibrate()` 用引擎已确认状态对账。对于取消或
 发布结果不确定的请求，Engine fence 在权威终态到达前持有相应账本，防止

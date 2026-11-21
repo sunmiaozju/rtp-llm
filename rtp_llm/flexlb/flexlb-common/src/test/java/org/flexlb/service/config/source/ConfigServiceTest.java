@@ -3,7 +3,7 @@ package org.flexlb.service.config.source;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DecisionPolicyConfig;
+import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.KvcmCacheMatchingConfig;
 import org.flexlb.config.LocalSyncCacheMatchingConfig;
@@ -50,14 +50,14 @@ class ConfigServiceTest {
                 """
                         {
                           "schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},
-                          "dispatcher":{"type":"NON_BATCH"},
+                          "dispatcher":{"type":"NON_BATCH_V2"},
                           "observability":{"logging":{"level":"warn"}}
                         }
                         """);
 
         ConfigService service = createService(List.of(nacosSource, environmentSource));
 
-        assertThat(service.loadBalanceConfig().getDispatcher().typeName()).isEqualTo("NON_BATCH");
+        assertThat(service.loadBalanceConfig().getDispatcher().typeName()).isEqualTo("NON_BATCH_V2");
         assertThat(service.loadBalanceConfig().getObservability()
                 .getLogging().getLevel()).isEqualTo(LogLevel.WARN);
     }
@@ -65,7 +65,7 @@ class ConfigServiceTest {
     @Test
     void doesNotLoadUnregisteredConfigSources() {
         FakeConfigSource unregisteredSource = new FakeConfigSource("unregistered", 200, """
-                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},"dispatcher":{"type":"NON_BATCH"}}
+                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},"dispatcher":{"type":"NON_BATCH_V2"}}
                 """);
 
         ConfigService service = createService(List.of(environmentSource(Map.of())));
@@ -110,10 +110,57 @@ class ConfigServiceTest {
     }
 
     @Test
-    void rejectsUnknownSourceFields() {
-        assertInvalidInitialContent(
-                "{\"schemaVersion\":3,\"unknownField\":1}",
-                "Unrecognized field");
+    void ignoresOnlyExplicitlyRemovedFieldsAtStartupAndOnUpdate() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,
+                  "scheduler":{"decision":{"type":"SINGLE"}},
+                  "dispatcher":{"type":"NON_BATCH_V2","maxInflightPerPrefillWorker":4}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        assertThat(service.loadBalanceConfig().getDispatcher().getType()).isEqualTo(DispatcherConfig.Type.NON_BATCH_V2);
+        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(4);
+
+        source.emit("""
+                {"schemaVersion":3,"scheduler":{"decision":null,"scanBudgetMultiplier":2},
+                  "dispatcher":{"maxInflightPerPrefillWorker":7,"fetchAttachTimeoutMs":null}}
+                """);
+        assertThat(service.loadBalanceConfig().getDispatcher().getType()).isEqualTo(DispatcherConfig.Type.NON_BATCH_V2);
+        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(7);
+    }
+
+    @Test
+    void rejectsMisspelledDecodeCapAtStartupAndOnUpdate() {
+        String typo = """
+                {"schemaVersion":3,"dispatcher":{"maxInflightPerPrefillWorker":7},
+                  "router":{"roles":{"decode":{"availability":{"maxEngineRequest":16}}}}}
+                """;
+        assertInvalidInitialContent(typo, "maxEngineRequest");
+
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,"router":{"roles":{"decode":{"availability":{"maxEngineRequests":8}}}}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        FlexlbConfig initial = service.loadBalanceConfig();
+        source.emit(typo);
+        assertThat(service.loadBalanceConfig()).isSameAs(initial);
+    }
+
+    @Test
+    void rejectsNonBatchAtStartupAndOnUpdate() {
+        assertInvalidInitialContent("""
+                {"schemaVersion":0,"enableQueueing":true,"dispatcher":{"type":"NON_BATCH"}}
+                """, "NON_BATCH is no longer supported");
+        assertInvalidInitialContent("""
+                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH"}}
+                """, "NON_BATCH is no longer supported");
+
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, "{\"schemaVersion\":3}");
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        FlexlbConfig initial = service.loadBalanceConfig();
+        source.emit("""
+                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH","maxInflightPerPrefillWorker":7}}
+                """);
+        assertThat(service.loadBalanceConfig()).isSameAs(initial);
     }
 
     @Test
@@ -307,7 +354,7 @@ class ConfigServiceTest {
                     .anyMatch(message -> message.startsWith("FlexLB config loaded: schemaVersion=0,"));
 
             appender.list.clear();
-            source.emit("{\"schemaVersion\":3,\"scheduler\":{\"type\":\"QUEUE\"},\"dispatcher\":{\"type\":\"NON_BATCH\"}}");
+            source.emit("{\"schemaVersion\":3,\"scheduler\":{\"type\":\"QUEUE\"},\"dispatcher\":{\"type\":\"NON_BATCH_V2\"}}");
 
             assertThat(appender.list)
                     .extracting(ILoggingEvent::getFormattedMessage)
@@ -364,9 +411,9 @@ class ConfigServiceTest {
                 """);
 
         FlexlbConfig merged = FlexlbConfigMerger.merge(base,
-                "{\"dispatcher\":{\"type\":\"NON_BATCH\"}}", "test");
+                "{\"dispatcher\":{\"type\":\"NON_BATCH_V2\"}}", "test");
 
-        assertThat(merged.getDispatcher().typeName()).isEqualTo("NON_BATCH");
+        assertThat(merged.getDispatcher().typeName()).isEqualTo("NON_BATCH_V2");
         assertThat(merged.getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(7);
         assertThat(merged.getDispatcher().getPrefillSubqueueLimitMultiplier()).isEqualTo(5);
     }
@@ -389,53 +436,6 @@ class ConfigServiceTest {
         assertThat(service.loadBalanceConfig().getScheduler().getOrdering().getPreemption()).isNull();
         assertThat(service.loadBalanceConfig().getScheduler().getQueueTimeoutMs()).isEqualTo(5000);
         assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(7);
-    }
-
-    @Test
-    void laterInitialSourceCanReplaceConfiguredWindowWithSingleDecision() {
-        EnvironmentConfigSource environment = environmentSource(Map.of("FLEXLB_CONFIG", """
-                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},
-                 "scheduler":{"decision":{"type":"FIXED_WINDOW","maxRequests":32,
-                                          "maxCollectionWaitMs":75,"maxPredictedExecutionMs":500}},
-                 "dispatcher":{"maxInflightPerPrefillWorker":7}}
-                """));
-        FakeConfigSource nacos = new FakeConfigSource("Nacos", 200, """
-                {"schemaVersion":3,"scheduler":{"decision":{"type":"SINGLE"}}}
-                """);
-
-        ConfigService service = createService(List.of(environment, nacos));
-
-        DecisionPolicyConfig decision = service.loadBalanceConfig().getScheduler().getDecision();
-        assertThat(decision.getType()).isEqualTo(DecisionPolicyConfig.Type.SINGLE);
-        assertThat(decision.getMaxRequests()).isEqualTo(DecisionPolicyConfig.DEFAULT_MAX_REQUESTS);
-        assertThat(decision.getMaxCollectionWaitMs())
-                .isEqualTo(DecisionPolicyConfig.DEFAULT_MAX_COLLECTION_WAIT_MS);
-        assertThat(decision.getMaxPredictedExecutionMs()).isNull();
-        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(7);
-    }
-
-    @Test
-    void runtimeUpdatesKeepStartupModesAndApplyNumericFields() {
-        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
-                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},
-                 "scheduler":{"type":"QUEUE"},
-                 "dispatcher":{"type":"NON_BATCH_V2","maxInflightPerPrefillWorker":7,"prefillSubqueueLimitMultiplier":5}}
-                """);
-        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
-
-        source.emit("""
-                {"schemaVersion":3,"scheduler":{"type":"QUEUE"},
-                 "dispatcher":{"type":"NON_BATCH","maxInflightPerPrefillWorker":9}}
-                """);
-
-        assertThat(service.loadBalanceConfig().getDispatcher().typeName()).isEqualTo("NON_BATCH_V2");
-        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
-        assertThat(service.loadBalanceConfig().getDispatcher().getPrefillSubqueueLimitMultiplier()).isEqualTo(5);
-        FlexlbConfig previous = service.loadBalanceConfig();
-        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"type\":\"INVALID\"}}");
-        assertThat(service.loadBalanceConfig()).isSameAs(previous);
-        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"type\":\"BATCH\",\"maxInflightPerPrefillWorker\":11}}");
-        assertThat(service.loadBalanceConfig()).isSameAs(previous);
     }
 
     @Test
@@ -543,7 +543,7 @@ class ConfigServiceTest {
                               }
                             }
                           },
-                          "dispatcher": {"type": "NON_BATCH"}
+                          "dispatcher": {"type": "NON_BATCH_V2"}
                         }
                         """);
         ConfigService service = createService(List.of(
@@ -602,7 +602,7 @@ class ConfigServiceTest {
 
         source.emit("");
         assertThat(service.loadBalanceConfig()).isSameAs(lastKnownGood);
-        source.emit("{\"schemaVersion\":3,\"unknownField\":1}");
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"maxInflightPerPrefillWorker\":null}}");
         assertThat(service.loadBalanceConfig()).isSameAs(lastKnownGood);
     }
 

@@ -43,8 +43,6 @@ class LeakCanaryLongRunE2ETest {
             // never reach Decode must settle through bounded inactivity cleanup.
             // Priority ordering and exact terminal cleanup remain active without preemption.
             // 小批次与快速派发维持持续流量。
-            h.fixedWindowDecision().setMaxRequests(4);
-            h.fixedWindowDecision().setMaxCollectionWaitMs(5);
             h.config.getRequestLifecycle().getRequest().setTimeoutMs(INACTIVITY_TIMEOUT_MS);
             h.config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(INACTIVITY_TIMEOUT_MS);
             h.prefillSelector = ctx -> Math.floorMod(
@@ -128,8 +126,8 @@ class LeakCanaryLongRunE2ETest {
             assertEquals(0L, h.decodeEndpoint(0).routingView().inputKvReserved(),
                     "no orphaned hard-KV reservation");
             assertEquals(0, h.decodeEndpoint(0).resourceSnapshot().acceptedCount());
-            assertEquals(0, h.prefillEndpoint(0).queuedRequestCount());
-            assertEquals(0, h.prefillEndpoint(1).queuedRequestCount());
+            assertEquals(0, h.prefillEndpoint(0).prefillQueue().waitingCount());
+            assertEquals(0, h.prefillEndpoint(1).prefillQueue().waitingCount());
 
             long accepted = h.services.values().stream()
                     .mapToLong(JavaMockEngineCluster.FastRpcService::getAcceptedCount).sum();

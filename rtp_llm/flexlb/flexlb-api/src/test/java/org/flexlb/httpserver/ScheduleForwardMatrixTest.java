@@ -8,7 +8,6 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.consistency.LBStatusConsistencyService;
 import org.flexlb.dao.loadbalance.Response;
@@ -493,7 +492,7 @@ class ScheduleForwardMatrixTest {
 
     private static FlexlbConfig routingConfig() {
         FlexlbConfig config = org.flexlb.mock.TestFlexlbConfigs.create();
-        config.setDispatcher(DispatcherConfig.nonBatch());
+        config.setDispatcher(new org.flexlb.config.DispatcherConfig());
         return config;
     }
 

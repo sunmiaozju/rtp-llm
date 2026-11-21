@@ -15,7 +15,7 @@ public final class FlexlbConfigMerger {
 
     private static final String FLEXLB_CONFIG = "FLEXLB_CONFIG";
     private static final Set<String> REPLACE_ON_TYPE_CHANGE_PATHS = Set.of(
-            "cacheMatching", "consistency", "scheduler.ordering", "scheduler.decision");
+            "cacheMatching", "consistency", "scheduler.ordering");
 
     private FlexlbConfigMerger() {}
 
@@ -36,7 +36,7 @@ public final class FlexlbConfigMerger {
 
     private static FlexlbConfig parseMergedConfig(ObjectNode merged, String sourceName) {
         try {
-            FlexlbConfig config = JsonUtils.strictTreeToValue(merged, FlexlbConfig.class);
+            FlexlbConfig config = JsonUtils.readFlexlbConfig(merged, sourceName);
             FlexlbConfigValidator.validate(config);
             return config;
         } catch (ConfigValidationException error) {
@@ -52,7 +52,6 @@ public final class FlexlbConfigMerger {
         }
         try {
             JsonNode parsed = JsonUtils.readStrictTree(content);
-            JsonUtils.rejectJsonNull(parsed, "$", sourceName);
             if (!(parsed instanceof ObjectNode overrides)) {
                 throw new ConfigValidationException(sourceName, "configuration must be a JSON object");
             }

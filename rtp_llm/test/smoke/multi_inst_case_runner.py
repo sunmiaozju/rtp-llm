@@ -146,8 +146,8 @@ class SeparatedCaseRunner(CaseRunner):
         config = {
             "schemaVersion": 3,
             "requestLifecycle": {"request": {"timeoutMs": 180000}},
-            "scheduler": {"type": "DIRECT"},
-            "dispatcher": {"type": "NON_BATCH"},
+            "scheduler": {"type": "QUEUE"},
+            "dispatcher": {"type": "NON_BATCH_V2"},
             "workerRegistry": {
                 "health": {
                     "statusPollIntervalMs": 50,

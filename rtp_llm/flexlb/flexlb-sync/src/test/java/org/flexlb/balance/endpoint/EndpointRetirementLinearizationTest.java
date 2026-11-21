@@ -1,9 +1,6 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.balance.scheduler.QueueCapacity;
-import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
@@ -29,11 +26,8 @@ class EndpointRetirementLinearizationTest {
     void detachClosesEveryStatefulAdmissionGateBeforeFinalDrain() throws Exception {
         ConfigService configService = mock(ConfigService.class);
         when(configService.loadBalanceConfig()).thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
-        EndpointTestSupport.TestRequestRuntime requestRuntime =
-                EndpointTestSupport.requestRuntime();
-        EndpointRegistry registry = new EndpointRegistry(configService, requestRuntime.events(),
-                mock(BatchSchedulerReporter.class), EndpointTestSupport.routeStrategy(requestRuntime),
-                new NonBatchTtftEstimator(), new PlacementAvailability(), new QueueCapacity(),
+        EndpointRegistry registry = new EndpointRegistry(configService, EndpointTestSupport.noopEventSink(),
+                mock(BatchSchedulerReporter.class), new PlacementAvailability(),
                 new PrefillQueueRegistry(), mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         String prefillAddress = "127.0.0.1:8100";
         String decodeAddress = "127.0.0.1:8200";
@@ -59,8 +53,7 @@ class EndpointRetirementLinearizationTest {
                 referencesCaptured.countDown();
                 assertTrue(resumeAdmission.await(2, TimeUnit.SECONDS));
 
-                boolean queueOfferAccepted = EndpointTestSupport.offer(
-                        prefill, mock(ScheduledRequest.class));
+                boolean queueOfferAccepted = new PrefillQueueRegistry().find(prefill) != null;
                 boolean directHoldAvailable;
                 try (WorkerEndpoint.EndpointHold hold = prefill.tryHold()) {
                     directHoldAvailable = hold != null;

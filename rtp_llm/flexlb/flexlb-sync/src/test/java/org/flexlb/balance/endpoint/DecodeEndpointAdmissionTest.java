@@ -11,7 +11,6 @@ import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.util.HashMap;
 import java.util.List;
@@ -773,7 +772,7 @@ class DecodeEndpointAdmissionTest {
     }
 
     @Test
-    void versionedReceivedTaskEmitsActivityWithoutAdvancingAcceptance() {
+    void versionedReceivedTaskKeepsDecodeReservation() {
         EndpointEventHandler events = EndpointTestSupport.noopEventSink();
         endpoint = new DecodeEndpoint(status, events);
         DecodeEndpoint.ReservationHandle reservation =
@@ -788,15 +787,6 @@ class DecodeEndpointAdmissionTest {
 
         EndpointTestSupport.applyStatus(endpoint, response).run();
 
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<WorkerStatusFact>> facts =
-                ArgumentCaptor.forClass(List.class);
-        verify(events).onDecodeStatus(org.mockito.Mockito.eq(endpoint),
-                facts.capture());
-        assertEquals(1, facts.getValue().size());
-        WorkerStatusFact active = facts.getValue().getFirst();
-        assertEquals(WorkerStatusFact.Kind.ACTIVE, active.kind());
-        assertEquals(reservation, active.reservation());
         assertEquals(reservation, endpoint.reservationHandle("1"));
     }
 

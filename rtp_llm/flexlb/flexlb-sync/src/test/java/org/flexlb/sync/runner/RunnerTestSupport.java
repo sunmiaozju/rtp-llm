@@ -1,12 +1,9 @@
 package org.flexlb.sync.runner;
 
-import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
@@ -31,10 +28,8 @@ public final class RunnerTestSupport {
     }
 
     public static EndpointRegistry endpointRegistry(ConfigService configService) {
-        DeliveryStrategy delivery = Mockito.mock(DeliveryStrategy.class);
         return new EndpointRegistry(configService, NOOP_EVENT_SINK, Mockito.mock(BatchSchedulerReporter.class),
-                delivery, new NonBatchTtftEstimator(), new PlacementAvailability(), new QueueCapacity(),
-                new PrefillQueueRegistry(),
+                new PlacementAvailability(), new PrefillQueueRegistry(),
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
     }
 

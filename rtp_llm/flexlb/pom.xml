@@ -460,57 +460,6 @@
             </build>
         </profile>
 
-        <!-- Run FlexLB API performance regressions in a separate Maven invocation. -->
-        <profile>
-            <id>api-performance-regression</id>
-            <properties>
-                <flexlb.perf.heap>2g</flexlb.perf.heap>
-            </properties>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-surefire-plugin</artifactId>
-                        <executions>
-                            <execution>
-                                <id>default-test</id>
-                                <configuration combine.self="override">
-                                    <includes>
-                                        <include>**/MasterBatchEndToEndPerformanceTest.java</include>
-                                        <include>**/TransientCapacityQueueContractTest.java</include>
-                                    </includes>
-                                    <groups>performance-regression</groups>
-                                    <!--
-                                      The real-payload E2E burst serializes more than 50 million
-                                      token ids in one fresh fork. Fix the heap size so the gate
-                                      measures gRPC/scheduling throughput instead of JVM heap
-                                      expansion; production JVM settings are unaffected.
-                                      Larger fleet runs retain more RPC payloads for assertions
-                                      and can set -Dflexlb.perf.heap=8g without relaxing SLOs.
-                                    -->
-                                    <argLine>
-                                        -Xms${flexlb.perf.heap} -Xmx${flexlb.perf.heap}
-                                        --add-modules ALL-SYSTEM
-                                        --add-opens java.base/java.lang=ALL-UNNAMED
-                                        --add-opens java.base/java.lang.invoke=ALL-UNNAMED
-                                        --add-opens java.base/java.util=ALL-UNNAMED
-                                        --add-opens java.base/java.util.concurrent=ALL-UNNAMED
-                                        --add-opens=java.base/jdk.internal.misc=ALL-UNNAMED
-                                        --add-opens java.base/java.nio=ALL-UNNAMED
-                                        --add-opens java.base/sun.nio.ch=ALL-UNNAMED
-                                        --add-opens java.instrument/sun.instrument=ALL-UNNAMED
-                                    </argLine>
-                                    <forkCount>1</forkCount>
-                                    <reuseForks>false</reuseForks>
-                                    <failIfNoTests>false</failIfNoTests>
-                                    <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
-                                </configuration>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
 
         <!-- Internal profile - automatically activated when internal dependencies exists -->
         <profile>

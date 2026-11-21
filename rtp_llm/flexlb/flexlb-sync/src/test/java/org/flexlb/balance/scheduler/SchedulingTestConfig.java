@@ -1,7 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.config.DecisionPolicyConfig;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.QueueOrderingConfig;
@@ -17,9 +15,7 @@ public final class SchedulingTestConfig {
     }
 
     public static FlexlbConfig routeConfig() {
-        FlexlbConfig config = newConfig();
-        config.setDispatcher(DispatcherConfig.nonBatch());
-        return config;
+        return newConfig();
     }
 
     public static SchedulerConfig usePriorityQueue(FlexlbConfig config) {
@@ -37,36 +33,6 @@ public final class SchedulingTestConfig {
         queue.setOrdering(new QueueOrderingConfig());
         config.setScheduler(queue);
         return queue;
-    }
-
-    public static void useSingleDecision(FlexlbConfig config) {
-        SchedulerConfig queue = activeQueueOrNew(config);
-        queue.setDecision(DecisionPolicyConfig.single());
-        config.setScheduler(queue);
-    }
-
-    public static DecisionPolicyConfig useFixedWindowDecision(FlexlbConfig config) {
-        SchedulerConfig queue = activeQueueOrNew(config);
-        if (queue.getDecision().getType()
-                == DecisionPolicyConfig.Type.FIXED_WINDOW) {
-            return queue.getDecision();
-        }
-        DecisionPolicyConfig fixedWindow = new DecisionPolicyConfig();
-        queue.setDecision(fixedWindow);
-        config.setScheduler(queue);
-        return fixedWindow;
-    }
-
-    public static DispatcherConfig useNonBatchDispatcher(FlexlbConfig config) {
-        configureRequiredValues(config);
-        if (config.getDispatcher().getType()
-                == DispatcherConfig.Type.NON_BATCH) {
-            return config.getDispatcher();
-        }
-        DispatcherConfig nonBatch = DispatcherConfig.nonBatch();
-        nonBatch.setMaxInflightPerPrefillWorker(64);
-        config.setDispatcher(nonBatch);
-        return nonBatch;
     }
 
     public static PreemptionConfig preemption(FlexlbConfig config) {

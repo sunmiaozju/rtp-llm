@@ -495,7 +495,7 @@ class FlexlbServiceImplTest {
 
     private static FlexlbConfig routingConfig() {
         FlexlbConfig config = org.flexlb.mock.TestFlexlbConfigs.create();
-        config.setDispatcher(DispatcherConfig.nonBatch());
+        config.setDispatcher(new org.flexlb.config.DispatcherConfig());
         return config;
     }
 

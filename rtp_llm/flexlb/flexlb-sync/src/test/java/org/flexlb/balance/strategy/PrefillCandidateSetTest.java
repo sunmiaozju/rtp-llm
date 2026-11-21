@@ -1,7 +1,6 @@
 package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,10 +25,7 @@ class PrefillCandidateSetTest {
 
             for (int index = 0; index < candidateCount; index++) {
                 candidates.addCandidate("worker-" + index, endpoint,
-                        new PrefillTtftEstimate.Candidate(PrefillTtftEstimate.Candidate.State.MODELED, 100L + index,
-                                20L + index, PrefillTtftEstimate.Candidate.InitialHeadDisposition.NONE, "", null,
-                                10L + index, 15L + index),
-                        10L + index, 30L + index);
+                        100L + index, 20L + index, 10L + index, 15L + index, 30L + index);
             }
 
             assertEquals(candidateCount, candidates.size());

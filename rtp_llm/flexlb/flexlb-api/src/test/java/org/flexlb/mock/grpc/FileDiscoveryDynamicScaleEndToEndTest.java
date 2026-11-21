@@ -2,12 +2,10 @@ package org.flexlb.mock.grpc;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.tuple.Pair;
-import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.scheduler.DefaultRouter;
+import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.cache.match.localsync.DynamicCacheIntervalService;
 import org.flexlb.config.ModelMetaConfig;
-import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.route.Endpoint;
@@ -29,8 +27,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +44,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -310,75 +305,6 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
     //  Round-robin router over the LIVE endpoint set
     // ════════════════════════════════════════════════════════════════
 
-    /**
-     * Route each request to the next live prefill endpoint from the
-     * {@code EndpointRegistry} — the set the discovery pipeline maintains —
-     * so additions and evictions are reflected in routing immediately.
-     */
-    @Override
-    protected DefaultRouter createRouter() {
-        DefaultRouter roundRobin = mock(DefaultRouter.class);
-        when(roundRobin.select(any(BalanceContext.class), any())).thenAnswer(inv -> {
-            BalanceContext ctx = inv.getArgument(0);
-            List<String> candidates = new ArrayList<>(
-                    endpointRegistry.endpointAddressView(RoleType.PREFILL));
-            if (candidates.isEmpty()) {
-                Response empty = new Response();
-                empty.setSuccess(false);
-                return PlacementResult.rejected(empty);
-            }
-            Collections.sort(candidates);
-            String chosen = candidates.get(routerCounter.getAndIncrement() % candidates.size());
-            int engineSeparator = chosen.lastIndexOf('@');
-            String physicalAddress = engineSeparator < 0
-                    ? chosen : chosen.substring(0, engineSeparator);
-            int engineIndex = engineSeparator < 0
-                    ? 0 : Integer.parseInt(chosen.substring(engineSeparator + 1));
-            String[] parts = physicalAddress.split(":");
-            String ip = parts[0];
-            int httpPort = Integer.parseInt(parts[1]);
-            // admittedRoute() converts this response into the exact held
-            // queue admission the scheduler consumes — including the Decode KV
-            // reservation (RouteAdmission.reserveQueuedHeld) the batcher
-            // later marks queued; without it admission would hit NOT_QUEUED ->
-            // OwnershipLost and the request would never complete.
-            return admittedRoute(ctx,
-                    routeResponse(ctx.getRequestId(), ip, httpPort, httpPort + 1, engineIndex));
-        });
-        return roundRobin;
-    }
-
-    private Response routeResponse(String requestId, String prefillIpAddr, int prefillHttpPort,
-                                    int prefillGrpcPort, int prefillEngineIndex) {
-        Response response = new Response();
-        response.setSuccess(true);
-        response.setServerStatus(List.of(
-                serverStatus(RoleType.PREFILL, prefillIpAddr, prefillHttpPort, prefillGrpcPort,
-                        prefillEngineIndex, requestId),
-                serverStatus(RoleType.DECODE, decodeIp, decodeHttpPort, decodeGrpcPort, requestId)));
-        return response;
-    }
-
-    private static ServerStatus serverStatus(RoleType role, String ip, int httpPort, int grpcPort,
-                                              String requestId) {
-        return serverStatus(role, ip, httpPort, grpcPort, 0, requestId);
-    }
-
-    private static ServerStatus serverStatus(RoleType role, String ip, int httpPort, int grpcPort,
-                                              int engineIndex, String requestId) {
-        ServerStatus status = new ServerStatus();
-        status.setSuccess(true);
-        status.setRole(role);
-        status.setServerIp(ip);
-        status.setHttpPort(httpPort);
-        status.setGrpcPort(grpcPort);
-        status.setSelectedEngineIndex(engineIndex, 1);
-        status.setDpRank(0);
-        status.setGroup("test-group");
-        status.setRequestId(requestId);
-        return status;
-    }
-
     // ════════════════════════════════════════════════════════════════
     //  Helpers
     // ════════════════════════════════════════════════════════════════
@@ -407,7 +333,9 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
                     worker.getRpcService().completeRequest(id);
                 }
             }
-            awaitUntil(3_000, () -> scheduler.getTrackedRequestCount() == 0,
+            awaitUntil(3_000, () -> EndpointRegistry.getEndpointsByRole(RoleType.PREFILL).values().stream()
+                            .map(org.flexlb.balance.endpoint.PrefillEndpoint.class::cast)
+                            .allMatch(endpoint -> endpoint.prefillQueue().dispatchedCount() == 0),
                     "the routed request must finish through worker status polling");
         }
         return selected;

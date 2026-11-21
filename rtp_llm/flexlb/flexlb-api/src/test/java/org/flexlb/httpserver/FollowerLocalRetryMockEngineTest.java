@@ -63,7 +63,7 @@ class FollowerLocalRetryMockEngineTest extends FlexLBMockTestBase {
                 assertEquals(false, response.getEnqueuedByMaster());
                 assertEquals(0L, response.getLifecycle().getBatchId());
                 assertEquals(2, response.getServerStatusCount());
-                assertEquals(1, getPrefillEndpoint().getCommittedRequestCount());
+                assertEquals(1, getPrefillEndpoint().prefillQueue().dispatchedCount());
                 assertEquals(requestId, response.getLifecycle().getRequestId());
                 assertEquals(Long.toString(requestId), response.getLifecycle().getRequestIdStr());
                 assertEquals(0, mockPrefillWorker.getEnqueueCount(), "only the frontend sends the request");

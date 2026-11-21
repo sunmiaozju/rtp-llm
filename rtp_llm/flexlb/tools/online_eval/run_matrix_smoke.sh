@@ -5,7 +5,7 @@ set -euo pipefail
 # run_matrix_smoke.sh — Matrix orchestration for FlexLB smoke tests.
 #
 # Runs three test suites (cancel, scheduling, anomaly) across two
-# path/algorithm configurations (batch+fixed_window, queue)
+# NON_BATCH_V2 configurations (priority, FIFO)
 # against a single mock engine cluster (2P + 4D).
 #
 # Flow:
@@ -209,14 +209,14 @@ fi
 # Sets the one strict FlexLB JSON document for each matrix axis combination.
 set_group_config() {
   case "$1" in
-    batch)
-      SCHEDULING_PROFILE="queue-priority-batch"
-      FLEXLB_CONFIG='{"schemaVersion":3,"scheduler":{"type":"QUEUE","ordering":{"type":"PRIORITY"},"decision":{"type":"FIXED_WINDOW","maxRequests":32,"maxCollectionWaitMs":10,"maxPredictedExecutionMs":550}},"dispatcher":{"type":"BATCH","maxInflightPerPrefillWorker":4},"router":{"roles":{"prefill":{"executionTimeEstimator":{"type":"FORMULA"}},"decode":{"availability":{"maxKvUsagePercent":90,"maxEngineRequests":132}}}},"requestLifecycle":{"request":{"timeoutMs":300000},"decision":{"lifetime":2.0}}}'
+    priority)
+      SCHEDULING_PROFILE="queue-priority-v2"
+      FLEXLB_CONFIG='{"schemaVersion":3,"scheduler":{"type":"QUEUE","ordering":{"type":"PRIORITY"}},"dispatcher":{"type":"NON_BATCH_V2","maxInflightPerPrefillWorker":4},"router":{"roles":{"prefill":{"executionTimeEstimator":{"type":"FORMULA"}},"decode":{"availability":{"maxKvUsagePercent":90,"maxEngineRequests":132}}}},"requestLifecycle":{"request":{"timeoutMs":300000},"decision":{"lifetime":2.0}}}'
       TEST_RID_BASES=(10000 20000 30000)
       ;;
-    queue)
-      SCHEDULING_PROFILE="queue-fifo-non-batch"
-      FLEXLB_CONFIG='{"schemaVersion":3,"scheduler":{"type":"QUEUE","ordering":{"type":"FIFO"},"decision":{"type":"SINGLE"}},"dispatcher":{"type":"NON_BATCH","maxInflightPerPrefillWorker":2},"router":{"roles":{"prefill":{"executionTimeEstimator":{"type":"FORMULA"}},"decode":{"availability":{"maxKvUsagePercent":90,"maxEngineRequests":132}}}},"requestLifecycle":{"request":{"timeoutMs":300000},"decision":{"lifetime":2.0}}}'
+    fifo)
+      SCHEDULING_PROFILE="queue-fifo-v2"
+      FLEXLB_CONFIG='{"schemaVersion":3,"scheduler":{"type":"QUEUE","ordering":{"type":"FIFO"}},"dispatcher":{"type":"NON_BATCH_V2","maxInflightPerPrefillWorker":2},"router":{"roles":{"prefill":{"executionTimeEstimator":{"type":"FORMULA"}},"decode":{"availability":{"maxKvUsagePercent":90,"maxEngineRequests":132}}}},"requestLifecycle":{"request":{"timeoutMs":300000},"decision":{"lifetime":2.0}}}'
       TEST_RID_BASES=(70000 80000 90000)
       ;;
     *)
@@ -287,7 +287,7 @@ run_test_suite() {
 
 # -- Main loop: 2 groups x 3 test suites ------------------------------------
 
-GROUP_NAMES=("batch" "queue")
+GROUP_NAMES=("priority" "fifo")
 TEST_NAMES=("cancel_smoke" "scheduling_smoke" "anomaly_smoke")
 TEST_SCRIPTS=("cancel_smoke.py" "scheduling_smoke.py" "anomaly_smoke.py")
 TOTAL_PASS=0

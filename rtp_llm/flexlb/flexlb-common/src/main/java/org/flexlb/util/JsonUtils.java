@@ -17,6 +17,7 @@ import com.fasterxml.jackson.databind.type.CollectionType;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.extern.slf4j.Slf4j;
 import org.flexlb.config.ConfigValidationException;
+import org.flexlb.config.FlexlbConfig;
 import org.flexlb.enums.StatusEnum;
 import org.flexlb.exception.FlexLBException;
 
@@ -42,6 +43,20 @@ public class JsonUtils {
             .disable(MapperFeature.ALLOW_COERCION_OF_SCALARS)
             .serializationInclusion(JsonInclude.Include.NON_NULL)
             .build();
+
+    private static final Map<String, List<String>> REMOVED_FLEXLB_CONFIG_FIELDS = Map.ofEntries(
+            Map.entry("", List.of("autoTpmEnabled", "autoTpmSloLengthBuckets")),
+            Map.entry("/scheduler", List.of("decision", "scanBudgetMultiplier", "capacity", "lifecycle")),
+            Map.entry("/scheduler/ordering/preemption/engineCancellation", List.of("ackTimeoutMs", "completionTimeoutMs")),
+            Map.entry("/dispatcher", List.of("fetchAttachTimeoutMs", "maxInflightBatchesPerPrefillWorker",
+                    "prefillInflightLimitAtDelivery", "maxInflightRequestsPerPrefillWorker", "enqueueRpcTimeoutMs",
+                    "inflightMultiplier", "inflightRequestMultiplier")),
+            Map.entry("/router", List.of("availabilityHysteresisPercent")),
+            Map.entry("/router/roles/prefill", List.of("availability", "candidateChoice")),
+            Map.entry("/router/roles/prefill/cacheAffinity", List.of("maxOutstandingUncachedTokens")),
+            Map.entry("/router/roles/decode", List.of("kvReservation", "decayPerToken", "loadDecayPerRequest",
+                    "outlierRejection")),
+            Map.entry("/cacheMatching", List.of("globalKvsHostCount", "enableP2p")));
 
     private static final Set<String> MODEL_BEHAVIOR_FIELDS = Set.of(
             "connect_timeout_ms",
@@ -267,6 +282,17 @@ public class JsonUtils {
 
     public static <T> T strictTreeToValue(JsonNode tree, Class<T> valueType) throws JsonProcessingException {
         return STRICT_MAPPER.treeToValue(tree, valueType);
+    }
+
+    public static FlexlbConfig readFlexlbConfig(JsonNode tree, String sourceName) throws JsonProcessingException {
+        JsonNode config = tree.deepCopy();
+        REMOVED_FLEXLB_CONFIG_FIELDS.forEach((parentPath, fields) -> {
+            if (config.at(parentPath) instanceof ObjectNode parent) {
+                parent.remove(fields);
+            }
+        });
+        rejectJsonNull(config, "$", sourceName);
+        return strictTreeToValue(config, FlexlbConfig.class);
     }
 
     public static <T extends JsonNode> T strictValueToTree(Object value) {

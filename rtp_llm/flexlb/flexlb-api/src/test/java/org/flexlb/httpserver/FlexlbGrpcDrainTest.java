@@ -11,7 +11,6 @@ import io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.consistency.LBStatusConsistencyService;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.interceptor.GrpcServerTimingInterceptor;
@@ -53,7 +52,7 @@ class FlexlbGrpcDrainTest {
                 {"requestLifecycle":{"request":{"timeoutMs":60000}},
                  "grpcServer":{"shutdownQuietPeriodMs":100}}
                 """);
-        routingConfig.setDispatcher(DispatcherConfig.nonBatch());
+        routingConfig.setDispatcher(new org.flexlb.config.DispatcherConfig());
         when(config.loadBalanceConfig()).thenReturn(routingConfig);
         var routes = mock(RouteService.class);
         var success = new Response();

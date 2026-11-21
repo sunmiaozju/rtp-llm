@@ -2,7 +2,6 @@ package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.scheduler.RequestSlot.PublicationKind;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.util.Logger;
 
 import java.util.ArrayDeque;
 import java.util.concurrent.CompletableFuture;
@@ -167,16 +166,6 @@ final class RequestCompletionPublisher implements AutoCloseable {
     }
 
     // ── 响应入口：ACK、异步提交与同步 Future 完成 ──
-
-    void submitDelivery(RequestSlot.DeliveryPublication delivery, ExpirationTimer expirationTimer) {
-        try {
-            if (delivery.requestDeadline() != null) { expirationTimer.cancel(delivery.requestDeadline()); }
-        } catch (Throwable failure) {
-            Logger.error("Delivery deadline cancellation failed request_id={}", delivery.item().requestId(), failure);
-        }
-        submit(delivery.publication().slot().selectPublication(delivery.publication(),
-                RequestCompletionPublisher.ResponseCompletion.RESPONSE, delivery.response(), null, false));
-    }
 
     /** Queue an already-selected result; all request arbitration has finished. */
     void submit(RequestCompletionPublisher.SelectedPublication publication) {

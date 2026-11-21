@@ -4,7 +4,6 @@ import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.eviction.DecodePreemptionCoordinator;
-import org.flexlb.balance.eviction.EngineCancelChannel;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
@@ -676,8 +675,7 @@ class DecodeQueueConsumerTest {
     private void start(int count) {
         pool = new DecodeQueueConsumerPoll(count, decodeQueue, availability,
                 () -> new DecodeQueueConsumer(decodeQueue, cleanup, selector, workerDirectory,
-                        new DecodePreemptionCoordinator(mock(EngineCancelChannel.class), mock(RequestRegistry.class),
-                                reporter),
+                        new DecodePreemptionCoordinator(reporter),
                         configService, prefillCheck, reservations, queueReporter, decodeQueue::wake));
         pool.start();
     }

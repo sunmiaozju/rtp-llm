@@ -310,7 +310,7 @@ class UniConfigConfigSourceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"{", "{\"schemaVersion\":3,\"unknown\":true}",
+    @ValueSource(strings = {"{", "{\"schemaVersion\":3,\"dispatcher\":{\"maxInflightPerPrefillWorker\":0}}",
             "{\"schemaVersion\":3,\"scheduler\":{\"type\":\"DIRECT\"},\"dispatcher\":{\"type\":\"BATCH\"}}"})
     void retainsLastGoodConfigOnInvalidUpdatesAndRecovers(String invalidConfig) throws Exception {
         initializeSource();

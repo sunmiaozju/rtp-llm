@@ -60,25 +60,25 @@ UniConfig 和 Nacos 的内容直接使用同一种配置 JSON，不增加包装�
 
 格式归一化后，由现有 `FlexlbConfigMerger` 执行递归部分更新：
 对象字段递归覆盖，未出现或从外部配置删除的字段保留当前内存值，数组和标量整体替换；
-`cacheMatching`、`consistency`、`scheduler.ordering` 和 `scheduler.decision` 的 `type`
-变化会替换整个分支，避免保留新模式不支持的抢占或凑批参数。`scheduler`、`dispatcher`
+`cacheMatching`、`consistency` 和 `scheduler.ordering` 的 `type`
+变化会替换整个分支，避免保留新模式不支持的参数。`scheduler`、`dispatcher`
 自身的 `type` 字段变化仍按递归覆盖处理，
 保留未出现的兄弟字段。v3 文档 `{"schemaVersion":3}` 是 no-op；
 没有显式版本的 `{}` 则按版本选择规则解析，默认走 v0 兼容转换。
 每次合并后都使用与 `FLEXLB_CONFIG` 相同的严格解析和跨字段校验：
 
-- 拒绝重复 key、未知字段、`null`、标量 coercion、数值枚举和尾随 JSON；
-- 拒绝 tagged union 非活动分支的字段；
+- 仅忽略兼容名单中已删除的字段；拒绝其他未知字段，校验保留字段的 `null`、类型和取值范围；
+- 拒绝重复 key、数值枚举和尾随 JSON；
 - 拒绝违反 scheduler / dispatcher / router 等组合约束的配置。
 
 选定的外部来源初次读取或校验失败会阻止应用启动，不会自动切换到低优先级来源。
 运行时读取失败或非法更新不会替换当前 last-known-good 快照，后续更新恢复正常后
 继续应用；合法更新原子替换 `FlexlbConfig`，随后通知监听器。
 
-`scheduler.type`、`dispatcher.type` 和 `scheduler.decision.type` 在启动时确定，运行时保持
-当前模式。部分更新中已知但不同的模式值会被忽略，同一对象中的数值参数仍继续合并；未知模式值
-仍会校验失败并保留当前快照。切换模式需要重启 Master，并在启动文档中配置完整的目标分支。
-其余业务组件每次读取快照的参数可以热生效；在 Bean 初始化时缓存的值，则在重启后生效。
+`scheduler.type` 仅支持 `QUEUE`，`dispatcher.type` 仅支持 `NON_BATCH_V2`。
+显式配置 `NON_BATCH` 或 `BATCH` 会报错；已删除的 `scheduler.decision` 和 `scheduler.scanBudgetMultiplier` 被忽略。
+启动时配置错误会阻止启动，
+非法热更新会保留上次有效快照。主队列和 Decode 消费线程数仍在启动时确定。
 当前 `NON_BATCH_V2` Decode 消费模型按单一流量 group 使用，不提供跨 group 的消费者隔离或公平调度保证。
 
 `router.roles.decode.availability.maxEngineRequests` 和 `maxKvUsagePercent` 随配置快照更新。
@@ -87,14 +87,12 @@ UniConfig 和 Nacos 的内容直接使用同一种配置 JSON，不增加包装�
 环境变量来源只在启动时读取配置。
 
 `dispatcher.maxInflightPerPrefillWorker` 由请求进入 Master 时的配置快照确定。
-QUEUE + NON_BATCH 选路不按该上限剔除 Prefill，子队列等待项不占该上限；交付路由前按请求快照检查占位。
+准备 Prefill 候选时不按该上限剔除节点；发布路由前检查并占用名额。
 `dispatcher.prefillSubqueueLimitMultiplier` 默认 4；当前路由形态的 Prefill 子队列共享
 `min(scheduler.maxQueuedRequests, 当前形态的逻辑端点数 × maxInflightPerPrefillWorker × 倍数)` 个待交付名额。
 PREFILL 与 PDFUSION 的端点和待交付名额不合并计算。
-共享名额满时请求留在全局队列等待重新选路。QUEUE + NON_BATCH 下，`scheduler.maxQueuedRequests` 是
-GlobalQueue 和 EngineSubQueue 合计的总排队上限。NON_BATCH_V2 也对主队列与 Prefill 子队列合计限流。
-高优新请求仍只从 GlobalQueue 寻找低优受害者。
-端点创建时固定其工作模式，正常切换调度模式需重启 Master。
+共享名额满时已选 Prefill 的请求留在主队列，只重试申请名额，不重新选点。
+`scheduler.maxQueuedRequests` 限制主队列和 Prefill 子队列等待请求的合计数。
 更新后进入的请求使用新值，已进入调度流程的请求保留原有快照。
 降低上限时，已有占位继续保持，直到完成或清理后才按新上限接收请求。
 
@@ -149,22 +147,8 @@ Java 还可能等待接近 30 秒才发现新内容。因此两段等待叠加�
 
 ### Decode 抢占交付方式
 
-`scheduler.ordering.preemption.allowedVictimStages` 包含 `DECODE_ENGINE_OWNED` 时，
-`engineCancellation.mode` 可设为 `RPC` 或 `RETURN`，默认 `RPC`。
-`RPC` 使用主动 Cancel 和完成确认；`RETURN` 将待抢占请求的字符串 ID 随目标 Decode
-路由返回，由客户端/Decode 消费，要求 `dispatcher.type=NON_BATCH`。
-抢占整体超时由 `scheduler.ordering.preemption.timeoutMs` 控制。该配置随请求快照绑定，
-外部配置来源与其他调度字段一致。
-
-### 凑批窗口热更新
-
-`scheduler.decision.maxCollectionWaitMs` 在每次固定窗口决策时从配置服务的当前内存快照读取。
-同一次决策的预检查与最终组选择共用一个窗口值。路由预估缓存将窗口值作为有效性条件，
-窗口变化时重新生成预估输入。读取不会触发 UniConfig 或 Nacos 网络请求。
-
-配置更新不主动打断已有定时等待；队列事件、状态事件或原定截止时间触发下一次决策时，
-使用最新窗口值。因此缩短窗口不会保证已有等待立即结束，后续窗口无需重启即可使用新值。
-此行为仅覆盖窗口时长，不承诺调度模式、交付模式或其他启动时配置的热切换。
+允许 `DECODE_ENGINE_OWNED` 抢占时，V2 将待抢占请求的字符串 ID 随 Decode 路由返回，
+由调用方处理；FlexLB 不在选路链路发送 Cancel RPC。
 
 ### Prefill 缓存工作量权重
 
@@ -223,7 +207,7 @@ UniConfig / Nacos 的 v3 部分更新示例：
   `mainQueueMaxAddAttempts` 控制 `NON_BATCH_V2` 主队列一次入队的总尝试次数（含首次），默认 `3`，
   必须是正整数。最后一次申请名额失败后仍可抢占；发起抢占的请求不再重试，释放的名额可由其他请求使用。
   热更新后，新发起的入队操作使用新值，已开始的入队操作沿用原值。
-- `dispatcher`：`NON_BATCH_V2`（默认）/ `NON_BATCH`。显式配置 `BATCH` 会被拒绝。可用
+- `dispatcher`：`NON_BATCH_V2`（默认且唯一模式）。可用
   `maxInflightPerEncoderWorker` 限制每台 Encoder 的在途请求数；未配置时不设额外上限，
   不影响未配置 Encoder 的模型。
 - `router`：角色 availability、execution estimator、selector、cache affinity 和
@@ -276,7 +260,7 @@ UniConfig / Nacos 的 v3 部分更新示例：
   刷新参数。
 - `enableFallback`：默认 `false`；每次 Schedule 在入口读取当前快照，启用时在构建调度上下文、
   校验 batch 载荷、主从判断和转发之前返回 `success=false`、`code=8600`、`enqueued_by_master=false`，
-  不返回选路或 lifecycle，由客户端执行 fallback。适用于 E/PD 以及 BATCH/NON_BATCH 模式。
+  不返回选路或 lifecycle，由客户端执行 fallback。适用于 Encoder 和 Generation。
   UniConfig/Nacos 热更新生效后，新请求使用新值；关闭时恢复正常调度，已进入调度的请求继续原流程。
   热更新关闭必须显式设置 `enableFallback=false`，删除字段会保留当前值。
 - `fallbackBatchTokenCapacity`：默认 `1048576`；Engine 未声明
@@ -481,18 +465,8 @@ Top5 展示 `shortestTtftDecisions` 的 token-work 估计。预测耗时与 Engi
 产生多次 Encoder 和 Generation 调度调用，各阶段 QPS 表示调度调用次数。不同阶段的平均耗时
 分别展示；跨阶段汇总使用耗时总和除以样本数。
 
-QUEUE + NON_BATCH 的两层排队监控复用 `app.routing.queue.length{type=mainQueue}` 展示
-GlobalQueue 深度，`app.routing.queue.max.length{type=mainQueue}` 展示总排队上限 M。
-`app.flexlb.batcher.queue.size{role,engineIp}` 展示每个 PREFILL/PDFUSION 逻辑端点尚未交付的
-子队列深度；多 Engine 的 `engineIp` 包含 `@engineIndex`。每 2 秒另报
-`app.flexlb.queue.total.waiting`（实际用于 M 限流的 GlobalQueue 与所有子队列总计数）、
-`app.flexlb.queue.subqueue.waiting{role}` 和 `app.flexlb.queue.subqueue.limit{role}`
-（同形态共享的实时占用与按当前端点数/配置计算的 C），以及用于解释 C 变化的
-`app.flexlb.queue.subqueue.endpoint.count{role}`。总使用率由监控计算 `total.waiting / M`，
-子队列使用率按 PREFILL/PDFUSION 分别计算 `subqueue.waiting / subqueue.limit`，
-不将单机深度除以共享 C，也不把超过 100% 的结果截断；端点数为 0、C 为 0 时使用率留空。
-M/C 是当前配置下新请求的上限，已排队请求可能沿用旧快照。BATCH 不使用共享 C 限流，
-上述新总量与共享容量序列仅在 QUEUE + NON_BATCH 下上报。
+V2 同时上报主队列的配置上限、主队列与 Prefill 子队列的合计等待人数，以及各角色的
+共享子队列占用、容量和逻辑端点数。分阶段的等待人数和等待时长见 V2 队列指标。
 
 `app.flexlb.decode.reservation.blocked{role=DECODE}` 是 GlobalQueue 向所选
 Decode 端点预留资源失败的尝试 QPS，在进入 Prefill 子队列前、尝试优先级抢占前记录。
@@ -586,35 +560,10 @@ WorkerStatus 成功轮询上报 `app.flexlb.encoder.pending.request.count` 和
 最后一项在首次 WorkerStatus 前采用 Client 的 MM token 预测值，之后采用活动任务的合成输入
 `input_length`；两者口径可能略有差异，finished 中的长度不参与该指标。
 通用 KV 指标仍上报，但不参与 Encoder 选点。
-`app.flexlb.tracked.request.count` 按
-`role=PREFILL`（Generation）和 `role=ENCODER`（Encoder）分别上报，
-`engineIp=scheduler`；Prefill 序列只统计 Generation。节点侧使用 `app.flexlb.inflight.request.count`，按真实 `engineIp` 和
-role 分开展示。QUEUE + NON_BATCH 默认模式的 `role=PREFILL/PDFUSION`
-表示已提交未确认、已确认但仍占用容量的请求，加上引擎报告的额外活动请求；
-本地待交付请求由子队列深度指标统计。同一请求按 ID 去重；WorkerStatus 仅提供 running/waiting 数量、
-缺少请求明细时，对无法确认重合的请求保守计数。该指标不是引擎 GPU 当前执行请求数。
-NON_BATCH 的 Prefill 序列与 `dispatcher.maxInflightPerPrefillWorker` 的请求限流计数一致：
-设为 4 时，已确认请求仍占用名额，完成或本地清理后才释放。若引擎有其它来源的请求，或本地超时清理后
-引擎仍在处理请求，不能仅凭该配置保证引擎实际并发不超过 4。
-BATCH 的上限单位是批次，仍使用 `app.flexlb.inflight.batch.count` 查看已提交、尚未清理完成的批数；
-该批数不包含派发前短暂预留的批槽，4 个批次可以包含多于 4 个请求。
-BATCH 的 `app.flexlb.inflight.request.count` 保持原有口径：已提交且所在批次尚未被 WorkerStatus
-确认的请求数，不含本地排队请求；不新增逐请求确认状态，也不上报新 unconfirmed 指标。
-
-`role=DECODE` 保持原有口径：本地未确认预留数减去 Master 排队数，收到 `KV_ALLOCATED/RUNNING`
-后不再计入；仅收到 `RECEIVED` 仍计入。不新增 Decode 指标或改变 Decode 容量规则。
+`app.flexlb.tracked.request.count{role=ENCODER,engineIp=scheduler}` 统计 Encoder 请求表。
+Generation 分阶段指标见 V2 队列指标。Decode `app.flexlb.inflight.request.count` 继续统计
+本地未确认预留数减去 Master 排队数；收到 `KV_ALLOCATED/RUNNING` 后不再计入。
 Decode 总负载仍使用 `app.flexlb.decode.total.load`（已确认请求加本地预留，含排队）。
-因此不能跨 dispatcher 模式或 Prefill/Decode 聚合 `inflight.request.count` 并解释为同一种请求数。
-
-`app.flexlb.worker.status.unconfirmed.request.count` 仅由 NON_BATCH PREFILL/PDFUSION 上报，
-单独统计已提交、尚未在 WorkerStatus 中出现的请求，
-沿用 `role/engineIp/scope=worker` 标签，不含本地排队请求。首次有效活动任务上报（包括 RECEIVED）
-后请求阶段不再是 COMMITTED，即使之后暂时缺少该请求的明细也不重新计入。
-该指标直接复用现有请求阶段，不新增状态字段或改变调度、容量释放规则。
-NON_BATCH Prefill 的旧 `inflight.request.count` 未确认口径面板应切换到新指标；总占用面板使用原指标名。
-BATCH 和 Decode 面板保持原指标名及原口径。
-上述 Gauge 默认每 2 秒采样，无法证明采样间隔内没有短暂超限。大盘按 Master 和逻辑 worker 分线，
-不要将不同 Master 的样本直接相加来判断单 worker 的限流效果。
 `/rtp_llm/inflight_status` 的 `scheduler_tracked` 返回两个阶段正在跟踪的请求总数，包含排队请求；
 `scheduler_inflight` 保留为该值的兼容别名，供现有清账和测试工具使用。它不表示节点侧的未确认在途数。
 Decode 预留字段 `inputKvTokens = max(0, seqLen)`，
