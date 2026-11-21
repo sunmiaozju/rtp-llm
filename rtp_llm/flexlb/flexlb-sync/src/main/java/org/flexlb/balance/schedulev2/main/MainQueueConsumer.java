@@ -1,21 +1,16 @@
 package org.flexlb.balance.schedulev2.main;
 
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.scheduler.QueueCapacity;
-import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
 import org.flexlb.balance.schedulev2.RequestPreparePool;
-import org.flexlb.balance.schedulev2.SelectionResult;
 import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.balance.schedulev2.request.Stage;
-import org.flexlb.balance.strategy.PrefillInputs;
-import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
@@ -23,8 +18,7 @@ import org.flexlb.dao.route.RoleType;
 import org.flexlb.service.monitor.V2QueueReporter;
 import org.flexlb.util.Logger;
 
-import java.util.Iterator;
-import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
@@ -34,7 +28,7 @@ import java.util.function.Consumer;
  * <p>
  * 名额上限 = min(maxQueuedRequests, Prefill 机器数 × maxInflightPerPrefillWorker × prefillSubqueueLimitMultiplier)，
  * 名额满时，高优先级请求尝试将选中 Prefill 队列里的低优先级请求退回主队列。名额保留到发布时才归还。
- * 请求暂时没有可选的 Prefill 或拿不到名额时，留在主队列，继续检查后续请求。
+ * 已选中 Prefill 但拿不到子队列名额时，消费者持有请求并等待重试。
  */
 final class MainQueueConsumer {
 
@@ -42,13 +36,9 @@ final class MainQueueConsumer {
      * 没事可做时最多等这么久再扫一遍，兜底没有发出变化通知的情况。
      */
     static final long IDLE_WAIT_MS = 50L;
-    /**
-     * 每轮最多检查这么多个仍在主队列等待的请求。
-     */
-    static final int MAX_SCAN_PER_ROUND = 256;
+    private static final long SHARED_SLOT_RETRY_MS = 50L;
 
     private final MainQueue mainQueue;
-    private final LoopSignal loopSignal;
     private final RequestCleanup cleanup;
     private final QueueCapacity queueCapacity;
     private final EndpointRegistry endpointRegistry;
@@ -67,7 +57,6 @@ final class MainQueueConsumer {
     private final Consumer<Request> sendToPrefillQueue;
 
     MainQueueConsumer(MainQueue mainQueue,
-                      LoopSignal loopSignal,
                       RequestCleanup cleanup,
                       QueueCapacity queueCapacity,
                       EndpointRegistry endpointRegistry,
@@ -80,7 +69,6 @@ final class MainQueueConsumer {
                       V2QueueReporter queueReporter) {
         this.queueReporter = queueReporter;
         this.mainQueue = mainQueue;
-        this.loopSignal = loopSignal;
         this.cleanup = cleanup;
         this.queueCapacity = queueCapacity;
         this.endpointRegistry = endpointRegistry;
@@ -93,127 +81,86 @@ final class MainQueueConsumer {
     }
 
     void run(BooleanSupplier running) {
-        while (running.getAsBoolean()) {
-            boolean moved;
+        while (running.getAsBoolean() && !Thread.currentThread().isInterrupted()) {
+            boolean shouldWait;
             try {
-                moved = runOnce();
+                shouldWait = !runOnce(running);
             } catch (Throwable failure) {
                 Logger.error("V2 main queue loop round failed", failure);
-                moved = false;
+                shouldWait = true;
             }
-            if (!moved) {
-                loopSignal.await(IDLE_WAIT_MS);
+            if (shouldWait) {
+                mainQueue.awaitWakeup(IDLE_WAIT_MS);
             }
         }
     }
 
     /**
-     * 扫一轮主队列，返回这一轮有没有请求离开主队列。
+     * 取出一个请求处理；没有注册节点或没有请求可取时返回 false。
      */
-    boolean runOnce() {
+    boolean runOnce(BooleanSupplier running) {
         if (endpointRegistry.getEndpointCount(prefillRole) == 0) {
             return false;
         }
-        FlexlbConfig config = configService.loadBalanceConfig();
-        boolean moved = false;
-        int scanned = 0;
-        Iterator<Request> iterator = mainQueue.iterator();
-        while (iterator.hasNext() && scanned < MAX_SCAN_PER_ROUND) {
-            Request request = iterator.next();
-            if (request.stage() != Stage.MAIN_WAITING) {
-                mainQueue.remove(request);
-                continue;
-            }
-            String group = prefillPicker.groupOf(request.ctx());
-            scanned++;
-            CompletableFuture<SelectionResult<PrefillInputs>> estimateFuture = request.getWorkLoadEstimate();
-            SelectionResult<PrefillInputs> estimatedCompleted =
-                    estimateFuture == null ? null : estimateFuture.getNow(null);
-            // 已经在执行中，但是未完成
-            if (estimateFuture != null && estimatedCompleted == null) {
-                continue;
-            }
-            // 未开始执行或结果已过期
-            if (estimatedCompleted == null
-                    || estimatedCompleted.expired(config.getDispatcher().getCacheMatchResultTtlMs())) {
-                request.setWorkLoadEstimate(null);
-                requestPreparePool.submit(request, () -> prefillPicker.prepare(request.ctx(), prefillRole, group));
-                continue;
-            }
-            try {
-                if (request.stage() != Stage.MAIN_WAITING) {
-                    continue;
-                }
-                if (estimatedCompleted.failure() != null) {
-                    request.fail(StrategyErrorType.DISPATCH_FAILED,
-                            "prefill selection failed: " + estimatedCompleted.failure().getMessage());
-                    moved = true;
-                } else if (!prefillPicker.inputsAreCurrent(estimatedCompleted.value(), prefillRole, group)) {
-                    queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.CANDIDATES_CHANGED, "all");
-                    request.setWorkLoadEstimate(null);
-                } else if (pickPrefill(request, group, estimatedCompleted.value(), config)) {
-                    moved = true;
-                }
-            } catch (Throwable failure) {
-                request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill selection failed: " + failure.getMessage());
-                Logger.error("V2 prefill selection result failed", failure);
-                moved = true;
-            }
-        }
-        return moved;
-    }
-
-    /**
-     * 选 Prefill 并尝试占子队列名额。返回 false 表示暂时没有机器或名额，请求留在主队列。
-     */
-    private boolean pickPrefill(Request request, String group, PrefillInputs inputs, FlexlbConfig config) {
-        PlacementResult<SelectedRole, RoleType> result = prefillPicker.pick(request, prefillRole, group, inputs);
-        switch (result.status()) {
-            case SUCCESS -> {
-                try (SelectedRole selected = result.value()) {
-                    return sendPicked(request, selected, config);
-                }
-            }
-            case BLOCKED -> {
-                queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.NO_AVAILABLE_PREFILL, "all");
-                return false;
-            }
-            default -> {
-                if (result.failure() == null) {
-                    request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill selection " + result.status());
-                } else {
-                    request.fail(result.failure());
-                }
-                return true;
-            }
-        }
-    }
-
-    private boolean sendPicked(Request request, SelectedRole selected, FlexlbConfig config) {
-        SelectedPrefill choice;
-        try {
-            choice = SelectedPrefill.from(selected, request.seqLen());
-        } catch (RuntimeException failure) {
-            request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill selection failed: " + failure.getMessage());
-            return true;
+        Request request = mainQueue.pollFirst();
+        if (request == null) {
+            return false;
         }
         if (request.stage() != Stage.MAIN_WAITING) {
             return true;
         }
-        if (!reserveQueueSlot(request, choice, config)) {
-            queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL,
-                    choice.endpoint().ipPort());
-            return false;
+
+        try {
+            FlexlbConfig config = configService.loadBalanceConfig();
+            String group = prefillPicker.groupOf(request.ctx());
+            var estimate = request.getWorkLoadEstimate();
+
+            if (estimate == null || estimate.expired(config.getDispatcher().getCacheMatchResultTtlMs())) {
+                startPreparation(request, group);
+            } else if (estimate.failure() != null) {
+                request.fail(StrategyErrorType.DISPATCH_FAILED,
+                        "prefill selection failed: " + estimate.failure().getMessage());
+            } else {
+                SelectedPrefill choice = prefillPicker.pick(request, prefillRole, group, estimate);
+                sendPicked(request, choice, config, running);
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            request.fail(StrategyErrorType.DISPATCH_FAILED, "main queue consumer interrupted");
+        } catch (Throwable failure) {
+            request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill selection failed: " + failure.getMessage());
+            Logger.error("V2 prefill selection failed", failure);
         }
-        request.setSelectedPrefill(choice);
-        if (!request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING)) {
-            // 选的过程中请求已经结束
-            cleanup.releaseQueueSlot(request);
-            return true;
-        }
-        mainQueue.remove(request);
-        sendToPrefillQueue.accept(request);
         return true;
+    }
+
+    private void startPreparation(Request request, String group) {
+        try {
+            requestPreparePool.submit(request, group);
+        } catch (RejectedExecutionException rejected) {
+            request.ctx().getMetrics().recordPrepareSubmitRejected();
+            requestPreparePool.prepareAndAddBack(request, group);
+        }
+    }
+
+    private void sendPicked(Request request, SelectedPrefill choice, FlexlbConfig config, BooleanSupplier running)
+            throws InterruptedException {
+        while (running.getAsBoolean() && request.stage() == Stage.MAIN_WAITING) {
+            if (!reserveQueueSlot(request, choice, config)) {
+                queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL,
+                        choice.endpoint().ipPort());
+                Thread.sleep(SHARED_SLOT_RETRY_MS);
+                config = configService.loadBalanceConfig();
+                continue;
+            }
+            request.setSelectedPrefill(choice);
+            if (request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING)) {
+                sendToPrefillQueue.accept(request);
+            } else {
+                cleanup.releaseQueueSlot(request);
+            }
+            return;
+        }
     }
 
     /**
@@ -230,7 +177,7 @@ final class MainQueueConsumer {
             if (queue != null) {
                 queue.markLowerPriorityForReturn(request.priority());
             }
-            // Prefill 线程完成退回并归还名额后会唤醒主队列，本轮不提前占用尚未释放的名额。
+            // Prefill 线程实际归还名额后，等待中的消费者才能占位。
             return false;
         }
         request.holdQueueSlot(prefillRole);

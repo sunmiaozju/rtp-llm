@@ -142,7 +142,7 @@ public final class PrefillQueueLoop {
         if (preemptorPriority != null) {
             queueReporter.preemptedReturn(preemptorPriority, request.priority(), queue.endpoint().ipPort());
         }
-        mainQueue.addBack(request);
+        mainQueue.addBackAndWake(request);
     }
 
     /**

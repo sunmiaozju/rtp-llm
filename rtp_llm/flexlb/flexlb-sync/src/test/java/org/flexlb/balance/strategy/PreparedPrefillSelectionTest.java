@@ -1,6 +1,5 @@
 package org.flexlb.balance.strategy;
 
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.scheduler.DefaultRouter;
@@ -24,10 +23,7 @@ import org.flexlb.service.monitor.EngineHealthReporter;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -35,7 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -85,8 +81,8 @@ class PreparedPrefillSelectionTest {
         Request a = request("1");
         Request b = request("2");
         ExecutorService workers = Executors.newFixedThreadPool(2);
-        PrefillInputs aInputs;
-        PrefillInputs bInputs;
+        RequestWorkLoadEstimateResult aInputs;
+        RequestWorkLoadEstimateResult bInputs;
         try {
             var aFuture = workers.submit(() -> picker.prepare(a.ctx(), RoleType.PREFILL, "g"));
             var bFuture = workers.submit(() -> picker.prepare(b.ctx(), RoleType.PREFILL, "g"));
@@ -105,17 +101,13 @@ class PreparedPrefillSelectionTest {
                         .predictedMs());
         doThrow(new AssertionError("cache IO must stay in preparation")).when(cache).findMatchingEngines(any());
 
-        try (SelectedRole selected = picker.pick(a, RoleType.PREFILL, "g", aInputs).value()) {
-            a.setSelectedPrefill(SelectedPrefill.from(selected, a.seqLen()));
-        }
+        a.setSelectedPrefill(picker.pick(a, RoleType.PREFILL, "g", aInputs));
         assertSame(first, a.selectedPrefill().endpoint());
         a.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         queues.addWaiting(a);
 
         // B 的材料早已准备好，但最终决策要看到 A 新增的 10ms 排队负载：P1=20ms，P2=15ms。
-        try (SelectedRole selected = picker.pick(b, RoleType.PREFILL, "g", bInputs).value()) {
-            b.setSelectedPrefill(SelectedPrefill.from(selected, b.seqLen()));
-        }
+        b.setSelectedPrefill(picker.pick(b, RoleType.PREFILL, "g", bInputs));
         assertSame(second, b.selectedPrefill().endpoint());
         assertEquals(15L, b.selectedPrefill().serverStatus().getPrefillTime());
         verify(cache, times(2)).findMatchingEngines(any());
@@ -135,47 +127,37 @@ class PreparedPrefillSelectionTest {
         Request request = request("1");
         request.ctx().getRequest().setSeqLen(1_000L);
 
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
-            assertSame(first, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-        }
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        assertSame(first, picker.pick(request, RoleType.PREFILL, "g", inputs).endpoint());
         assertEquals(new PrefillRouteMetrics(200L, 800L, "OVER_CAP", 5L),
                 request.ctx().getMetrics().getPrefillRouteMetrics());
 
         first.close();
-        PrefillInputs refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", refreshed).value()) {
-            SelectedPrefill choice = SelectedPrefill.from(selected, request.seqLen());
-            assertSame(second, choice.endpoint());
-            assertEquals(900L, choice.hitCacheTokens());
-        }
+        RequestWorkLoadEstimateResult refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        SelectedPrefill choice = picker.pick(request, RoleType.PREFILL, "g", refreshed);
+        assertSame(second, choice.endpoint());
+        assertEquals(900L, choice.hitCacheTokens());
         assertEquals(new PrefillRouteMetrics(1_000L, 1_000L, "FASTEST_IS_CACHE_BEST", null),
                 request.ctx().getMetrics().getPrefillRouteMetrics());
     }
 
     @Test
-    void newCandidateRequiresNewMaterialsInsteadOfPredictionOnDecisionThread() {
+    void newlyRegisteredEndpointOnlyParticipatesAfterPreparation() {
         Request request = request("1");
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        List<PrefillCandidateWork> originalCandidates = new ArrayList<>(inputs.candidates());
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
         PrefillEndpoint added = publish("10.0.0.3", "5");
-        assertEquals(originalCandidates, inputs.candidates());
-        assertFalse(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
-        PrefillInputs refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        assertEquals(3, refreshed.candidates().size());
-        assertTrue(picker.inputsAreCurrent(refreshed, RoleType.PREFILL, "g"));
-        doThrow(new AssertionError("cache IO must stay in preparation")).when(cache).findMatchingEngines(any());
 
-        assertEquals(PlacementResult.Status.BLOCKED, picker.pick(request, RoleType.PREFILL, "g", inputs).status());
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", refreshed).value()) {
-            assertSame(added, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-        }
-        assertEquals(originalCandidates, inputs.candidates());
+        assertSame(first, picker.pick(request, RoleType.PREFILL, "g", inputs).endpoint());
+        verify(cache).findMatchingEngines(any());
+
+        RequestWorkLoadEstimateResult refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        assertEquals(3, refreshed.candidates().size());
+        assertSame(added, picker.pick(request, RoleType.PREFILL, "g", refreshed).endpoint());
         verify(cache, times(2)).findMatchingEngines(any());
     }
 
     @Test
-    void preparationFiltersGroupAndRetirementButCountsAllRegisteredGroupMembers() {
+    void selectionReportsOnlyPreparedCandidatesAfterGroupAndRetirementFiltering() {
         PrefillEndpoint third = publish("10.0.0.3", "20");
         publish("10.0.0.4", "1", "other");
         List<PrefillEndpoint> expected = registry.prefillRoutingSnapshot(RoleType.PREFILL)
@@ -186,15 +168,12 @@ class PreparedPrefillSelectionTest {
         second.close();
         Request request = request("1");
 
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
 
         assertEquals(expected, inputs.candidates().stream().map(PrefillCandidateWork::endpoint).toList());
-        assertTrue(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
-            assertSame(first, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-        }
+        assertSame(first, picker.pick(request, RoleType.PREFILL, "g", inputs).endpoint());
         var decision = request.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
-        assertEquals(3, decision.totalWorkerCount());
+        assertNull(decision.totalWorkerCount());
         assertEquals(2, decision.candidateWorkerCount());
         verify(cache).findMatchingEngines(any());
     }
@@ -210,15 +189,31 @@ class PreparedPrefillSelectionTest {
                 .filter(endpoint -> endpoint == second || endpoint == other)
                 .toList();
 
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, null);
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, null);
 
         assertEquals(expected, inputs.candidates().stream().map(PrefillCandidateWork::endpoint).toList());
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, null, inputs).value()) {
-            assertSame(other, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-        }
+        assertSame(other, picker.pick(request, RoleType.PREFILL, null, inputs).endpoint());
         var decision = request.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
-        assertEquals(3, decision.totalWorkerCount());
+        assertNull(decision.totalWorkerCount());
         assertEquals(2, decision.candidateWorkerCount());
+    }
+
+    @Test
+    void preparationKeepsCandidateMissingFromKvcmResults() {
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of(second.ipPort(), new HostCacheMatch(1L, 1L)), CacheMatchSource.KVCM, 0L, 100L));
+        Request request = request("1");
+        request.ctx().getRequest().setSeqLen(1_000L);
+
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+
+        assertEquals(2, inputs.candidates().size());
+        assertTrue(inputs.candidates()
+                .stream()
+                .anyMatch(candidate -> candidate.endpoint() == first && candidate.routingCacheMatchTokens() == 0L));
+        assertTrue(inputs.candidates()
+                .stream()
+                .anyMatch(candidate -> candidate.endpoint() == second && candidate.routingCacheMatchTokens() == 100L));
     }
 
     @Test
@@ -235,29 +230,22 @@ class PreparedPrefillSelectionTest {
         }
         Request request = request("1");
 
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
 
         assertEquals(2, inputs.candidates().size());
         assertTrue(inputs.candidates().stream().anyMatch(candidate -> candidate.endpoint() == first));
         assertTrue(inputs.candidates().stream().anyMatch(candidate -> candidate.endpoint() == second));
-        assertTrue(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
         verify(cache).findMatchingEngines(any());
     }
 
     @Test
-    void retiringCandidateInvalidatesMaterialsAndDoesNotBlockOtherNodes() {
+    void selectionUsesPreparedEndpointWithoutAcquiringHold() {
         Request request = request("1");
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        assertTrue(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
         first.close();
-        assertFalse(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
-        assertEquals(2, inputs.candidates().size());
-        assertTrue(inputs.candidates().stream().anyMatch(candidate -> candidate.endpoint() == first));
-        PrefillInputs refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        assertEquals(1, refreshed.candidates().size());
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", refreshed).value()) {
-            assertSame(second, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-        }
+
+        assertSame(first, picker.pick(request, RoleType.PREFILL, "g", inputs).endpoint());
+        verify(cache).findMatchingEngines(any());
     }
 
     @Test
@@ -275,11 +263,9 @@ class PreparedPrefillSelectionTest {
                 CacheMatchSource.KVCM, 0L, 100L));
         Request request = request("1");
         request.ctx().getRequest().setSeqLen(1_000L);
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
 
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
-            request.setSelectedPrefill(SelectedPrefill.from(selected, request.seqLen()));
-        }
+        request.setSelectedPrefill(picker.pick(request, RoleType.PREFILL, "g", inputs));
         assertEquals(800L, request.ctx().getGlobalHitTokens());
         assertSame(local, request.selectedPrefill().endpoint());
         assertEquals(640L, request.selectedPrefill().hitCacheTokens());
@@ -289,11 +275,10 @@ class PreparedPrefillSelectionTest {
         queues.addWaiting(request);
         Request next = request("2");
         next.ctx().getRequest().setSeqLen(1_000L);
-        PrefillInputs nextInputs = picker.prepare(next.ctx(), RoleType.PREFILL, "g");
-        try (SelectedRole selected = picker.pick(next, RoleType.PREFILL, "g", nextInputs).value()) {
-            assertSame(remote, SelectedPrefill.from(selected, next.seqLen()).endpoint());
-            assertEquals(200L, selected.serverStatus().getPrefillTime());
-        }
+        RequestWorkLoadEstimateResult nextInputs = picker.prepare(next.ctx(), RoleType.PREFILL, "g");
+        SelectedPrefill choice = picker.pick(next, RoleType.PREFILL, "g", nextInputs);
+        assertSame(remote, choice.endpoint());
+        assertEquals(200L, choice.serverStatus().getPrefillTime());
     }
 
     private Request request(String id) {
@@ -306,73 +291,12 @@ class PreparedPrefillSelectionTest {
     @Test
     void reorderedMaterialsStillUseEachEndpointsOwnPrediction() {
         Request request = request("1");
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        PrefillInputs reordered = new PrefillInputs(inputs.cacheMatch(), inputs.candidates().reversed());
+        RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        var reordered = RequestWorkLoadEstimateResult.success(inputs.cacheMatch(), inputs.candidates().reversed());
 
-        assertTrue(picker.inputsAreCurrent(reordered, RoleType.PREFILL, "g"));
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", reordered).value()) {
-            assertSame(first, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-            assertEquals(10L, selected.serverStatus().getPrefillTime());
-        }
-    }
-
-    @Test
-    void replacedEndpointAtSameAddressRequiresNewMaterials() {
-        Request request = request("1");
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        remove(first);
-        PrefillEndpoint replacement = publish("10.0.0.1", "1");
-
-        assertEquals(2, registry.prefillRoutingSnapshot(RoleType.PREFILL).size());
-        assertFalse(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
-        assertEquals(PlacementResult.Status.BLOCKED, picker.pick(request, RoleType.PREFILL, "g", inputs).status());
-        PrefillInputs refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", refreshed).value()) {
-            assertSame(replacement, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-        }
-    }
-
-    @Test
-    void removalBetweenValidationAndSelectionStillAllowsRemainingPreparedEndpoint() {
-        Request request = request("1");
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        assertTrue(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
-        remove(first);
-
-        assertFalse(picker.inputsAreCurrent(inputs, RoleType.PREFILL, "g"));
-        try (SelectedRole selected = picker.pick(request, RoleType.PREFILL, "g", inputs).value()) {
-            assertSame(second, SelectedPrefill.from(selected, request.seqLen()).endpoint());
-            assertEquals(15L, selected.serverStatus().getPrefillTime());
-        }
-    }
-
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void sameEndpointWithDifferentPreparedAddressIsNotCurrent(boolean reordered) {
-        Request request = request("1");
-        PrefillInputs inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        List<PrefillCandidateWork> candidates = new ArrayList<>(inputs.candidates());
-        PrefillCandidateWork candidate = candidates.getFirst();
-        candidates.set(0, new PrefillCandidateWork("other-address", candidate.endpoint(), candidate.cacheHitTokens(),
-                candidate.routingCacheMatchTokens(), candidate.predictedMs()));
-
-        PrefillInputs changed = new PrefillInputs(inputs.cacheMatch(), reordered ? candidates.reversed() : candidates);
-        assertFalse(picker.inputsAreCurrent(changed, RoleType.PREFILL, "g"));
-    }
-
-    private void remove(PrefillEndpoint endpoint) {
-        var status = endpoint.getStatus();
-        String address = registry.prefillRoutingSnapshot(RoleType.PREFILL).stream()
-                .filter(entry -> entry.endpoint() == endpoint)
-                .findFirst().orElseThrow().address();
-        EndpointRegistry.DetachedGeneration detached;
-        status.lock.lock();
-        try {
-            detached = registry.detachAndBeginRetirement(RoleType.PREFILL, address, status);
-        } finally {
-            status.lock.unlock();
-        }
-        detached.retireAndAwait();
+        SelectedPrefill choice = picker.pick(request, RoleType.PREFILL, "g", reordered);
+        assertSame(first, choice.endpoint());
+        assertEquals(10L, choice.serverStatus().getPrefillTime());
     }
 
     private PrefillEndpoint publish(String ip, String expression) {

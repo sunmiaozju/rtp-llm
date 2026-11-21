@@ -1,7 +1,6 @@
 package org.flexlb.balance.schedulev2;
 
 import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.eviction.DecodePreemptionCoordinator;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.balance.scheduler.DefaultRouter;
@@ -61,7 +60,6 @@ public class RequestSchedulerV2 {
      */
     private final RoleType prefillRole;
     private final RequestTable requestTable = new RequestTable();
-    private final LoopSignal mainLoopSignal = new LoopSignal();
     private final MainQueue mainQueue;
     private final PrefillQueueRegistry prefillQueues;
     private final DecodeQueue decodeQueue;
@@ -95,13 +93,15 @@ public class RequestSchedulerV2 {
         this.prefillRole = deployedRoles.contains(RoleType.PREFILL)
                 ? RoleType.PREFILL
                 : deployedRoles.contains(RoleType.PDFUSION) ? RoleType.PDFUSION : null;
-        boolean priorityOrdering = configService.loadBalanceConfig().isPriorityOrdering();
-        this.mainQueue = new MainQueue(queueCapacity, mainLoopSignal, priorityOrdering, queueReporter);
+        var startupConfig = configService.loadBalanceConfig();
+        var dispatcher = startupConfig.getDispatcher();
+        boolean priorityOrdering = startupConfig.isPriorityOrdering();
+        this.mainQueue =
+                new MainQueue(queueCapacity, dispatcher.getMainQueueConsumerThreads(), priorityOrdering, queueReporter);
         this.prefillQueues = prefillQueues;
         this.decodeQueue = new DecodeQueue(priorityOrdering);
-        this.cleanup =
-                new RequestCleanup(requestTable, mainQueue, queueCapacity, mainLoopSignal, prefillQueues, decodeQueue);
-        this.mainQueueConsumerPool = new MainQueueConsumerPool(mainQueue, mainLoopSignal, cleanup, queueCapacity,
+        this.cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, prefillQueues, decodeQueue);
+        this.mainQueueConsumerPool = new MainQueueConsumerPool(mainQueue, dispatcher, cleanup, queueCapacity,
                 endpointRegistry, placementAvailability, configService, router, prefillStrategy, prefillQueues,
                 prefillRole, queueReporter);
         Runnable capacityWake = decodeQueue::wake;
@@ -193,10 +193,8 @@ public class RequestSchedulerV2 {
                 cleanup.returnToMain(request, Stage.DECODE_WAITING);
                 return;
             }
-            try (WorkerEndpoint.EndpointHold hold = prefillCheck.hold(request)) {
-                if (hold == null) {
-                    cleanup.returnToMain(request, Stage.DECODE_WAITING);
-                } else if (request.publish(Stage.DECODE_WAITING, List.of(request.selectedPrefill().serverStatus()))) {
+            try {
+                if (request.publish(Stage.DECODE_WAITING, List.of(request.selectedPrefill().serverStatus()))) {
                     cleanup.releasePublished(request);
                 }
             } finally {

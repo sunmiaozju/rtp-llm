@@ -322,7 +322,7 @@ class CostBasedPrefillSelectionMetricTest {
                 new CacheMatchResult(Map.of("10.0.0.1:8080@0", new HostCacheMatch(localBlocks, globalBlocks)),
                         CacheMatchSource.KVCM, 0L, 100L));
 
-        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+        RequestWorkLoadEstimateResult inputs = strategy.prepare(context, RoleType.PREFILL, null);
         PrefillCandidateWork prepared = inputs.candidates().getFirst();
         assertEquals(affinityHitTokens, prepared.cacheHitTokens());
         assertEquals(routingHitTokens, prepared.routingCacheMatchTokens());
@@ -409,7 +409,7 @@ class CostBasedPrefillSelectionMetricTest {
                         "10.0.0.3:8080@0", new HostCacheMatch(3L, 7L), "10.0.0.4:8080@0", HostCacheMatch.local(2L)),
                 CacheMatchSource.KVCM, 0L, 100L));
 
-        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+        RequestWorkLoadEstimateResult inputs = strategy.prepare(context, RoleType.PREFILL, null);
 
         assertEquals(900L, context.getGlobalHitTokens());
         assertEquals(5, inputs.candidates().size());
@@ -445,7 +445,7 @@ class CostBasedPrefillSelectionMetricTest {
         strategy.prepare(context, RoleType.PREFILL, null);
         assertEquals(800L, context.getGlobalHitTokens());
 
-        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+        RequestWorkLoadEstimateResult inputs = strategy.prepare(context, RoleType.PREFILL, null);
 
         assertEquals(0L, context.getGlobalHitTokens());
         assertEquals(1_000L, inputs.candidates().getFirst().predictedMs());
@@ -472,7 +472,7 @@ class CostBasedPrefillSelectionMetricTest {
                 Map.of("10.0.0.2:8080@0", HostCacheMatch.local(55L), "10.0.0.3:8080@0", new HostCacheMatch(7L, 55L)),
                 CacheMatchSource.KVCM, 0L, 2_304L));
 
-        PrefillInputs inputs = strategy.prepare(context, RoleType.PREFILL, null);
+        RequestWorkLoadEstimateResult inputs = strategy.prepare(context, RoleType.PREFILL, null);
 
         assertEquals(126_720L, context.getGlobalHitTokens());
         assertEquals(3, inputs.candidates().size());

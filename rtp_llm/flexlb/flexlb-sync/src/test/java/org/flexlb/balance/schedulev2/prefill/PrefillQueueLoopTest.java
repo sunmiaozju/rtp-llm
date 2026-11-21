@@ -5,7 +5,6 @@ import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
-import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
 import org.flexlb.balance.schedulev2.V2TestSupport;
@@ -45,10 +44,8 @@ class PrefillQueueLoopTest {
     private final FlexlbConfig config = SchedulingTestConfig.newConfig();
     private final ConfigService configService = mock(ConfigService.class);
     private final QueueCapacity queueCapacity = new QueueCapacity();
-    private final LoopSignal mainLoopSignal = new LoopSignal();
     private final RequestTable requestTable = new RequestTable();
-    private final MainQueue mainQueue =
-            new MainQueue(queueCapacity, mainLoopSignal, false, mock(V2QueueReporter.class));
+    private final MainQueue mainQueue = new MainQueue(queueCapacity, 1, false, mock(V2QueueReporter.class));
     private final PrefillQueueRegistry queues;
     private final RequestCleanup cleanup;
     private final EndpointRegistry endpointRegistry = mock(EndpointRegistry.class);
@@ -66,8 +63,7 @@ class PrefillQueueLoopTest {
         when(endpointRegistry.get(RoleType.PREFILL, "p1:8000")).thenReturn(endpoint);
         queues = new PrefillQueueRegistry();
         V2TestSupport.register(queues, endpoint);
-        cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, mainLoopSignal, queues,
-                new DecodeQueue(false));
+        cleanup = new RequestCleanup(requestTable, mainQueue, queueCapacity, queues, new DecodeQueue(false));
     }
 
     @Test

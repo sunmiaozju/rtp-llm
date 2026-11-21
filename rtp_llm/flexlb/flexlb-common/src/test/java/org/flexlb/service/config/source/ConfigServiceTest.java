@@ -473,18 +473,26 @@ class ConfigServiceTest {
     }
 
     @Test
-    void runtimeUpdateStoresNewRequestPrepareThreadsInConfigSnapshot() {
+    void runtimeUpdateStoresNewRequestPreparePoolSizesInConfigSnapshot() {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
-                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH_V2","requestPrepareThreads":8}}
+                {"schemaVersion":3,"dispatcher":{"type":"NON_BATCH_V2","requestPrepareThreads":8,
+                  "requestPrepareMaxThreads":16}}
                 """);
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
         assertThat(service.loadBalanceConfig().getDispatcher().getRequestPrepareThreads()).isEqualTo(8);
+        assertThat(service.loadBalanceConfig().getDispatcher().getRequestPrepareMaxThreads()).isEqualTo(16);
 
         source.emit("""
-                {"schemaVersion":3,"dispatcher":{"requestPrepareThreads":3,"maxInflightPerPrefillWorker":9}}
+                {"schemaVersion":3,"dispatcher":{"requestPrepareThreads":3,"requestPrepareMaxThreads":6,
+                  "maxInflightPerPrefillWorker":9}}
                 """);
-        assertThat(service.loadBalanceConfig().getDispatcher().getRequestPrepareThreads()).isEqualTo(3);
-        assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
+        FlexlbConfig updated = service.loadBalanceConfig();
+        assertThat(updated.getDispatcher().getRequestPrepareThreads()).isEqualTo(3);
+        assertThat(updated.getDispatcher().getRequestPrepareMaxThreads()).isEqualTo(6);
+        assertThat(updated.getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
+
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"requestPrepareMaxThreads\":2}}");
+        assertThat(service.loadBalanceConfig()).isSameAs(updated);
     }
 
     @Test

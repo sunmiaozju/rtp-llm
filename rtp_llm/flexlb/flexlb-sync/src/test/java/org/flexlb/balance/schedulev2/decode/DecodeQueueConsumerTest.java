@@ -12,7 +12,6 @@ import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
 import org.flexlb.balance.scheduler.decode.DecodeRequirement;
-import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.PrefillPublishCheck;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
@@ -84,9 +83,8 @@ class DecodeQueueConsumerTest {
     private final DecodeQueue decodeQueue = new DecodeQueue(true);
     private final RequestTable requestTable = new RequestTable();
     private final QueueCapacity queueCapacity = new QueueCapacity();
-    private final LoopSignal mainSignal = new LoopSignal();
-    private final MainQueue mainQueue = new MainQueue(queueCapacity, mainSignal, true, queueReporter);
-    private final RequestCleanup cleanup = spy(new RequestCleanup(requestTable, mainQueue, queueCapacity, mainSignal,
+    private final MainQueue mainQueue = new MainQueue(queueCapacity, 1, true, queueReporter);
+    private final RequestCleanup cleanup = spy(new RequestCleanup(requestTable, mainQueue, queueCapacity,
             new org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry(), decodeQueue));
     private final DecodeSelector selector = mock(DecodeSelector.class);
     private final EndpointRegistry endpointRegistry = mock(EndpointRegistry.class);
@@ -568,7 +566,6 @@ class DecodeQueueConsumerTest {
         pool.close();
         assertFalse(prefillAvailable.get());
         assertEquals(1, otherDecode.getInflightCount());
-        verify(prefillCheck, never()).hold(any());
         verify(prefillCheck, never()).release(request);
     }
 

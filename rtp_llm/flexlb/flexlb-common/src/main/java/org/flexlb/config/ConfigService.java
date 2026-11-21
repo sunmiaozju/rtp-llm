@@ -221,13 +221,15 @@ public class ConfigService {
                 }
                 currentFlexlbConfig.set(updated);
                 configSchemaVersion = normalized.sourceSchemaVersion();
-                int previousThreads = previous.getDispatcher().getRequestPrepareThreads();
-                int updatedThreads = updated.getDispatcher().getRequestPrepareThreads();
-                if (previousThreads != updatedThreads) {
+                DispatcherConfig before = previous.getDispatcher();
+                DispatcherConfig after = updated.getDispatcher();
+                if (before.getRequestPrepareThreads() != after.getRequestPrepareThreads()
+                        || before.getRequestPrepareMaxThreads() != after.getRequestPrepareMaxThreads()) {
                     log.warn(
-                            "dispatcher.requestPrepareThreads changed from {} to {}; "
-                                    + "the running thread pool is not resized. Restart Master to apply.",
-                            previousThreads, updatedThreads);
+                            "Request prepare pool settings changed: core {} -> {}, max {} -> {}. "
+                                    + "Restart Master to apply.",
+                            before.getRequestPrepareThreads(), after.getRequestPrepareThreads(),
+                            before.getRequestPrepareMaxThreads(), after.getRequestPrepareMaxThreads());
                 }
                 notifyUpdateListeners(updated);
                 logEffectiveConfig(updated, configSchemaVersion);

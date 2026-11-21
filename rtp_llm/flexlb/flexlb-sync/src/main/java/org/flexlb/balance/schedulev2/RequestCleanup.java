@@ -18,20 +18,17 @@ public final class RequestCleanup {
     private final RequestTable requestTable;
     private final MainQueue mainQueue;
     private final QueueCapacity queueCapacity;
-    private final LoopSignal mainLoopSignal;
     private final PrefillQueueRegistry prefillQueues;
     private final DecodeQueue decodeQueue;
 
     public RequestCleanup(RequestTable requestTable,
                           MainQueue mainQueue,
                           QueueCapacity queueCapacity,
-                          LoopSignal mainLoopSignal,
                           PrefillQueueRegistry prefillQueues,
                           DecodeQueue decodeQueue) {
         this.requestTable = requestTable;
         this.mainQueue = mainQueue;
         this.queueCapacity = queueCapacity;
-        this.mainLoopSignal = mainLoopSignal;
         this.prefillQueues = prefillQueues;
         this.decodeQueue = decodeQueue;
     }
@@ -84,12 +81,12 @@ public final class RequestCleanup {
         request.setPrefillDecidedAtMs(0L);
         request.setPrefillQueuedAtMs(0L);
         if (request.moveTo(expected, Stage.MAIN_WAITING)) {
-            mainQueue.addBack(request);
+            mainQueue.addBackAndWake(request);
         }
     }
 
     /**
-     * 归还请求占用的子队列名额，并唤醒主队列循环去出队下一个请求。没占名额时什么也不做。
+     * 归还请求占用的子队列名额。没占名额时什么也不做。
      */
     public void releaseQueueSlot(Request request) {
         RoleType role = request.takeQueueSlot();
@@ -97,6 +94,5 @@ public final class RequestCleanup {
             return;
         }
         queueCapacity.releaseEngineSubQueueSlot(role);
-        mainLoopSignal.wake();
     }
 }

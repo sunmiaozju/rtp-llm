@@ -28,6 +28,7 @@ public final class DispatcherConfig {
     private int decodeQueueThreads = Runtime.getRuntime().availableProcessors();
     private int mainQueueConsumerThreads = Runtime.getRuntime().availableProcessors();
     private int requestPrepareThreads = Runtime.getRuntime().availableProcessors();
+    private int requestPrepareMaxThreads = 1_000;
     private int maxInflightPerPrefillWorker = DEFAULT_MAX_INFLIGHT_PER_PREFILL_WORKER;
     /** Shared waiting capacity = endpoint count * in-flight limit * this multiplier. */
     private int prefillSubqueueLimitMultiplier = DEFAULT_PREFILL_SUBQUEUE_LIMIT_MULTIPLIER;
@@ -72,6 +73,10 @@ public final class DispatcherConfig {
         }
         if (requestPrepareThreads <= 0) {
             throw new ConfigValidationException("dispatcher.requestPrepareThreads", "must be greater than zero");
+        }
+        if (requestPrepareMaxThreads < requestPrepareThreads) {
+            throw new ConfigValidationException("dispatcher.requestPrepareMaxThreads",
+                    "must be greater than or equal to dispatcher.requestPrepareThreads");
         }
         if (maxInflightPerPrefillWorker <= 0) {
             throw new ConfigValidationException("dispatcher.maxInflightPerPrefillWorker",

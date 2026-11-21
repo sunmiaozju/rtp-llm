@@ -12,7 +12,7 @@ package org.flexlb.balance.schedulev2.request;
  */
 public enum Stage {
     /**
-     * 在主队列里，还没选 Prefill。
+     * 等待交接给 Prefill，可能在主队列里，也可能已被取出准备或选点。
      */
     MAIN_WAITING,
     /**

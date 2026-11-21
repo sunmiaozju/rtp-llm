@@ -61,6 +61,21 @@ class ConfigServiceTest {
     }
 
     @Test
+    void requestPrepareMaxThreadsDefaultsToOneThousandAndCannotBeLessThanCore() {
+        assertEquals(1_000, ConfigTestFixtures.parse("{}").getDispatcher().getRequestPrepareMaxThreads());
+        for (int maxThreads : new int[]{8, 12}) {
+            DispatcherConfig dispatcher = ConfigTestFixtures.parse("""
+                    {"dispatcher":{"requestPrepareThreads":8,"requestPrepareMaxThreads":%d}}
+                    """.formatted(maxThreads)).getDispatcher();
+            assertEquals(8, dispatcher.getRequestPrepareThreads());
+            assertEquals(maxThreads, dispatcher.getRequestPrepareMaxThreads());
+        }
+        assertThrows(ConfigValidationException.class, () -> ConfigTestFixtures.parse("""
+                {"dispatcher":{"requestPrepareThreads":8,"requestPrepareMaxThreads":7}}
+                """));
+    }
+
+    @Test
     void configuresCacheHitFeedbackTimeoutWithDefault() {
         var defaults = JsonUtils.strictValueToTree(ConfigTestFixtures.parse("{}"));
         assertEquals(60_000L, defaults.at("/observability/cacheHit/feedbackTimeoutMs").longValue());

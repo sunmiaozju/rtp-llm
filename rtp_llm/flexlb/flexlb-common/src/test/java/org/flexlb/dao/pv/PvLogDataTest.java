@@ -57,6 +57,18 @@ class PvLogDataTest {
     }
 
     @Test
+    void omitsTotalWorkerCountWhenOnlyCandidateCountIsKnown() {
+        BalanceContext context = new BalanceContext();
+        context.recordRoutingDecision(new RoutingDecision(RoleType.PREFILL, "default", "CostBasedPrefill", "COST_BASED",
+                null, null, null, 1600L, 1, "worker", null, 2, false, Map.of(), List.of(), null));
+
+        String json = JsonUtils.toStringOrEmpty(new PvLogData(context));
+
+        assertFalse(json.contains("\"totalWorkerCount\""));
+        assertTrue(json.contains("\"candidateWorkerCount\":2"));
+    }
+
+    @Test
     void keepsCacheSelectionWhenSelectedCandidateHasNoEndpoint() {
         BalanceContext context = new BalanceContext();
         context.recordCacheSelection(RoleType.PREFILL, "10.0.0.2", 512L);

@@ -12,6 +12,10 @@ import org.flexlb.balance.schedulev2.decode.DecodeReservations;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeSelector;
+import org.flexlb.balance.strategy.PrefillCandidateWork;
+import org.flexlb.balance.strategy.RequestWorkLoadEstimateResult;
+import org.flexlb.cache.domain.CacheMatchResult;
+import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
@@ -27,6 +31,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -34,7 +39,11 @@ import java.util.concurrent.TimeUnit;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RequestSchedulerV2Test {
@@ -49,6 +58,38 @@ class RequestSchedulerV2Test {
         if (scheduler != null) {
             scheduler.close();
         }
+    }
+
+    @Test
+    void fusedPrefillPublishesWithoutHoldingEndpoint() throws Exception {
+        config.getDispatcher().setMainQueueConsumerThreads(1);
+        when(configService.loadBalanceConfig()).thenReturn(config);
+        ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
+        when(modelMetaConfig.requiredRoles()).thenReturn(List.of(RoleType.PDFUSION));
+        var endpoint = V2TestSupport.prefillEndpoint("p1:8000");
+        when(endpoint.getStatus().getRole()).thenReturn(RoleType.PDFUSION);
+        EndpointRegistry endpointRegistry = mock(EndpointRegistry.class);
+        when(endpointRegistry.getEndpointCount(RoleType.PDFUSION)).thenReturn(1);
+        when(endpointRegistry.get(RoleType.PDFUSION, endpoint.ipPort())).thenReturn(endpoint);
+        PrefillQueueRegistry prefillQueues = new PrefillQueueRegistry();
+        V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of());
+        V2TestSupport.register(prefillQueues, endpoint);
+        var choice = V2TestSupport.selected(endpoint, 0L, 10L);
+        var estimate = RequestWorkLoadEstimateResult.success(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC),
+                List.of(new PrefillCandidateWork(endpoint.ipPort(), endpoint, 0L, 0L, 10L)));
+        CostBasedPrefillStrategy prefillStrategy = mock(CostBasedPrefillStrategy.class);
+        when(prefillStrategy.prepare(any(), any(), any())).thenReturn(estimate);
+        when(prefillStrategy.selectPrepared(any(), any(), any(), any(), any())).thenReturn(choice);
+        scheduler = new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, new PlacementAvailability(),
+                mock(DefaultRouter.class), prefillStrategy, mock(DecodeSelector.class), prefillQueues, modelMetaConfig,
+                mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class), new DecodeReservations(),
+                mock(V2QueueReporter.class));
+
+        Response response = scheduler.submit(context("1", 50, 60_000L)).get(5, TimeUnit.SECONDS);
+
+        assertTrue(response.isSuccess());
+        assertEquals(List.of(choice.serverStatus()), response.getServerStatus());
+        verify(endpointRegistry, never()).hold(any(), any());
     }
 
     @Test

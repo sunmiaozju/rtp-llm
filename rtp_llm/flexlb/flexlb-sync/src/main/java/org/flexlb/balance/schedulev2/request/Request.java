@@ -5,8 +5,7 @@ import lombok.Setter;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.balance.scheduler.DeliveryClaimKind;
 import org.flexlb.balance.scheduler.RequestState;
-import org.flexlb.balance.schedulev2.SelectionResult;
-import org.flexlb.balance.strategy.PrefillInputs;
+import org.flexlb.balance.strategy.RequestWorkLoadEstimateResult;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -51,10 +50,11 @@ public final class Request {
     private volatile ScheduledFuture<?> deadlineTask;
     /**
      * 主队列为本请求准备的候选节点耗时，不含节点当前排队时间。短时退回主队列时可复用。
+     * 准备任务先写结果，再把请求放回主队列。
      */
     @Getter
     @Setter
-    private CompletableFuture<SelectionResult<PrefillInputs>> workLoadEstimate;
+    private RequestWorkLoadEstimateResult workLoadEstimate;
     /**
      * 主队列给它选的 Prefill。进入 PREFILL_WAITING 前设置；这台 Prefill 下线、请求退回主队列时清空。
      */
@@ -278,7 +278,7 @@ public final class Request {
     }
 
     /**
-     * 只在指定排队阶段挤掉请求。和出队竞争同一次 CAS，已经出队的请求不受影响。
+     * 只在请求仍处于指定阶段时判失败。
      */
     public boolean fail(Stage expected, StrategyErrorType errorType, String failureDetail) {
         if (!moveTo(expected, Stage.FAILED)) {

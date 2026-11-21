@@ -1,35 +1,47 @@
 package org.flexlb.balance.schedulev2;
 
+import org.flexlb.balance.schedulev2.main.MainQueue;
+import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
-import org.flexlb.balance.strategy.PrefillInputs;
+import org.flexlb.balance.strategy.RequestWorkLoadEstimateResult;
+import org.flexlb.config.DispatcherConfig;
+import org.flexlb.dao.route.RoleType;
 
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.function.Supplier;
 
 public final class RequestPreparePool implements AutoCloseable {
 
     private final ExecutorService executor;
-    private final LoopSignal signal;
+    private final MainQueue mainQueue;
+    private final PrefillPicker prefillPicker;
+    private final RoleType prefillRole;
 
-    public RequestPreparePool(int coreThreads, LoopSignal signal) {
-        this(createExecutor(coreThreads), signal);
+    public RequestPreparePool(DispatcherConfig dispatcher,
+                              MainQueue mainQueue,
+                              PrefillPicker prefillPicker,
+                              RoleType prefillRole) {
+        this(createExecutor(dispatcher), mainQueue, prefillPicker, prefillRole);
     }
 
-    public RequestPreparePool(ExecutorService executor, LoopSignal signal) {
+    public RequestPreparePool(ExecutorService executor,
+                              MainQueue mainQueue,
+                              PrefillPicker prefillPicker,
+                              RoleType prefillRole) {
         this.executor = executor;
-        this.signal = signal;
+        this.mainQueue = mainQueue;
+        this.prefillPicker = prefillPicker;
+        this.prefillRole = prefillRole;
     }
 
-    private static ExecutorService createExecutor(int coreThreads) {
-        int maxThreads = Math.multiplyExact(coreThreads, 3);
+    private static ExecutorService createExecutor(DispatcherConfig dispatcher) {
+        int coreThreads = dispatcher.getRequestPrepareThreads();
+        int maxThreads = dispatcher.getRequestPrepareMaxThreads();
         AtomicInteger workerId = new AtomicInteger();
         ThreadFactory threadFactory = task -> {
             Thread thread = new Thread(task, "flexlb-v2-main-worker-" + workerId.incrementAndGet());
@@ -40,32 +52,29 @@ public final class RequestPreparePool implements AutoCloseable {
                 new ArrayBlockingQueue<>(coreThreads), threadFactory, new ThreadPoolExecutor.AbortPolicy());
     }
 
-    public void submit(Request request, Supplier<PrefillInputs> prepare) {
-        if (request.stage() != Stage.MAIN_WAITING || request.getWorkLoadEstimate() != null) {
+    public void submit(Request request, String group) {
+        executor.execute(() -> prepareAndAddBack(request, group));
+    }
+
+    public boolean isShutdown() {
+        return executor.isShutdown();
+    }
+
+    public void prepareAndAddBack(Request request, String group) {
+        if (request.stage() != Stage.MAIN_WAITING) {
             return;
         }
 
-        CompletableFuture<SelectionResult<PrefillInputs>> estimateFuture = new CompletableFuture<>();
-        request.setWorkLoadEstimate(estimateFuture);
+        RequestWorkLoadEstimateResult estimate;
         try {
-            executor.execute(() -> {
-                try {
-                    if (request.stage() != Stage.MAIN_WAITING) {
-                        return;
-                    }
-                    estimateFuture.complete(new SelectionResult<>(prepare.get(), null, System.nanoTime()));
-                } catch (Throwable failure) {
-                    estimateFuture.complete(new SelectionResult<>(null, failure, System.nanoTime()));
-                } finally {
-                    signal.wake();
-                }
-            });
-        } catch (RejectedExecutionException rejected) {
-            request.setWorkLoadEstimate(null);
-            request.ctx().getMetrics().recordPrepareSubmitRejected();
-        } catch (RuntimeException | Error failure) {
-            request.setWorkLoadEstimate(null);
-            throw failure;
+            estimate = prefillPicker.prepare(request.ctx(), prefillRole, group);
+        } catch (Throwable failure) {
+            estimate = RequestWorkLoadEstimateResult.failed(failure);
+        }
+
+        if (request.stage() == Stage.MAIN_WAITING) {
+            request.setWorkLoadEstimate(estimate);
+            mainQueue.addBackAndWake(request);
         }
     }
 

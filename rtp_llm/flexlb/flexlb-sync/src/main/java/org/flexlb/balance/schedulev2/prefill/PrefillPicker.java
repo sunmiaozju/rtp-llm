@@ -1,11 +1,10 @@
 package org.flexlb.balance.schedulev2.prefill;
 
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.scheduler.DefaultRouter;
 import org.flexlb.balance.schedulev2.request.Request;
+import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
-import org.flexlb.balance.strategy.PrefillInputs;
-import org.flexlb.balance.strategy.SelectedRole;
+import org.flexlb.balance.strategy.RequestWorkLoadEstimateResult;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.route.RoleType;
 
@@ -32,21 +31,14 @@ public final class PrefillPicker {
     /**
      * worker 准备材料，候选节点全部参与缓存匹配和自身耗时预测，不在这里确定最终节点。
      */
-    public PrefillInputs prepare(BalanceContext context, RoleType role, String group) {
+    public RequestWorkLoadEstimateResult prepare(BalanceContext context, RoleType role, String group) {
         return prefillStrategy.prepare(context, role, group);
-    }
-
-    public boolean inputsAreCurrent(PrefillInputs inputs, RoleType role, String group) {
-        return prefillStrategy.inputsAreCurrent(inputs, role, group);
     }
 
     /**
      * 调度线程读取最新队列，选中后紧接着入队，下一次决策才能看到新增负载。
      */
-    public PlacementResult<SelectedRole, RoleType> pick(Request request,
-                                                        RoleType role,
-                                                        String group,
-                                                        PrefillInputs inputs) {
+    public SelectedPrefill pick(Request request, RoleType role, String group, RequestWorkLoadEstimateResult inputs) {
         return prefillStrategy.selectPrepared(request.ctx(), role, group, inputs,
                 candidate -> candidate.endpoint().prefillQueue()
                         .estimatedWorkMs(candidate.predictedMs()));

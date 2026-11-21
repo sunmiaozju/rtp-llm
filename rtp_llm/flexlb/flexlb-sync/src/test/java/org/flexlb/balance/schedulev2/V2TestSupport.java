@@ -1,18 +1,15 @@
 package org.flexlb.balance.schedulev2;
 
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.schedulev2.prefill.DispatchedRequest;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.balance.schedulev2.request.Stage;
-import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.SchedulingMetadata;
-import org.flexlb.dao.loadbalance.DebugInfo;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
@@ -123,28 +120,15 @@ public final class V2TestSupport {
         queue.handlePrefillStatus(observation, statusTimeoutMs);
     }
 
-    /**
-     * 选中 endpoint 的选择结果，返回的 hold 可用来检查是否被关闭。
-     */
-    public static SelectedRole selected(PrefillEndpoint endpoint, long hitCache, long predictedMs) {
-        SelectedRole selected = mock(SelectedRole.class);
-        WorkerEndpoint.EndpointHold hold = mock(WorkerEndpoint.EndpointHold.class);
-        when(hold.endpoint()).thenReturn(endpoint);
-        ServerStatus serverStatus = new ServerStatus();
-        DebugInfo debugInfo = new DebugInfo();
-        debugInfo.setHitCacheLen(hitCache);
-        serverStatus.setDebugInfo(debugInfo);
-        when(selected.takeEndpointHold()).thenReturn(hold);
-        when(selected.serverStatus()).thenReturn(serverStatus);
-        when(selected.prefillWorkMs()).thenReturn(predictedMs);
-        return selected;
+    public static SelectedPrefill selected(PrefillEndpoint endpoint, long hitCache, long predictedMs) {
+        return new SelectedPrefill(endpoint, new ServerStatus(), hitCache, predictedMs);
     }
 
     /**
      * 直接给请求设置选好的 Prefill，跳过主队列。
      */
     public static SelectedPrefill choose(Request request, PrefillEndpoint endpoint, long hitCache, long predictedMs) {
-        SelectedPrefill choice = new SelectedPrefill(endpoint, new ServerStatus(), hitCache, predictedMs);
+        SelectedPrefill choice = selected(endpoint, hitCache, predictedMs);
         request.setSelectedPrefill(choice);
         return choice;
     }

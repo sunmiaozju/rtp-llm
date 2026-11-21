@@ -1,9 +1,6 @@
 package org.flexlb.balance.schedulev2.request;
 
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.strategy.SelectedRole;
-import org.flexlb.dao.loadbalance.DebugInfo;
 import org.flexlb.dao.loadbalance.ServerStatus;
 
 /**
@@ -18,23 +15,6 @@ public record SelectedPrefill(PrefillEndpoint endpoint,
                               ServerStatus serverStatus,
                               long hitCacheTokens,
                               long predictedMs) {
-
-    /**
-     * 从选择结果取出需要的信息，并关闭选择结果持有的机器 hold，排队期间不阻止这台机器下线。
-     */
-    public static SelectedPrefill from(SelectedRole selected, long seqLen) {
-        WorkerEndpoint.EndpointHold hold = selected.takeEndpointHold();
-        try {
-            ServerStatus serverStatus = selected.serverStatus();
-            DebugInfo debugInfo = serverStatus.getDebugInfo();
-            long hitCache = debugInfo == null ? 0L : debugInfo.getHitCacheLen();
-            long hitCacheTokens = Math.max(0L, Math.min(seqLen, hitCache));
-            return new SelectedPrefill((PrefillEndpoint) hold.endpoint(), serverStatus, hitCacheTokens,
-                    selected.prefillWorkMs());
-        } finally {
-            hold.close();
-        }
-    }
 
     /**
      * 还没算进引擎 KV 的部分：输入 token 数减去命中缓存的 token 数。

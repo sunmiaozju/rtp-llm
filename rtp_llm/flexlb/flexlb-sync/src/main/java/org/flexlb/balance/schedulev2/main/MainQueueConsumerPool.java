@@ -4,7 +4,6 @@ import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.scheduler.DefaultRouter;
 import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
-import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.RequestCleanup;
 import org.flexlb.balance.schedulev2.RequestPreparePool;
 import org.flexlb.balance.schedulev2.prefill.PrefillPicker;
@@ -21,7 +20,7 @@ import java.util.List;
 public final class MainQueueConsumerPool {
 
     private final List<Thread> threads = new ArrayList<>();
-    private final LoopSignal signal;
+    private final MainQueue mainQueue;
     private final RequestPreparePool preparePool;
     private final PlacementAvailability placementAvailability;
     private final PlacementAvailability.Listener prefillChangeListener;
@@ -29,7 +28,7 @@ public final class MainQueueConsumerPool {
     private boolean closed;
 
     public MainQueueConsumerPool(MainQueue mainQueue,
-                                 LoopSignal signal,
+                                 DispatcherConfig dispatcher,
                                  RequestCleanup cleanup,
                                  QueueCapacity queueCapacity,
                                  EndpointRegistry endpointRegistry,
@@ -40,22 +39,21 @@ public final class MainQueueConsumerPool {
                                  PrefillQueueRegistry prefillQueues,
                                  RoleType prefillRole,
                                  V2QueueReporter queueReporter) {
-        this.signal = signal;
+        this.mainQueue = mainQueue;
         this.placementAvailability = placementAvailability;
         this.prefillChangeListener = event -> {
             if (event.key().role() == prefillRole) {
-                signal.wake();
+                mainQueue.wakeConsumer();
             }
         };
 
-        DispatcherConfig dispatcher = configService.loadBalanceConfig().getDispatcher();
-        this.preparePool = new RequestPreparePool(dispatcher.getRequestPrepareThreads(), signal);
         PrefillPicker picker = new PrefillPicker(router, prefillStrategy);
+        this.preparePool = new RequestPreparePool(dispatcher, mainQueue, picker, prefillRole);
         int consumerThreads = dispatcher.getMainQueueConsumerThreads();
         for (int i = 0; i < consumerThreads; i++) {
-            MainQueueConsumer consumer = new MainQueueConsumer(mainQueue, signal, cleanup, queueCapacity,
-                    endpointRegistry, configService, picker, prefillQueues, prefillRole, prefillQueues::addWaiting,
-                    preparePool, queueReporter);
+            MainQueueConsumer consumer =
+                    new MainQueueConsumer(mainQueue, cleanup, queueCapacity, endpointRegistry, configService, picker,
+                            prefillQueues, prefillRole, prefillQueues::addWaiting, preparePool, queueReporter);
             Thread thread = new Thread(() -> consumer.run(() -> running), "flexlb-v2-main-consumer-" + (i + 1));
             thread.setDaemon(true);
             threads.add(thread);
@@ -79,7 +77,7 @@ public final class MainQueueConsumerPool {
         if (running) {
             running = false;
             placementAvailability.removeListener(prefillChangeListener);
-            signal.wake();
+            mainQueue.wakeConsumer();
         }
         preparePool.close();
     }

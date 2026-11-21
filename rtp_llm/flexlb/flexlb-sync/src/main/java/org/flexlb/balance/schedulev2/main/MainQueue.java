@@ -2,7 +2,6 @@ package org.flexlb.balance.schedulev2.main;
 
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.SchedulerErrorMessages;
-import org.flexlb.balance.schedulev2.LoopSignal;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestOrder;
 import org.flexlb.balance.schedulev2.request.Stage;
@@ -10,8 +9,9 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.service.monitor.V2QueueReporter;
 
-import java.util.Iterator;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -25,17 +25,18 @@ public final class MainQueue {
 
     private final V2QueueReporter reporter;
     private final QueueCapacity queueCapacity;
-    private final LoopSignal loopSignal;
+    private final Semaphore pendingWakeups = new Semaphore(0);
+    private final int maxPendingWakeups;
     private final ConcurrentSkipListSet<Request> requests;
     private final AtomicLong nextSeq = new AtomicLong();
 
     public MainQueue(QueueCapacity queueCapacity,
-                     LoopSignal loopSignal,
+                     int consumerThreads,
                      boolean priorityOrdering,
                      V2QueueReporter reporter) {
         this.reporter = reporter;
         this.queueCapacity = queueCapacity;
-        this.loopSignal = loopSignal;
+        this.maxPendingWakeups = consumerThreads;
         this.requests = new ConcurrentSkipListSet<>(RequestOrder.of(priorityOrdering));
     }
 
@@ -57,11 +58,11 @@ public final class MainQueue {
                 request.setQueueSeq(nextSeq.incrementAndGet());
                 requests.add(request);
                 // 入队期间请求可能已结束，结束时的清理没看到它，这里补上
-                if (request.stage() != Stage.MAIN_WAITING) {
+                if (request.stage().isEnded()) {
                     remove(request);
                     queueCapacity.decreaseTotalQueueCount(request.future());
                 }
-                loopSignal.wake();
+                wakeConsumer();
                 return null;
             }
             if (!config.isPriorityOrdering()) {
@@ -75,8 +76,9 @@ public final class MainQueue {
             if (victim == null) {
                 return StrategyErrorType.QUEUE_FULL_HIGH_PRIORITY_REJECTED;
             }
-            // 挤掉的请求结束时会同步释放排队名额，当前请求的重试或其他请求都可以申请
-            if (victim.fail(Stage.MAIN_WAITING, StrategyErrorType.queueRejectionFor(victim.priority(), threshold),
+            // 先从主队列移除，不能淘汰已被消费者取走的请求。
+            if (requests.remove(victim) && victim.fail(Stage.MAIN_WAITING,
+                    StrategyErrorType.queueRejectionFor(victim.priority(), threshold),
                     SchedulerErrorMessages.QUEUE_FULL)) {
                 reporter.mainPreempted(request.priority(), victim.priority());
             }
@@ -96,17 +98,42 @@ public final class MainQueue {
         return null;
     }
 
+    Request pollFirst() {
+        return requests.pollFirst();
+    }
+
+    public void addBackAndWake(Request request) {
+        addBack(request);
+        wakeConsumer();
+    }
+
+    void wakeConsumer() {
+        // 通知不是排队名额，并发发通知时允许短暂超过软上限。
+        if (pendingWakeups.availablePermits() < maxPendingWakeups) {
+            pendingWakeups.release();
+        }
+    }
+
+    void awaitWakeup(long timeoutMs) {
+        try {
+            pendingWakeups.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /**
-     * 把从 Prefill 队列退回来的请求放回主队列。请求还算在排队总数里，这里不再检查上限；
-     * 沿用原来的顺序号，所以排在原来的位置。
+     * 按原顺序号放回。请求仍占用总排队名额，不重新检查上限。
      */
-    public void addBack(Request request) {
+    void addBack(Request request) {
+        if (request.stage().isEnded()) {
+            return;
+        }
         requests.add(request);
-        // 放回期间请求可能已结束，结束时的清理没看到它，这里补上
-        if (request.stage() != Stage.MAIN_WAITING) {
+        // 取消或失败的清理可能先于插入，这里补删。
+        if (request.stage().isEnded()) {
             remove(request);
         }
-        loopSignal.wake();
     }
 
     /**
@@ -114,13 +141,6 @@ public final class MainQueue {
      */
     public void remove(Request request) {
         requests.remove(request);
-    }
-
-    /**
-     * 按出队顺序遍历；遍历期间的增删不会抛异常。
-     */
-    public Iterator<Request> iterator() {
-        return requests.iterator();
     }
 
     public int size() {

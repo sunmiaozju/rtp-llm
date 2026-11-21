@@ -8,6 +8,7 @@ import org.flexlb.balance.estimate.EndpointPrefillLoadProvider;
 import org.flexlb.balance.estimate.PrefillLoadProvider;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.prediction.PrefillPredictionBoundary;
+import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.cache.domain.CacheMatchQuery;
 import org.flexlb.cache.domain.CacheMatchResult;
 import org.flexlb.cache.domain.CacheMatchSource;
@@ -39,7 +40,6 @@ import org.springframework.stereotype.Component;
 import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.BitSet;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,17 +95,18 @@ public class CostBasedPrefillStrategy {
 
         PrefillCandidateSet survivors = evaluateCandidates(discovery, balanceContext, cacheMatchResult);
 
-        return finishSelection(balanceContext, roleType, group, discovery, cacheMatchResult, survivors);
+        return finishSelection(balanceContext, roleType, group, discovery.registeredCount(), cacheMatchResult,
+                survivors);
     }
 
     /**
      * 并行准备完整候选集合的缓存匹配和请求自身耗时。排队负载留到调度线程作最终决策时再读取。
      */
-    public PrefillInputs prepare(BalanceContext context, RoleType role, String group) {
+    public RequestWorkLoadEstimateResult prepare(BalanceContext context, RoleType role, String group) {
         context.beginRoutingAttempt(role);
         EndpointDiscovery discovery = discoverActiveEndpoints(role, group);
         if (discovery.candidates().isEmpty()) {
-            return new PrefillInputs(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC), List.of());
+            return null;
         }
         CacheMatchResult cacheMatch = getCacheMatchResult(context, role, group);
         PrefillCacheMatchInputs cacheInputs = PrefillCacheMatchInputs.build(context, cacheMatch);
@@ -119,33 +120,21 @@ public class CostBasedPrefillStrategy {
             candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.effectiveHitTokens(),
                     match.routingHitTokens(), predictedMs));
         }
-        return new PrefillInputs(cacheMatch, candidates);
+        return RequestWorkLoadEstimateResult.success(cacheMatch, candidates);
     }
 
     /**
-     * 调度线程读取当前队列的累计预测工作量作为耗时评分，再沿用缓存亲和与同分轮询规则选点。
-     * 新增或重启的节点没有对应材料时重新准备，不能把旧节点的缓存和耗时套到新节点上。
+     * 只在准备阶段确定的候选中选点；评分使用当前队列的累计预测工作量。
      */
-    public PlacementResult<SelectedRole, RoleType> selectPrepared(BalanceContext context,
-                                                                  RoleType role,
-                                                                  String group,
-                                                                  PrefillInputs inputs,
-                                                                  ToLongFunction<PrefillCandidateWork> ttft) {
-        EndpointDiscovery discovery = discoverActiveEndpoints(role, group);
-        if (discovery.candidates().isEmpty()) {
-            return classifyAdmissionFailure(discovery, context.getPriority(), role, group, 0L);
-        }
-        boolean sameOrder = hasSameEndpointOrder(discovery.candidates(), inputs.candidates());
-        Map<PrefillEndpoint, PrefillCandidateWork> prepared =
-                sameOrder ? Map.of() : indexPreparedCandidates(inputs.candidates());
+    public SelectedPrefill selectPrepared(BalanceContext context,
+                                          RoleType role,
+                                          String group,
+                                          RequestWorkLoadEstimateResult inputs,
+                                          ToLongFunction<PrefillCandidateWork> ttft) {
+        List<PrefillCandidateWork> preparedCandidates = inputs.candidates();
         PrefillCandidateSet candidates = new PrefillCandidateSet();
-        candidates.reset(discovery.candidates().size());
-        for (int index = 0; index < discovery.candidates().size(); index++) {
-            EndpointRegistry.PrefillRoutingEntry entry = discovery.candidates().get(index);
-            PrefillCandidateWork candidate = sameOrder ? inputs.candidates().get(index) : prepared.get(entry.endpoint());
-            if (candidate == null) {
-                return PlacementResult.blocked(role);
-            }
+        candidates.reset(preparedCandidates.size());
+        for (PrefillCandidateWork candidate : preparedCandidates) {
             long estimatedMs = ttft.applyAsLong(candidate);
             PrefillTtftEstimate.Candidate estimate = new PrefillTtftEstimate.Candidate(
                     estimatedMs < 0L
@@ -153,56 +142,22 @@ public class CostBasedPrefillStrategy {
                             : PrefillTtftEstimate.Candidate.State.MODELED,
                     estimatedMs, candidate.predictedMs(), PrefillTtftEstimate.Candidate.InitialHeadDisposition.NONE, "",
                     null, candidate.cacheHitTokens(), candidate.routingCacheMatchTokens());
-            candidates.addCandidate(entry.address(), entry.endpoint(), estimate, candidate.cacheHitTokens(),
-                    entry.endpoint().placementVersion());
+            candidates.addCandidate(candidate.address(), candidate.endpoint(), estimate, candidate.cacheHitTokens(),
+                    candidate.endpoint().placementVersion());
         }
-        return finishSelection(context, role, group, discovery, inputs.cacheMatch(), candidates);
-    }
+        CacheMatchResult cacheMatch = inputs.cacheMatch();
+        int selectedIndex = selectPrefillIndex(context, role, group, cacheMatch, candidates);
+        PrefillEndpoint endpoint = candidates.endpoint(selectedIndex);
+        long hitCacheTokens = candidates.cacheHit(selectedIndex);
+        ServerStatus status = buildPrefillStatus(endpoint, role, context.getRequestId(),
+                candidates.estimatedTtftMs(selectedIndex), hitCacheTokens);
 
-    /**
-     * 材料对应的候选集合是否仍然有效。增加、移除、重启或开始下线的节点都会使材料失效。
-     */
-    public boolean inputsAreCurrent(PrefillInputs inputs, RoleType role, String group) {
-        EndpointDiscovery current = discoverActiveEndpoints(role, group);
-        if (current.candidates().size() != inputs.candidates().size()) {
-            return false;
-        }
-        boolean sameOrder = hasSameEndpointOrder(current.candidates(), inputs.candidates());
-        Map<PrefillEndpoint, PrefillCandidateWork> prepared =
-                sameOrder ? Map.of() : indexPreparedCandidates(inputs.candidates());
-        for (int index = 0; index < current.candidates().size(); index++) {
-            EndpointRegistry.PrefillRoutingEntry candidate = current.candidates().get(index);
-            PrefillCandidateWork work = sameOrder ? inputs.candidates().get(index) : prepared.get(candidate.endpoint());
-            if (candidate.endpoint().isRetired() || work == null || !candidate.address().equals(work.address())) {
-                return false;
-            }
-        }
-        return true;
-    }
+        recordSelectedPrefill(context, role, group, null, cacheMatch, candidates, selectedIndex);
+        recordV2PrefillMetrics(context, candidates, selectedIndex);
 
-    /**
-     * 注册目录未变化时，材料和当前候选通常保持相同顺序，可直接按索引读取而不必建表。
-     * 比较 endpoint 对象本身，避免把同地址新一代节点当成原节点；乱序时仍按对象身份查找。
-     */
-    private boolean hasSameEndpointOrder(List<EndpointRegistry.PrefillRoutingEntry> current,
-                                         List<PrefillCandidateWork> prepared) {
-        if (current.size() != prepared.size()) {
-            return false;
-        }
-        for (int index = 0; index < current.size(); index++) {
-            if (current.get(index).endpoint() != prepared.get(index).endpoint()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private Map<PrefillEndpoint, PrefillCandidateWork> indexPreparedCandidates(List<PrefillCandidateWork> candidates) {
-        Map<PrefillEndpoint, PrefillCandidateWork> prepared = new IdentityHashMap<>(candidates.size());
-        for (PrefillCandidateWork candidate : candidates) {
-            prepared.put(candidate.endpoint(), candidate);
-        }
-        return prepared;
+        long seqLen = context.getRequest().getSeqLen();
+        return new SelectedPrefill(endpoint, status, Math.max(0L, Math.min(seqLen, hitCacheTokens)),
+                candidates.prefillMs(selectedIndex));
     }
 
     /**
@@ -215,35 +170,16 @@ public class CostBasedPrefillStrategy {
     private PlacementResult<SelectedRole, RoleType> finishSelection(BalanceContext balanceContext,
                                                                     RoleType roleType,
                                                                     String group,
-                                                                    EndpointDiscovery discovery,
+                                                                    Integer totalWorkerCount,
                                                                     CacheMatchResult cacheMatchResult,
                                                                     PrefillCandidateSet survivors) {
-        String requestId = balanceContext.getRequestId();
-        long seqLen = balanceContext.getRequest().getSeqLen();
-        FlexlbConfig config = balanceContext.getConfig();
-
-        int selectedIndex = selectBestCandidate(survivors, survivors.minimumTtftRank, roleType, group, seqLen, config);
-
-        if ("NO_CACHE_ANYWHERE".equals(survivors.affinityDecision())) {
-            if (seqLen < cacheMatchResult.blockSize()) {
-                survivors.recordAffinityDecision("NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE");
-            } else if (cacheMatchResult.source() == CacheMatchSource.KVCM && cacheMatchResult.querySucceeded()) {
-                boolean kvcmHasHit = cacheMatchResult.hostMatches().values().stream()
-                        .anyMatch(match -> match.globalMatchBlocks() > 0L);
-                survivors.recordAffinityDecision(kvcmHasHit
-                        ? "NO_CACHE_ANYWHERE_BUT_KVCM_HAS_HIT"
-                        : "NO_CACHE_ANYWHERE_KVCM");
-            }
-        }
-
+        int selectedIndex = selectPrefillIndex(balanceContext, roleType, group, cacheMatchResult, survivors);
         PrefillEndpoint best = survivors.endpoint(selectedIndex);
-        long bestCacheHit = survivors.cacheHit(selectedIndex);
-        long selectedPrefillMs = survivors.prefillMs(selectedIndex);
         WorkerEndpoint.EndpointHold selectedHold =
                 workerDirectory.holdEndpoint(roleType, survivors.endpointAddress(selectedIndex));
         if (selectedHold == null || selectedHold.endpoint() != best) {
-            recordDecision(balanceContext, roleType, group, discovery.registeredCount(), survivors,
-                    -1, "ENDPOINT_GENERATION_CHANGED", cacheMatchResult);
+            recordDecision(balanceContext, roleType, group, totalWorkerCount, survivors, -1,
+                    "ENDPOINT_GENERATION_CHANGED", cacheMatchResult);
             if (selectedHold != null) {
                 selectedHold.close();
             }
@@ -252,39 +188,75 @@ public class CostBasedPrefillStrategy {
             // transferring ownership for a stale generation.
             return PlacementResult.blocked(roleType);
         }
-        long selectedTtft = survivors.estimatedTtftMs(selectedIndex);
-        SelectedRole selectedRole = buildSelectedRole(best, roleType, requestId, selectedTtft, selectedPrefillMs,
-                bestCacheHit, survivors.ownershipVersion(selectedIndex), selectedHold);
+        SelectedRole selectedRole = buildSelectedRole(best, roleType, balanceContext.getRequestId(),
+                survivors.estimatedTtftMs(selectedIndex), survivors.prefillMs(selectedIndex),
+                survivors.cacheHit(selectedIndex), survivors.ownershipVersion(selectedIndex), selectedHold);
+        recordSelectedPrefill(balanceContext, roleType, group, totalWorkerCount, cacheMatchResult, survivors,
+                selectedIndex);
+        if (balanceContext.getConfig().getDispatcher().getType() == DispatcherConfig.Type.NON_BATCH_V2) {
+            recordV2PrefillMetrics(balanceContext, survivors, selectedIndex);
+            return PlacementResult.success(selectedRole);
+        }
+        return PlacementResult.success(selectedRole.onCommit(commitTelemetry(roleType, best,
+                balanceContext.getRequest().getSeqLen(), survivors.routingCacheMatchTokens(selectedIndex),
+                survivors.maximumRoutingCacheMatchTokens, survivors.affinityDecision(), survivors.cacheAffinity())));
+    }
+
+    private int selectPrefillIndex(BalanceContext context,
+                                   RoleType role,
+                                   String group,
+                                   CacheMatchResult cacheMatch,
+                                   PrefillCandidateSet candidates) {
+        long seqLen = context.getRequest().getSeqLen();
+        int selectedIndex =
+                selectBestCandidate(candidates, candidates.minimumTtftRank, role, group, seqLen, context.getConfig());
+        if ("NO_CACHE_ANYWHERE".equals(candidates.affinityDecision())) {
+            if (seqLen < cacheMatch.blockSize()) {
+                candidates.recordAffinityDecision("NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE");
+            } else if (cacheMatch.source() == CacheMatchSource.KVCM && cacheMatch.querySucceeded()) {
+                boolean kvcmHasHit =
+                        cacheMatch.hostMatches().values().stream().anyMatch(match -> match.globalMatchBlocks() > 0L);
+                candidates.recordAffinityDecision(
+                        kvcmHasHit ? "NO_CACHE_ANYWHERE_BUT_KVCM_HAS_HIT" : "NO_CACHE_ANYWHERE_KVCM");
+            }
+        }
+        return selectedIndex;
+    }
+
+    private void recordSelectedPrefill(BalanceContext balanceContext,
+                                       RoleType roleType,
+                                       String group,
+                                       Integer totalWorkerCount,
+                                       CacheMatchResult cacheMatchResult,
+                                       PrefillCandidateSet candidates,
+                                       int selectedIndex) {
+        PrefillEndpoint best = candidates.endpoint(selectedIndex);
+        long bestCacheHit = candidates.cacheHit(selectedIndex);
         if (balanceContext.selectionReason(roleType) == null) {
             balanceContext.recordSelectionReason(roleType, "COST_BASED");
         }
-        cacheAwareService.trackRoutingPrediction(
-                requestId, roleType, group, best.getStatus(),
-                seqLen, bestCacheHit, cacheMatchResult, balanceContext.getTheoryHitTokens());
+        cacheAwareService.trackRoutingPrediction(balanceContext.getRequestId(), roleType, group, best.getStatus(),
+                balanceContext.getRequest().getSeqLen(), bestCacheHit, cacheMatchResult,
+                balanceContext.getTheoryHitTokens());
         balanceContext.recordCacheSelection(roleType, best.getIp(), bestCacheHit);
-        recordDecision(balanceContext, roleType, group, discovery.registeredCount(), survivors,
-                selectedIndex, balanceContext.selectionReason(roleType), cacheMatchResult);
+        recordDecision(balanceContext, roleType, group, totalWorkerCount, candidates, selectedIndex,
+                balanceContext.selectionReason(roleType), cacheMatchResult);
+        long selectedTtft = candidates.estimatedTtftMs(selectedIndex);
         if (selectedTtft >= 0L) {
-            reportSelectedEstimates(roleType, best, config, selectedTtft, selectedPrefillMs);
+            reportSelectedEstimates(roleType, best, balanceContext.getConfig(), selectedTtft,
+                    candidates.prefillMs(selectedIndex));
         }
-        if (config.getDispatcher().getType() == DispatcherConfig.Type.NON_BATCH_V2) {
-            String decision = survivors.affinityDecision();
-            Long overCapMs = "OVER_CAP".equals(decision) ? survivors.cacheAffinity().overCapMs() : null;
-            if (decision != null && best.getStatus().getMetricIpPort() == null) {
-                decision = null;
-            }
-            balanceContext.getMetrics().setPrefillRouteMetrics(new PrefillRouteMetrics(
-                    survivors.routingCacheMatchTokens(selectedIndex),
-                    survivors.maximumRoutingCacheMatchTokens,
-                    decision,
-                    overCapMs));
-            return PlacementResult.success(selectedRole);
+    }
+
+    private void recordV2PrefillMetrics(BalanceContext context, PrefillCandidateSet candidates, int selectedIndex) {
+        String decision = candidates.affinityDecision();
+        Long overCapMs = "OVER_CAP".equals(decision) ? candidates.cacheAffinity().overCapMs() : null;
+        if (decision != null && candidates.endpoint(selectedIndex).getStatus().getMetricIpPort() == null) {
+            decision = null;
         }
-        return PlacementResult.success(selectedRole.onCommit(commitTelemetry(
-                roleType, best, seqLen,
-                survivors.routingCacheMatchTokens(selectedIndex),
-                survivors.maximumRoutingCacheMatchTokens,
-                survivors.affinityDecision(), survivors.cacheAffinity())));
+        context.getMetrics()
+                .setPrefillRouteMetrics(new PrefillRouteMetrics(candidates.routingCacheMatchTokens(selectedIndex),
+                        candidates.maximumRoutingCacheMatchTokens, decision, overCapMs));
     }
 
     /**
@@ -314,7 +286,7 @@ public class CostBasedPrefillStrategy {
     private void recordDecision(BalanceContext context,
                                 RoleType role,
                                 String group,
-                                int totalWorkers,
+                                Integer totalWorkerCount,
                                 PrefillCandidateSet candidates,
                                 int selectedIndex,
                                 String reason,
@@ -328,24 +300,14 @@ public class CostBasedPrefillStrategy {
                 snapshot.add(snapshotCandidate(candidates, index, false));
             }
         }
-        context.recordRoutingDecision(new RoutingDecision(
-                role,
-                group,
-                "CostBasedPrefill",
-                reason == null ? "COST_BASED" : reason,
-                selectedIndex < 0 ? null : candidates.affinityDecision(),
-                candidates.cacheAffinity(),
-                kvcmMatches(cacheMatchResult, context.getRequest().getSeqLen(),
-                        selectedIndex < 0 ? null : candidates.endpoint(selectedIndex).getStatus()),
-                System.currentTimeMillis(),
-                context.routingAttempt(role),
-                selectedIndex < 0 ? null : candidates.endpointAddress(selectedIndex),
-                totalWorkers,
-                candidates.size(),
-                candidates.size() > snapshot.size(),
-                Map.of(),
-                snapshot,
-                null));
+        context.recordRoutingDecision(
+                new RoutingDecision(role, group, "CostBasedPrefill", reason == null ? "COST_BASED" : reason,
+                        selectedIndex < 0 ? null : candidates.affinityDecision(), candidates.cacheAffinity(),
+                        kvcmMatches(cacheMatchResult, context.getRequest().getSeqLen(),
+                                selectedIndex < 0 ? null : candidates.endpoint(selectedIndex).getStatus()),
+                        System.currentTimeMillis(), context.routingAttempt(role),
+                        selectedIndex < 0 ? null : candidates.endpointAddress(selectedIndex), totalWorkerCount,
+                        candidates.size(), candidates.size() > snapshot.size(), Map.of(), snapshot, null));
     }
 
     private static RoutingDecision.KvcmMatches kvcmMatches(CacheMatchResult result,
@@ -794,31 +756,11 @@ public class CostBasedPrefillStrategy {
                                            long placementVersion,
                                            WorkerEndpoint.EndpointHold selectedHold) {
         try {
-            // Populate DebugInfo so ScheduledRequest.hitCache() can read
-            // hitCacheLen for batch metrics.
-            DebugInfo debugInfo = new DebugInfo();
-            debugInfo.setHitCacheLen(bestCacheHit);
-
             if (selectedHold == null || selectedHold.endpoint() != ep) {
                 throw new IllegalStateException(
                         "selected Prefill endpoint generation changed before handoff");
             }
-            WorkerStatus workerStatus = ep.getStatus();
-            WorkerStatus.TopologySnapshot topology = workerStatus.topologySnapshot();
-            WorkerStatus.EngineObservation status = workerStatus.committedEngineObservation();
-            ServerStatus result = new ServerStatus();
-            result.setRole(roleType);
-            result.setRequestId(requestId);
-            if (estimatedTtftMs >= 0L) { result.setPrefillTime(estimatedTtftMs); }
-            result.setGroup(topology.group());
-            result.setServerIp(topology.ip());
-            result.setHttpPort(topology.port());
-            result.setGrpcPort(CommonUtils.toGrpcPort(topology.port()));
-            result.setDpRank(status.dpRank());
-            result.setDebugInfo(debugInfo);
-            result.setSuccess(true);
-            result.setSelectedEngineIndex(
-                    topology.engineIndex(), topology.multiEngineNum());
+            ServerStatus result = buildPrefillStatus(ep, roleType, requestId, estimatedTtftMs, bestCacheHit);
             WorkerEndpoint.EndpointHold ownedHold = selectedHold;
             selectedHold = null;
             return SelectedRole.prefill(ownedHold, result, selectedPrefillMs, placementVersion);
@@ -827,6 +769,34 @@ public class CostBasedPrefillStrategy {
                 selectedHold.close();
             }
         }
+    }
+
+    private ServerStatus buildPrefillStatus(PrefillEndpoint endpoint,
+                                            RoleType role,
+                                            String requestId,
+                                            long estimatedTtftMs,
+                                            long hitCacheTokens) {
+        WorkerStatus workerStatus = endpoint.getStatus();
+        WorkerStatus.TopologySnapshot topology = workerStatus.topologySnapshot();
+        WorkerStatus.EngineObservation status = workerStatus.committedEngineObservation();
+        // ScheduledRequest.hitCache() reads this field for batch metrics.
+        DebugInfo debugInfo = new DebugInfo();
+        debugInfo.setHitCacheLen(hitCacheTokens);
+        ServerStatus result = new ServerStatus();
+        result.setRole(role);
+        result.setRequestId(requestId);
+        if (estimatedTtftMs >= 0L) {
+            result.setPrefillTime(estimatedTtftMs);
+        }
+        result.setGroup(topology.group());
+        result.setServerIp(topology.ip());
+        result.setHttpPort(topology.port());
+        result.setGrpcPort(CommonUtils.toGrpcPort(topology.port()));
+        result.setDpRank(status.dpRank());
+        result.setDebugInfo(debugInfo);
+        result.setSuccess(true);
+        result.setSelectedEngineIndex(topology.engineIndex(), topology.multiEngineNum());
+        return result;
     }
 
     private void reportCacheAffinityDecision(
