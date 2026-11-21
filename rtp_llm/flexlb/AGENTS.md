@@ -2,6 +2,11 @@
 
 This file provides guidance to agents when working with code in this repository.
 
+## 部署与审核边界
+
+- **每套 FlexLB 部署只支持一个流量 group。** 开发、审核和验证按这个前提进行，不把依赖多个流量 group
+  共存的场景当成当前系统的风险，也不为这些场景增加兼容逻辑。流量 group 与 Worker 的 DP group 是两回事。
+
 ## 可读性：核心开发与审核要求
 
 可读性是 FlexLB 的核心质量要求，适用于生产代码、测试、注释和文档。
