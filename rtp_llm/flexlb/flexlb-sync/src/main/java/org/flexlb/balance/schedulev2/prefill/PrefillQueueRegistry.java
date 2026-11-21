@@ -55,21 +55,20 @@ public class PrefillQueueRegistry {
     }
 
     /**
-     * 把请求加进它选中的 Prefill 的已注册队列。
-     * 和节点队列的移除互斥，已退役节点拒绝入队。
+     * 把请求加进它选中的 Prefill 队列。节点已摘流时返回 false，由调用方退回主队列。
      */
-    public synchronized void addWaiting(Request request) {
+    public synchronized boolean addWaiting(Request request) {
         if (closed) {
             request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill queues are shutting down");
-            return;
+            return false;
         }
         SelectedPrefill choice = request.selectedPrefill();
         PrefillQueue queue = find(choice.endpoint());
         if (queue == null) {
-            request.fail(StrategyErrorType.DISPATCH_FAILED, "prefill endpoint queue has retired");
-            return;
+            return false;
         }
         queue.addWaiting(request);
+        return true;
     }
 
     /**

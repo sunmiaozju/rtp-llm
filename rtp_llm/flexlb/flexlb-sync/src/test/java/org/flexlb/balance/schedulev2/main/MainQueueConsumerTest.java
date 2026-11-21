@@ -95,9 +95,54 @@ class MainQueueConsumerTest {
     private MainQueueConsumer createConsumer(RequestPreparePool workers) {
         return new MainQueueConsumer(mainQueue, cleanup, queueCapacity, endpointRegistry, configService, picker,
                 prefillQueues, RoleType.PREFILL, request -> {
-                    prefillQueues.addWaiting(request);
-                    sent.add(request);
+                    if (!prefillQueues.addWaiting(request)) {
+                        return false;
+                    }
+                    return sent.add(request);
                 }, workers, reporter);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void prefillRetiringBeforeEnqueueReturnsRequestToMain(boolean subqueueFull) {
+        config.getDispatcher().setMaxInflightPerPrefillWorker(1);
+        config.getDispatcher().setPrefillSubqueueLimitMultiplier(1);
+        if (subqueueFull) {
+            assertTrue(queueCapacity.tryReserveEngineSubQueueSlot(config, RoleType.PREFILL, 1));
+        }
+        PrefillEndpoint replacement = V2TestSupport.prefillEndpoint("p2:8000");
+        V2TestSupport.register(prefillQueues, replacement);
+        Request request = add("1", "g");
+        long sequence = request.queueSeq();
+        long deadline = request.ctx().getRequestExpiresAtMs();
+        SelectedPrefill selected = V2TestSupport.selected(endpoint, 0L, 10L);
+        when(picker.pick(request, RoleType.PREFILL, "g", inputs)).thenAnswer(call -> {
+            when(endpoint.isRetired()).thenReturn(true);
+            return selected;
+        }).thenReturn(V2TestSupport.selected(replacement, 0L, 10L));
+
+        assertTrue(loop.runOnce(RUNNING));
+        assertTrue(loop.runOnce(RUNNING));
+
+        assertFalse(request.future().isDone());
+        assertEquals(Stage.MAIN_WAITING, request.stage());
+        assertEquals(sequence, request.queueSeq());
+        assertEquals(deadline, request.ctx().getRequestExpiresAtMs());
+        assertNull(request.selectedPrefill());
+        assertNull(request.getWorkLoadEstimate());
+        assertEquals(1, mainQueue.size());
+        assertEquals(subqueueFull ? 1 : 0, queueCapacity.engineSubQueueWaiting(RoleType.PREFILL));
+        assertEquals(1L, queueCapacity.globalQueueAndEngineSubQueueCount());
+        assertTrue(sent.isEmpty());
+
+        if (subqueueFull) {
+            queueCapacity.releaseEngineSubQueueSlot(RoleType.PREFILL);
+        }
+        assertTrue(loop.runOnce(RUNNING));
+        assertTrue(loop.runOnce(RUNNING));
+        assertEquals(List.of(request), sent);
+        assertSame(replacement, request.selectedPrefill().endpoint());
+        assertEquals(Stage.PREFILL_WAITING, request.stage());
     }
 
     @Test
@@ -454,8 +499,11 @@ class MainQueueConsumerTest {
         try (RequestPreparePool workers = new RequestPreparePool(executor, mainQueue, picker, RoleType.PREFILL)) {
             MainQueueConsumer consumer = new MainQueueConsumer(mainQueue, cleanup, queueCapacity, endpointRegistry,
                     configService, picker, prefillQueues, RoleType.PREFILL, request -> {
-                        prefillQueues.addWaiting(request);
+                        if (!prefillQueues.addWaiting(request)) {
+                            return false;
+                        }
                         (request == first ? firstSent : secondSent).complete(request);
+                        return true;
                     }, workers, reporter);
             AtomicBoolean running = new AtomicBoolean(true);
             Thread consumerThread = newConsumerThread(consumer, running);

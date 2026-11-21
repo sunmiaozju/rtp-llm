@@ -20,7 +20,7 @@ import org.flexlb.util.Logger;
 
 import java.util.concurrent.RejectedExecutionException;
 import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 /**
  * 准备池并行计算缓存匹配和请求自身耗时，主队列消费者用最新负载作最终选择。
@@ -52,9 +52,9 @@ final class MainQueueConsumer {
      */
     private final RoleType prefillRole;
     /**
-     * 选好 Prefill 后把请求交给 Prefill 队列，请求上已经带着选好的 {@link SelectedPrefill}。
+     * 把请求加入选中的 Prefill 队列，返回是否入队成功。
      */
-    private final Consumer<Request> sendToPrefillQueue;
+    private final Predicate<Request> addToPrefillQueue;
 
     MainQueueConsumer(MainQueue mainQueue,
                       RequestCleanup cleanup,
@@ -64,7 +64,7 @@ final class MainQueueConsumer {
                       PrefillPicker prefillPicker,
                       PrefillQueueRegistry prefillQueues,
                       RoleType prefillRole,
-                      Consumer<Request> sendToPrefillQueue,
+                      Predicate<Request> addToPrefillQueue,
                       RequestPreparePool requestPreparePool,
                       V2QueueReporter queueReporter) {
         this.queueReporter = queueReporter;
@@ -77,7 +77,7 @@ final class MainQueueConsumer {
         this.prefillQueues = prefillQueues;
         this.requestPreparePool = requestPreparePool;
         this.prefillRole = prefillRole;
-        this.sendToPrefillQueue = sendToPrefillQueue;
+        this.addToPrefillQueue = addToPrefillQueue;
     }
 
     void run(BooleanSupplier running) {
@@ -147,6 +147,11 @@ final class MainQueueConsumer {
             throws InterruptedException {
         while (running.getAsBoolean() && request.stage() == Stage.MAIN_WAITING) {
             if (!reserveQueueSlot(request, choice, config)) {
+                if (choice.endpoint().isRetired()) {
+                    request.setWorkLoadEstimate(null);
+                    mainQueue.addBackAndWake(request);
+                    return;
+                }
                 queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL,
                         choice.endpoint().ipPort());
                 Thread.sleep(SHARED_SLOT_RETRY_MS);
@@ -155,7 +160,10 @@ final class MainQueueConsumer {
             }
             request.setSelectedPrefill(choice);
             if (request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING)) {
-                sendToPrefillQueue.accept(request);
+                if (!addToPrefillQueue.test(request)) {
+                    request.setWorkLoadEstimate(null);
+                    cleanup.returnToMain(request, Stage.PREFILL_WAITING);
+                }
             } else {
                 cleanup.releaseQueueSlot(request);
             }

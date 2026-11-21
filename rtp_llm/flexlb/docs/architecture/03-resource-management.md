@@ -28,9 +28,9 @@ finished、取消或失活后按请求 ID 清除本地记录。
 
 ### 同地址重新注册的设计约定
 
-系统保证同一 `ip:port` 重新注册前，旧 Worker 的状态、预占和回调已完成清理。
+同一 `ip:port` 要等旧 Worker 的下线清理流程结束后才能重新注册；新旧 Worker 不共用本地账本。
 Worker 摘流后不参与新请求的选路；已选好 Worker 的 Decode 和 Encoder 请求在优雅下线窗口内仍按原地址下发。
-Master 摘流后直接清理该 Worker 的本地记录，不等待选路线程，也不为晚到的交付重建已清理的账本。
+Master 摘流后直接清理该 Worker 的本地记录，不等待选路线程。
 
 ## Prefill 可用性与队列
 
@@ -44,6 +44,7 @@ WorkerStatus 的 `dp_master_address` 分组，没有该地址的 worker 独立�
 
 请求选中 Prefill 后进入该节点的 `PrefillQueue`。等待请求占全局与共享子队列名额，
 不占已发布请求的 Prefill 并发名额。
+如果选中的 Prefill 在入队前摘流，请求回到主队列重新选点，保留原顺序和超时期限。
 
 ## Decode 容量与本地预留
 

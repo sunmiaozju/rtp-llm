@@ -269,7 +269,7 @@ public final class DecodeQueueConsumer implements Runnable {
 
         if (permit != null) {
             try {
-                // 下线已清理这个名额时，仍在优雅窗口内返回原地址；不在旧节点重新记账。
+                // 即使摘流清掉了这个名额，也返回已经选中的地址。
                 if (permit.dispatch() == DecodeEndpoint.EngineDispatchPermitTransferStatus.OWNERSHIP_LOST) {
                     permit.release();
                     releaseDecode(request);

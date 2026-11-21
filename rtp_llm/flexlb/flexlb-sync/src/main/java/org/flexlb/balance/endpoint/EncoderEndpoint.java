@@ -32,7 +32,7 @@ public final class EncoderEndpoint extends WorkerEndpoint {
 
     /**
      * Track a selected request until status reports it running or finished.
-     * An already selected request can publish after retirement without registering load again.
+     * An already selected request can still publish after the worker retires.
      */
     public boolean trackSelectedRequest(String requestId, long estimatedUncachedTokens) {
         if (isRetired()) {
