@@ -61,16 +61,16 @@ class FlexlbServiceCancelTest {
     @Test
     void localCancelReturnsAuthoritativePendingLifecycle() {
         RequestState pending = snapshot(
-                101L, RequestState.Phase.CANCEL_REQUESTED, 301L);
+                101L, RequestState.Phase.CANCEL_REQUESTED, 0L);
         when(routeService.cancelRequest(
-                "101", 301L, CancelReason.DEADLINE_EXCEEDED))
+                "101", 0L, CancelReason.DEADLINE_EXCEEDED))
                 .thenReturn(pending);
         StreamObserver<FlexlbScheduleProtocol.FlexlbCancelResponsePB> observer =
                 mock(StreamObserver.class);
 
         service.cancel(cancelRequest(
                 "101",
-                301L,
+                0L,
                 FlexlbScheduleProtocol.CancelReasonPB
                         .CANCEL_REASON_DEADLINE_EXCEEDED), observer);
 
@@ -85,7 +85,7 @@ class FlexlbServiceCancelTest {
                 FlexlbScheduleProtocol.RequestStatePB
                         .REQUEST_STATE_CANCEL_REQUESTED,
                 response.getValue().getLifecycle().getState());
-        assertEquals(301L, response.getValue().getLifecycle().getBatchId());
+        assertEquals(0L, response.getValue().getLifecycle().getBatchId());
     }
 
     @Test
@@ -306,7 +306,7 @@ class FlexlbServiceCancelTest {
                                          long batchId) {
         return new RequestState(
                 Long.toString(requestId), requestId, state,
-                batchId > 0 ? DeliveryClaimKind.BATCH_ENQUEUE : DeliveryClaimKind.NONE,
+                DeliveryClaimKind.ROUTE_DECISION,
                 batchId, 1L, 2L, state.name());
     }
 }

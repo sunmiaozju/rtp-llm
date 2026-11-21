@@ -2,7 +2,6 @@ package org.flexlb.balance.endpoint.prefill;
 
 import org.flexlb.balance.endpoint.EndpointGenerationLifecycle;
 import org.flexlb.balance.endpoint.EndpointTestSupport;
-import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.dao.route.RoleType;
@@ -12,8 +11,6 @@ import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -25,7 +22,6 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.ToLongFunction;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -58,7 +54,7 @@ class PrefillStateSnapshotTest {
                         generation.tryAcquireHandoff())) {
             assertEquals(1, state.stats().waitingForWorkerStatusRequests());
         }
-        reconcile(Map.of(), Map.of("1", task(1, TaskPhase.RUNNING, 0, 0)), unused -> 0L);
+        reconcile(Map.of(), Map.of("1", task(1, TaskPhase.RUNNING, 0, 0)));
         assertEquals(0, state.stats().waitingForWorkerStatusRequests());
         assertEquals(1, state.stats().committedRequests());
     }
@@ -243,130 +239,7 @@ class PrefillStateSnapshotTest {
         }
     }
 
-    @Test
-    void batchAndIndividualCommitsCaptureTheSamePrecedingTimeline() {
-        ScheduledRequest individual = item(1), batchMember = item(2), later = item(3);
-        try (var individualReservation = reserveQueued(individual, 30L);
-                var firstHandoff = state.commitSingleGroup(List.of(individual), List.of(individualReservation),
-                        generation.tryAcquireHandoff())) {
-            assertEquals(0L, firstHandoff.precedingWork().totalRemainingWorkMs().orElseThrow());
-            enqueue(batchMember);
-            try (var batchReservation = state.reserveBatch(batchMember, 10L, 2, generation.tryAcquireHandoff()).reservation();
-                 var batchHandoff = batchReservation.commit(List.of(batchMember), 40L)) {
-                assertEquals(30L, batchHandoff.precedingWork().totalRemainingWorkMs().orElseThrow());
-            }
-            try (var laterReservation = reserveQueued(later, 50L);
-                    var laterHandoff = state.commitSingleGroup(List.of(later), List.of(laterReservation),
-                            generation.tryAcquireHandoff())) {
-                assertEquals(70L, laterHandoff.precedingWork().totalRemainingWorkMs().orElseThrow());
-            }
-        }
-    }
-
-    @Test
-    void localCleanupPreservesRunningBatchWorkAndItsClock() {
-        ScheduledRequest a = item(1), b = item(2), c = item(3);
-        commitBatch(List.of(a, b, c), 300L);
-        reconcile(Map.of(), Map.of("1", task(1, TaskPhase.RUNNING, 0, 0),
-                "2", task(2, TaskPhase.RUNNING, 0, 0),
-                "3", task(3, TaskPhase.RUNNING, 0, 0)), unused -> {
-                    throw new AssertionError("an unchanged batch needs no prediction");
-                });
-
-        clock.set(150);
-        assertTrue(state.removeCommittedRequest(a));
-        assertEquals(List.of("2", "3"), state.committedSnapshot().batches().getFirst().requestIds());
-        assertEquals(250L, remainingWork());
-        clock.set(190);
-        assertTrue(state.removeCommittedRequest(b));
-        assertFalse(state.removeCommittedRequest(a));
-        assertFalse(state.removeCommittedRequest(item(3)), "cleanup must match the exact item");
-        assertEquals(210L, remainingWork());
-
-        // Returning to QUEUED pauses elapsed-time accounting, but does not undo work already started.
-        clock.set(230);
-        reconcile(Map.of("1", task(1, null, 0, 100)),
-                Map.of("3", task(3, TaskPhase.RECEIVED, 0, 0)), unused -> {
-                    throw new AssertionError("local cancellation cannot shrink running work");
-                });
-        clock.set(250);
-        assertEquals(170L, remainingWork());
-        assertEquals(WorkView.Phase.ENGINE_QUEUED,
-                state.committedSnapshot().batches().getFirst().phase());
-
-        reconcile(Map.of("3", task(3, null, 0, 300)), Map.of(), unused -> {
-            throw new AssertionError("a completed batch needs no prediction");
-        });
-        assertTrue(state.committedSnapshot().batches().isEmpty());
-        assertEquals(0L, remainingWork());
-    }
-
-    @ParameterizedTest
-    @CsvSource({"true,false,500,0", "false,true,500,0", "false,false,0,40", "false,false,500,40"})
-    void executionEvidencePreservesBatchPrediction(boolean previouslyRunning,
-                                                   boolean currentlyRunning,
-                                                   long errorCode,
-                                                   long executionMs) {
-        commitBatch(List.of(item(1), item(2), item(3)), 300L);
-        if (previouslyRunning) {
-            reconcile(Map.of(), Map.of("2", task(2, TaskPhase.RUNNING, 0, 0)), unused -> {
-                throw new AssertionError("an unchanged batch needs no prediction");
-            });
-        }
-        clock.set(150);
-        Map<String, TaskInfoPB.Builder> active =
-                currentlyRunning ? Map.of("2", task(2, TaskPhase.RUNNING, 0, 0)) : Map.of();
-        reconcile(Map.of("1", task(1, null, errorCode, executionMs)), active, unused -> {
-            throw new AssertionError("started Prefill must retain its batch prediction");
-        });
-        long remaining = previouslyRunning ? 250L : 300L;
-        assertEquals(remaining, remainingWork());
-        clock.set(190);
-        long afterRunning = previouslyRunning || currentlyRunning ? remaining - 40L : remaining;
-        assertEquals(afterRunning, remainingWork());
-        assertFalse(state.committedSnapshot().hasUnknownWork());
-
-        reconcile(Map.of("2", task(2, null, 500, 0)),
-                Map.of("3", task(3, TaskPhase.RECEIVED, 0, 0)), unused -> {
-                    throw new AssertionError("a queued observation cannot make started work repackable");
-                });
-        clock.set(230);
-        assertEquals(afterRunning, remainingWork());
-        reconcile(Map.of("3", task(3, null, 0, 300)), Map.of(), unused -> {
-            throw new AssertionError("a completed batch needs no prediction");
-        });
-        assertTrue(state.committedSnapshot().batches().isEmpty());
-    }
-
-    @Test
-    void onlyWorkerRemovalBeforeExecutionRepredictsTheQueuedBatch() {
-        ScheduledRequest a = item(1), b = item(2);
-        commitBatch(List.of(a, b), 300L);
-        clock.set(1_000);
-        reconcile(Map.of("1", task(1, null, 500, 0)),
-                Map.of("2", task(2, TaskPhase.RECEIVED, 0, 0)), survivors -> {
-                    assertEquals(List.of(b), survivors);
-                    return 200L;
-                });
-        clock.set(1_200);
-        assertEquals(200L, remainingWork(), "unstarted work does not age while queued");
-        reconcile(Map.of(), Map.of("2", task(2, TaskPhase.RUNNING, 0, 0)), unused -> {
-            throw new AssertionError("starting the batch uses its existing prediction");
-        });
-        clock.set(1_250);
-        assertEquals(150L, remainingWork());
-    }
-
-    private void commitBatch(List<ScheduledRequest> members, long predictedMs) {
-        members.forEach(this::enqueue);
-        try (var reservation = state.reserveBatch(members.getFirst(), 10L, 2,
-                generation.tryAcquireHandoff()).reservation();
-             var handoff = reservation.commit(members, predictedMs)) {
-            assertTrue(waitingItems().isEmpty());
-        }
-    }
-
-    private SingleReservation reserveQueued(ScheduledRequest item, long predictedMs) {
+    private org.flexlb.balance.endpoint.prefill.single.SingleReservation reserveQueued(ScheduledRequest item, long predictedMs) {
         enqueue(item);
         return state.reserveSingle(item, predictedMs).reservation();
     }
@@ -380,15 +253,14 @@ class PrefillStateSnapshotTest {
     }
 
     private void reconcile(Map<String, TaskInfoPB.Builder> finished,
-                           Map<String, TaskInfoPB.Builder> active,
-                           ToLongFunction<List<ScheduledRequest>> predictBatchTime) {
+                           Map<String, TaskInfoPB.Builder> active) {
         WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
         response.setRoleType(WorkerStatusPBs.role(RoleType.PREFILL));
         WorkerStatusPBs.setFinishedTasks(response, finished);
         WorkerStatusPBs.setRunningTasks(response, active);
         var observation = EngineStatusConverter.convertToStatusObservation(
                 EndpointTestSupport.workerStatus(RoleType.PREFILL, "127.0.0.1", 8080, 8090), response.build());
-        var outcome = state.updateFromWorkerStatus(observation, predictBatchTime, () -> {}, () -> {});
+        var outcome = state.updateFromWorkerStatus(observation, () -> {}, () -> {});
         assertNull(outcome.publicationFailure());
     }
 

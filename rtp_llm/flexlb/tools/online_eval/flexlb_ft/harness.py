@@ -2238,58 +2238,6 @@ class AssertUtils:
         return False, f"timeout waiting for inflight clean: {detail}"
 
     @staticmethod
-    def inflight_batches_peak(
-        master_http: str,
-        engine_role: str,
-        window_s: float,
-        interval_s: float = 0.2,
-    ) -> tuple[list, int]:
-        """Sample the master inflight ledger through *window_s* and return
-        (samples, peak_batches).
-
-        Each sample is (t_offset_s, scheduler_inflight, role_batches,
-        role_requests): *role_batches* / *role_requests* sum the endpoint
-        rows for *engine_role* ("prefill": inflight_batches +
-        inflight_requests — the master's EnqueueBatch bookkeeping; "decode":
-        total_load fallback when the legacy inflight_requests key is
-        absent).  Polling every *interval_s* (the master's WorkerStatus
-        reconcile runs at a 20ms cadence, so 200ms sampling resolves every
-        engine-state transition that outlasts a poll tick).
-
-        This is a SAMPLER, not a verdict: callers assert on the returned
-        series (peak, event-driven decay, in-window convergence).  An
-        empty sample list means the endpoint never answered inside the
-        window — callers treat that as a failure (fail loud).
-        """
-        key = "prefill_endpoints" if engine_role == "prefill" else "decode_endpoints"
-        samples: list = []
-        t0 = time.monotonic()
-        deadline = t0 + window_s
-        while time.monotonic() < deadline:
-            data = http_get_json(f"{master_http}/rtp_llm/inflight_status", timeout=5)
-            if data is not None:
-                batches = 0
-                requests = 0
-                for ep in data.get(key, []) or []:
-                    raw = ep.get("inflight_batches", 0)
-                    batches += len(raw) if isinstance(raw, list) else int(raw or 0)
-                    req = ep.get("inflight_requests", 0)
-                    if req is None and engine_role != "prefill":
-                        req = ep.get("total_load", 0)
-                    requests += int(req or 0)
-                samples.append(
-                    (
-                        round(time.monotonic() - t0, 3),
-                        int(data.get("scheduler_inflight", 0) or 0),
-                        batches,
-                        requests,
-                    )
-                )
-            time.sleep(interval_s)
-        peak = max((s[2] for s in samples), default=-1)
-        return samples, peak
-
-    @staticmethod
     def ttft_degradation(
         base_p50: Optional[float], new_p50: Optional[float], threshold_pct: float = 50.0
     ) -> tuple[bool, str]:

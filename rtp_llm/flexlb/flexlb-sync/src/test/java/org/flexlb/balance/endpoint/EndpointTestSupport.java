@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
 import org.flexlb.balance.delivery.BlockedRequest;
 import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.DeliveryGroup;
@@ -11,9 +10,7 @@ import org.flexlb.balance.delivery.DeliveryTransaction;
 import org.flexlb.balance.delivery.NonBatchDeliveryStrategy;
 import org.flexlb.balance.endpoint.prefill.CommitResult;
 import org.flexlb.balance.endpoint.prefill.ReservationResult;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
-import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.PrefillTtftEstimator;
@@ -86,8 +83,7 @@ public final class EndpointTestSupport {
                                                      org.flexlb.service.monitor.RequestSchedulerReporter requestReporter) {
         EndpointRegistry registry = org.mockito.Mockito.mock(EndpointRegistry.class);
         org.mockito.Mockito.when(registry.getEndpointCount(status.getRole())).thenReturn(1);
-        PrefillTtftEstimator ttftEstimator = deliveryStrategy instanceof BatchDeliveryStrategy
-                ? new BatchTtftEstimator() : new NonBatchTtftEstimator();
+        PrefillTtftEstimator ttftEstimator = new NonBatchTtftEstimator();
         return new PrefillEndpoint(status, configSupplier, deliveryStrategy, ttftEstimator, endpointEvents, reporter,
                 availability, registry, new QueueCapacity(),
                 new org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry(), requestReporter);
@@ -270,24 +266,6 @@ public final class EndpointTestSupport {
         SingleReservation reservation = item.takePublishedSingleReservation();
         reservation.updatePrediction(item, predictedMs);
         return reservation;
-    }
-
-    static CommitResult commitBatch(PrefillEndpoint endpoint,
-                                    long batchId,
-                                    long predictedMs,
-                                    List<? extends ScheduledRequest> exactItems) {
-        if (exactItems.isEmpty()) {
-            throw new IllegalArgumentException("batch requires at least one item");
-        }
-        List<ScheduledRequest> items = List.copyOf(exactItems);
-        ReservationResult<BatchReservation> result = endpoint.reserveBatch(items.get(0), batchId, Integer.MAX_VALUE);
-        if (result.status() != ReservationResult.Status.SUCCESS) {
-            throw new IllegalStateException(
-                    "batch reservation rejected: " + result.status());
-        }
-        try (BatchReservation reservation = result.reservation()) {
-            return reservation.commit(items, predictedMs);
-        }
     }
 
     static List<CommitResult> commitRoutes(PrefillEndpoint endpoint,

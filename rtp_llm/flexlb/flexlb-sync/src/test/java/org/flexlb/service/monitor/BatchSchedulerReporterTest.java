@@ -12,11 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.flexlb.constant.MetricConstant.BATCHER_QUEUE_SIZE;
-import static org.flexlb.constant.MetricConstant.CACHE_HIT_COUNT;
-import static org.flexlb.constant.MetricConstant.CACHE_HIT_RATIO;
-import static org.flexlb.constant.MetricConstant.CACHE_REQUEST_TOTAL;
 import static org.flexlb.constant.MetricConstant.DECODE_INPUT_KV_RESERVED_TOKENS;
-import static org.flexlb.constant.MetricConstant.DISPATCH_ACK_TIME_MS;
 import static org.flexlb.constant.MetricConstant.ENGINE_BALANCING_MASTER_DISPATCH_REASON;
 import static org.flexlb.constant.MetricConstant.ENGINE_BALANCING_MASTER_SELECT_DETAIL;
 import static org.flexlb.constant.MetricConstant.ENGINE_SUBQUEUE_OLDEST_WAIT_MS;
@@ -166,16 +162,6 @@ class BatchSchedulerReporterTest {
     }
 
     @Test
-    void batch_dispatch_does_not_count_selected_requests_or_cache_hits_twice() {
-        reporter.reportBatchCacheHitMetrics("PREFILL", "10.0.0.1:8080", 120L, 300L);
-
-        FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL");
-        verify(monitor, never()).report(eq(CACHE_HIT_COUNT), any(), anyDouble());
-        verify(monitor).report(CACHE_HIT_RATIO, tags, 0.4);
-        verify(monitor, never()).report(eq(CACHE_REQUEST_TOTAL), any(), anyDouble());
-    }
-
-    @Test
     void should_not_report_dispatch_reason_to_select_detail_metric() {
         reporter.reportDispatchReason("PREFILL", "10.0.0.1", "batch_full");
 
@@ -187,7 +173,6 @@ class BatchSchedulerReporterTest {
         reporter.prepareEndpointMetrics("PREFILL", "10.0.0.1");
 
         FlexMetricTags endpointTags = FlexMetricTags.of("role", "PREFILL");
-        verify(monitor).prepare(DISPATCH_ACK_TIME_MS, endpointTags);
         verify(monitor).prepare(ROUTE_SUBMIT_TIME_MS, endpointTags);
         verify(monitor).prepare(ROUTING_QUEUE_WAIT_TIME_MS, endpointTags);
         for (String reason : new String[]{"batch_full", "fixed_window_timeout", "predicted_execution_cap"}) {
@@ -224,13 +209,7 @@ class BatchSchedulerReporterTest {
             reporter.reportEngineSubQueueResidenceMs("PREFILL", address, 5L);
             reporter.reportBatchWaitTimeMs("PREFILL", address, 5L, 50);
             reporter.reportDispatchReason("PREFILL", address, "batch_full");
-            reporter.reportBatchCacheHitMetrics("PREFILL", address, 10L, 20L);
             reporter.reportBatchSize("PREFILL", address, "batch_full", 2);
-            reporter.reportBatchTotalTokens("PREFILL", address, "batch_full", 20L);
-            reporter.reportBatchPredictedTimeMs("PREFILL", address, 5L);
-            reporter.reportBatchActualTimeMs("PREFILL", address, 5L);
-            reporter.reportBatchPredictGapMs("PREFILL", address, 0L);
-            reporter.reportDispatchAckTimeMs("PREFILL", address, 5L);
             reporter.reportRouteSubmitTimeMs("PREFILL", address, 5L);
             reporter.reportAckToResponseTimeMs("PREFILL", address, 5L);
         }

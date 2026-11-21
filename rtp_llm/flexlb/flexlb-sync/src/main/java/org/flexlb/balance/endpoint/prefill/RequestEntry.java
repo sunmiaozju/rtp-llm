@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint.prefill;
 
-import org.flexlb.balance.endpoint.prefill.batch.BatchProgress;
 import org.flexlb.balance.endpoint.prefill.single.SingleRequestProgress;
 import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
 import org.flexlb.balance.scheduler.ScheduledRequest;
@@ -13,7 +12,6 @@ public final class RequestEntry {
     public QueueMembership queueMembership;
     public ScheduledRequest activeItem;
     public SingleRequestProgress singleRequestProgress;
-    public BatchProgress batchProgress;
     /**
      * Canonical callback identity after admission commits.
      */
@@ -44,14 +42,4 @@ public final class RequestEntry {
         queueMembership = QueueMembership.UNINDEXED;
     }
 
-    public void commitBatch(BatchProgress work) {
-        if (!isActive()) {
-            throw new IllegalStateException("request is not an ACTIVE batch member request_id=" + requestId);
-        }
-        batchProgress = work;
-        committedItem = activeItem;
-        reservation = null;
-        activeItem = null;
-        queueMembership = QueueMembership.UNINDEXED;
-    }
 }

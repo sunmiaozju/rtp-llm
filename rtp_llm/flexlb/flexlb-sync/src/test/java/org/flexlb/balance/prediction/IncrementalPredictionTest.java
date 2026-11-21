@@ -1,23 +1,16 @@
 package org.flexlb.balance.prediction;
 
-import org.flexlb.balance.estimate.BatchTtftEstimator;
-import org.flexlb.balance.estimate.PrefillTtftEstimate;
-import org.flexlb.balance.estimate.QueueView;
-import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.planner.GroupPlanner;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.mock;
 
 class IncrementalPredictionTest {
     static String formula() throws Exception {
@@ -79,36 +72,6 @@ class IncrementalPredictionTest {
     }
 
     @Test
-    void estimateMatchesFullEvaluationAcrossExpiryPriorityAndProbePositions() throws Exception {
-        var model = new FormulaPredictor(formula());
-        var policy = new BatchTtftEstimator().ttftEstimationRule();
-        var full = new PrefillTimePredictor.Evaluator() {
-            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
-                return model.estimateMs(inputTokens, computeTokens, hitCacheTokens);
-            }
-            public double predictBatchMs(PrefillBatchFeatures f) { return model.predictBatchMs(f); }
-        };
-        var random = new Random(17);
-        Comparator<GroupPlanner.Item> order = Comparator.comparingInt(GroupPlanner.Item::priority)
-                .thenComparingLong(GroupPlanner.Item::enqueueSeq);
-        for (int trial = 0; trial < 150; trial++) {
-            var items = new ArrayList<GroupPlanner.Item>();
-            for (int i = 0; i < trial % 80; i++) {
-                items.add(item(i, 100 + random.nextInt(32768), i % 4,
-                        i % 7 == 0 ? 500 : i % 11 == 0 ? 1100 : 100_000));
-            }
-            items.sort(order);
-            var queue = new QueueView(1000, order, new GroupPlanner.Constraints(64, 200_000, 300_000, 700, 700),
-                    items, null);
-            var inputs = new PrefillTtftEstimate.LoadView(queue, new WorkView(1000, List.of(), List.of(), 0));
-            var probe = new PrefillTtftEstimate.Probe("999", trial % 5, 1000, 100_000,
-                    1 + random.nextInt(32768), 0, 0);
-            assertEquals(PrefillTtftEstimate.estimate(inputs, probe, full, policy),
-                    PrefillTtftEstimate.estimate(inputs, probe, model, policy));
-        }
-    }
-
-    @Test
     void concurrentSessionsDoNotShareMutableAccumulators() throws Exception {
         var model = new FormulaPredictor(formula());
         try (var pool = Executors.newFixedThreadPool(8)) {
@@ -129,110 +92,6 @@ class IncrementalPredictionTest {
             }
             for (var result : pool.invokeAll(tasks)) result.get();
         }
-    }
-
-    @Test
-    void liveBatchStrategyUsesAppendAndKeepsPreviousPredictionOnOvershoot() {
-        var evaluator = new PrefillTimePredictor.Evaluator() {
-            public long estimateMs(long inputTokens, long computeTokens, long hitCacheTokens) {
-                throw new AssertionError("unexpected scalar prediction");
-            }
-            public double predictBatchMs(PrefillBatchFeatures f) { throw new AssertionError("unexpected full prediction"); }
-            public PrefillTimePredictor.BatchPrediction newBatchPrediction() {
-                int[] count = {0};
-                return (t, h) -> ++count[0] * 250.25;
-            }
-        };
-        var strategy = new BatchTtftEstimator();
-        var items = new ArrayList<org.flexlb.balance.scheduler.ScheduledRequest>();
-        for (int i = 0; i < 4; i++) {
-            var request = mock(org.flexlb.balance.scheduler.ScheduledRequest.class);
-            org.mockito.Mockito.when(request.seqLen()).thenReturn(100L);
-            org.mockito.Mockito.when(request.hitCache()).thenReturn(0L);
-            items.add(request);
-        }
-        var access = new GroupPlanner.ItemAccess<org.flexlb.balance.scheduler.ScheduledRequest>() {
-            public long seqLen(org.flexlb.balance.scheduler.ScheduledRequest r) { return r.seqLen(); }
-            public long enqueuedAtMs(org.flexlb.balance.scheduler.ScheduledRequest r) { return 0; }
-        };
-        var selected = GroupPlanner.selectWithPrediction(items, access,
-                new GroupPlanner.Constraints(64, 100_000, 100_000, 700, 700),
-                strategy.newGroupPredictor(evaluator));
-        assertEquals(items.subList(0, 2), selected.items());
-        assertEquals(500.5, selected.selectedPredictionMs().orElseThrow());
-        assertEquals(501L, PrefillPredictionBoundary.committedDecisionGroupMs(
-                selected.selectedPredictionMs().orElseThrow()));
-        assertTrue(selected.predictionBoundaryTriggered());
-        // A second snapshot must receive fresh accumulation state.
-        assertEquals(selected, GroupPlanner.selectWithPrediction(items, access,
-                new GroupPlanner.Constraints(64, 100_000, 100_000, 700, 700),
-                strategy.newGroupPredictor(evaluator)));
-    }
-
-    @Test
-    void serviceReusesOnlyEvaluatedPrefixesFromItsOwnPlanningCursor() {
-        var strategy = new BatchTtftEstimator();
-        int[] fullCalls = {0};
-        var predictions = new PrefillTtftEstimate.Predictions() {
-            public long itemDurationMs(GroupPlanner.Item i) { return 100; }
-            public double batchPlanningDurationMs(List<GroupPlanner.Item> items) { return items.size() * 100.25; }
-            public long batchDurationMs(List<GroupPlanner.Item> items) {
-                fullCalls[0]++;
-                return PrefillPredictionBoundary.committedDecisionGroupMs(batchPlanningDurationMs(items));
-            }
-            public PrefillTimePredictor.BatchPrediction newBatchPrediction() {
-                int[] size = {0};
-                return (t, h) -> ++size[0] * 100.25;
-            }
-        };
-        var items = List.of(item(1, 100, 0, 100_000), item(2, 100, 0, 100_000), item(3, 100, 0, 100_000));
-        var policy = strategy.ttftEstimationRule();
-        var cursor = policy.planning(predictions);
-        assertEquals(200.5, cursor.durationMs(items, 1)); // only through probe, not suffix
-        var plan = new GroupPlanner.Plan<>(items, new GroupPlanner.Shape(3, 300, 100, 100),
-                1000, 1700, false, java.util.OptionalDouble.of(200.5), GroupPlanner.BATCH_FULL);
-        var service = policy.service(plan, predictions, cursor);
-        assertEquals(201, service.completionOffsetMs(1));
-        assertEquals(0, fullCalls[0]);
-        assertEquals(301, service.totalDurationMs()); // must not mistake P2 for P3
-        assertEquals(1, fullCalls[0]);
-        var independent = policy.service(plan, predictions);
-        assertEquals(301, independent.totalDurationMs());
-        assertEquals(2, fullCalls[0]);
-    }
-
-    @Test
-    void appendCursorKeepsLatestAndOvershootPredecessorAndRecomputesOlderPrefixes() {
-        var policy = new BatchTtftEstimator().ttftEstimationRule();
-        int[] appended = {0};
-        int[] recomputed = {0};
-        var predictions = new PrefillTtftEstimate.Predictions() {
-            public long itemDurationMs(GroupPlanner.Item item) { return 11; }
-            public double batchPlanningDurationMs(List<GroupPlanner.Item> items) { return items.size() * 10.25; }
-            public long batchDurationMs(List<GroupPlanner.Item> items) {
-                recomputed[0]++;
-                return (long) Math.ceil(batchPlanningDurationMs(items));
-            }
-            public PrefillTimePredictor.BatchPrediction newBatchPrediction() {
-                return (tokens, hit) -> ++appended[0] * 10.25;
-            }
-        };
-        var items = List.of(item(1, 100, 0, 100_000), item(2, 100, 0, 100_000),
-                item(3, 100, 0, 100_000), item(4, 100, 0, 100_000));
-        var cursor = policy.planning(predictions);
-        assertEquals(41, cursor.durationMs(items, 3)); // Jump directly over several prefixes.
-        assertEquals(41, cursor.durationMs(items, 3)); // Probe boundary reached: no further appends.
-        assertEquals(4, appended[0]);
-        assertEquals(41, cursor.predictedPrefixMs(4).orElseThrow());
-        assertEquals(30.75, cursor.predictedPrefixMs(3).orElseThrow());
-        assertTrue(cursor.predictedPrefixMs(2).isEmpty());
-        assertTrue(cursor.predictedPrefixMs(0).isEmpty());
-        assertTrue(cursor.predictedPrefixMs(5).isEmpty());
-        var selected = items.subList(0, 2);
-        var plan = new GroupPlanner.Plan<>(selected, new GroupPlanner.Shape(2, 100, 200, 200),
-                1000, 1000, false, java.util.OptionalDouble.empty(), GroupPlanner.BATCH_FULL);
-        assertEquals(21, policy.service(plan, predictions, cursor).totalDurationMs());
-        assertEquals(1, recomputed[0]);
     }
 
     private static GroupPlanner.Item item(long id, long input, int priority, long expires) {

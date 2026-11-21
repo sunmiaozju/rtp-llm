@@ -6,6 +6,7 @@ import org.flexlb.config.FlexlbConfig;
 public final class TestFlexlbConfigs {
     public static FlexlbConfig create() {
         FlexlbConfig config = new FlexlbConfig();
+        config.setDispatcher(org.flexlb.config.DispatcherConfig.nonBatch());
         config.getRequestLifecycle().getRequest().setTimeoutMs(3_600_000L);
         config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(3_600_000L);
         config.getRequestLifecycle().getDecision().setLifetime(2.0);

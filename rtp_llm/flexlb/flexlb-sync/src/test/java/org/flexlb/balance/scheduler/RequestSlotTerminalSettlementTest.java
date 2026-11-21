@@ -1,6 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.prefill.WorkerStatusFact;
@@ -12,7 +11,6 @@ import org.flexlb.dao.route.RoleType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -59,7 +57,10 @@ class RequestSlotTerminalSettlementTest {
     @Test
     void decodeTerminalUsesAlreadyCommittedCleanup() {
         Fixture f = fixture(true);
-        f.slot().claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
+        f.slot().claimDelivery(f.item(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
+        synchronized (f.slot()) {
+            RequestLifecycleTestSupport.markAcknowledged(f.slot());
+        }
         PreemptionRegistration claim = f.slot().tryInstallPreemption(3L, 4L, "victim");
         assertTrue(f.slot().updatePreemption(claim, PreemptionCancelPhase.CANCEL_IN_FLIGHT));
 
@@ -77,8 +78,8 @@ class RequestSlotTerminalSettlementTest {
     @Test
     void statusTimeoutCompletesRequest() {
         Fixture f = fixture(true);
-        var delivery = f.slot().claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
-        delivery.complete(DeliveryResult.delivered());
+        var delivery = f.slot().claimDelivery(f.item(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
+        f.slot().publishRoute(delivery, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), java.util.List.of(), 0L), 30_000L);
         Response delivered = f.slot().future().join();
         var requests = mock(RequestRegistry.class);
         doAnswer(call -> {
@@ -103,7 +104,10 @@ class RequestSlotTerminalSettlementTest {
     @Test
     void prefillBackedTerminalWaitsForTheExactDecodeClaimTransaction() {
         Fixture f = fixture(true);
-        f.slot().claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
+        f.slot().claimDelivery(f.item(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
+        synchronized (f.slot()) {
+            RequestLifecycleTestSupport.markAcknowledged(f.slot());
+        }
         PreemptionRegistration claim = f.slot().tryInstallPreemption(3L, 4L, "victim");
         assertTrue(f.slot().updatePreemption(claim, PreemptionCancelPhase.CANCEL_IN_FLIGHT));
         when(f.item().decodeEp().updatePreemption(4L, DecodeEndpoint.PreemptionUpdate.finished(RESERVATION))).thenReturn(false, true);
@@ -125,11 +129,14 @@ class RequestSlotTerminalSettlementTest {
     void requestExpiryClosesPreemptionAndIgnoresLateCallbacks(PreemptionCancelPhase outcome) {
         Fixture f = fixture(true);
         RequestSlot slot = f.slot();
-        RequestSlot.DeliveryClaim delivery = slot.claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
+        RequestSlot.DeliveryClaim delivery = slot.claimDelivery(f.item(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
+        synchronized (f.slot()) {
+            RequestLifecycleTestSupport.markAcknowledged(f.slot());
+        }
         PreemptionRegistration claim = slot.tryInstallPreemption(3L, 9L, "victim");
         assertTrue(slot.updatePreemption(claim, PreemptionCancelPhase.CANCEL_IN_FLIGHT));
         assertTrue(slot.updatePreemption(claim, outcome));
-        slot.cancelRequest(7L, CancelReason.CLIENT_CANCELLED);
+        slot.cancelRequest(0L, CancelReason.CLIENT_CANCELLED);
         var inactivity = mock(ExpirationTimer.InactivityDeadline.class);
         synchronized (slot) {
             assertTrue(slot.installInactivityDeadline(inactivity));
@@ -144,7 +151,7 @@ class RequestSlotTerminalSettlementTest {
         assertNull(slot.activeItem());
         assertFalse(RequestLifecycleTestSupport.<Boolean>inspect(slot, "hasCancellationFirstCauseLocked"));
 
-        delivery.complete(DeliveryResult.delivered());
+        f.slot().publishRoute(delivery, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), java.util.List.of(), 0L), 30_000L);
         assertFalse(slot.completePreemption(claim, "late Cancel ACK"));
         slot.processDecodeStatus(f.item().decodeEp(), org.flexlb.balance.endpoint.WorkerStatusFact.terminal(RESERVATION, 0L));
         slot.onInactivityDeadline(inactivity, Long.MAX_VALUE);
@@ -156,8 +163,8 @@ class RequestSlotTerminalSettlementTest {
     @Test
     void completedDeliveryFutureCannotPreventRequestExpiry() {
         Fixture f = fixture(true);
-        RequestSlot.DeliveryClaim claim = f.slot().claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
-        claim.complete(DeliveryResult.delivered());
+        RequestSlot.DeliveryClaim claim = f.slot().claimDelivery(f.item(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
+        f.slot().publishRoute(claim, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), java.util.List.of(), 0L), 30_000L);
         Response delivered = f.slot().future().join();
         assertTrue(delivered.isSuccess());
 
@@ -184,20 +191,15 @@ class RequestSlotTerminalSettlementTest {
         assertFalse(f.slot().future().join().isSuccess());
     }
 
-    @ParameterizedTest
-    @ValueSource(booleans = {false, true})
-    void workerProofExcludesLateAckBeforeUnlockedCleanupCommits(boolean preempting) {
+    @Test
+    void workerProofExcludesLateRouteBeforeUnlockedCleanupCommits() {
         Fixture f = fixture(true);
         RequestSlot slot = f.slot();
-        RequestSlot.DeliveryClaim delivery = slot.claimDelivery(f.item(), DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
-        if (preempting) {
-            PreemptionRegistration claim = slot.tryInstallPreemption(3L, 9L, "victim");
-            assertTrue(slot.updatePreemption(claim, PreemptionCancelPhase.CANCEL_IN_FLIGHT));
-        }
+        RequestSlot.DeliveryClaim delivery = slot.claimDelivery(f.item(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
         doAnswer(call -> {
             assertFalse(Thread.holdsLock(slot));
             assertFalse(RequestLifecycleTestSupport.<Boolean>inspect(slot, "isTerminalRecordLocked"), "cleanup must precede final record commitment");
-            delivery.complete(DeliveryResult.delivered());
+            f.slot().publishRoute(delivery, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), java.util.List.of(), 0L), 30_000L);
             assertFalse(slot.future().isDone(), "late ACK cannot publish after cleanup was claimed");
             return DecodeEndpoint.ReservationReleaseResult.RELEASED;
         }).when(f.item().decodeEp()).release(RESERVATION, DecodeEndpoint.ReleaseReason.COUNTERPART_FINISHED);
@@ -207,7 +209,7 @@ class RequestSlotTerminalSettlementTest {
         assertEquals(RequestState.Phase.FAILED, slot.snapshot().state());
         assertTrue(RequestLifecycleTestSupport.<Boolean>inspect(slot, "isTerminalRecordLocked"));
         assertFalse(slot.future().join().isSuccess());
-        verify(f.item().prefillEp(), never()).releaseCommittedItem(any());
+        verify(f.item().prefillEp()).releaseCommittedItem(f.item());
         verify(f.item().prefillEp(), never()).expireCommittedItem(any());
     }
 

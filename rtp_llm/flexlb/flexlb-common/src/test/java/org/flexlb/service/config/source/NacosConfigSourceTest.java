@@ -212,7 +212,7 @@ class NacosConfigSourceTest {
                             listenerCaptor.capture());
 
                     listenerCaptor.getValue().receiveConfigInfo("""
-                            {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},"scheduler":{"type":"QUEUE"},"dispatcher":{"type":"BATCH"}}
+                            {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},"scheduler":{"type":"QUEUE"},"dispatcher":{"type":"NON_BATCH_V2"}}
                             """);
 
                     assertThat(source.name()).isEqualTo("Nacos");

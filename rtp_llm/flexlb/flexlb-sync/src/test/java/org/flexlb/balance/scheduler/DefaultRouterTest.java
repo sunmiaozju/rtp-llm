@@ -323,7 +323,7 @@ class DefaultRouterTest {
     }
 
     private static void stubPrefillCommit(PrefillEndpoint prefill) {
-        stubRouteCommit(prefill, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), List.of(), List.of(), 0L));
+        stubRouteCommit(prefill, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), List.of(), 0L));
     }
 
     private static void stubRouteCommit(PrefillEndpoint endpoint, org.flexlb.balance.estimate.WorkView precedingWork) {
@@ -598,7 +598,7 @@ class DefaultRouterTest {
     }
 
     private static BalanceContext context(long requestId) {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.usePriorityQueue(config);
         Request request = new Request();
         request.setRequestId(Long.toString(requestId));

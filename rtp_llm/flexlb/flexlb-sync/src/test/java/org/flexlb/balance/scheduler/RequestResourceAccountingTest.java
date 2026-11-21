@@ -1,6 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.EndpointTestSupport;
@@ -115,24 +114,6 @@ class RequestResourceAccountingTest {
         }
     }
 
-    @ParameterizedTest
-    @EnumSource(value = DeliveryResult.Status.class, names = {"DELIVERED", "UNCERTAIN", "TIMED_OUT"})
-    void responseOrAmbiguousTransportRetainsResourcesUntilInactivity(DeliveryResult.Status result) throws Exception {
-        try (Fixture f = new Fixture()) {
-            DeliveryClaim claim = f.handoff();
-            claim.complete(new DeliveryResult(result, result == DeliveryResult.Status.DELIVERED ? null : new IllegalStateException("reply lost")));
-            if (result == DeliveryResult.Status.DELIVERED) {
-                assertTrue(f.item.future().get(2, TimeUnit.SECONDS).isSuccess());
-            }
-            f.assertHandedOff();
-            f.requests.cancelRequest(ID, 0, CancelReason.CLIENT_CANCELLED);
-            f.assertHandedOff();
-            f.expire();
-            f.assertEmpty();
-            f.assertCapacityReusable();
-        }
-    }
-
     @Test
     void localRollbackCannotReleaseAnEngineOwnerWhoseEstimateHasNotArrived() throws Exception {
         try (Fixture f = new Fixture()) {
@@ -152,45 +133,12 @@ class RequestResourceAccountingTest {
         }
     }
 
-    @Test
-    void definiteDispatchRejectionReclaimsTransferredCapacity() throws Exception {
-        try (Fixture f = new Fixture()) {
-            DeliveryClaim claim = f.handoff();
-            f.assertHandedOff();
-            claim.complete(DeliveryResult.notSent(new IllegalStateException("not delivered")));
-            assertFalse(f.item.future().get(2, TimeUnit.SECONDS).isSuccess());
-            f.assertEmpty();
-            f.assertCapacityReusable();
-        }
-    }
-
-    @Test
-    void runningDecodeWinsAgainstUncertainTransportAndTerminalReclaimsBothEndpoints() throws Exception {
-        try (Fixture f = new Fixture()) {
-            DeliveryClaim claim = f.handoff();
-            TaskInfoPB.Builder running = task(ID);
-            f.decodeStatus(Map.of("101", running), Map.of(), TOTAL_KV - HARD_KV);
-            assertEquals(1, f.decode.resourceSnapshot().runningCount());
-            assertEquals(1, f.decode.routingView().engineCapacityUsed());
-            assertEquals(0, f.decode.routingView().inputKvReserved(), "Engine status replaces the local KV prediction");
-            claim.complete(DeliveryResult.uncertain(new IllegalStateException("late transport failure")));
-            assertTrue(f.item.future().get(2, TimeUnit.SECONDS).isSuccess());
-            assertEquals(1, f.requests.trackedRequestCount());
-            assertEquals(1, f.decode.resourceSnapshot().runningCount());
-            assertEquals(1, f.prefill.getCommittedRequestCount());
-            applyStatus(f.prefill, status(RoleType.PREFILL, 2L, Map.of(), Map.of("101", running), TOTAL_KV));
-            f.decodeStatus(Map.of(), Map.of("101", running), TOTAL_KV);
-            f.assertEmpty();
-            f.assertCapacityReusable();
-        }
-    }
-
     @ParameterizedTest
     @CsvSource({"RUNNING, RECEIVED", "RUNNING, PENDING", "KV_ALLOCATED, RECEIVED", "KV_ALLOCATED, PENDING"})
     void decodePhaseRegressionStillDeliversTerminalWithoutInactivity(TaskPhase confirmed, TaskPhase regressed)
             throws Exception {
         try (Fixture f = new Fixture()) {
-            f.handoff().complete(DeliveryResult.delivered());
+            f.publishRoute(f.handoff());
             assertTrue(f.item.future().get(2, TimeUnit.SECONDS).isSuccess());
             applyStatus(f.prefill, status(RoleType.PREFILL, 2L, Map.of(), Map.of("101", task(ID)), TOTAL_KV));
             TaskInfoPB.Builder active = task(ID);
@@ -210,7 +158,7 @@ class RequestResourceAccountingTest {
     @Test
     void inactivityDropsLocalRunningOwnershipWithoutInventingPhysicalKvRelease() throws Exception {
         try (Fixture f = new Fixture()) {
-            f.handoff().complete(DeliveryResult.delivered());
+            f.publishRoute(f.handoff());
             f.decodeStatus(Map.of("101", task(ID)), Map.of(), TOTAL_KV - HARD_KV);
             assertEquals(1, f.decode.resourceSnapshot().runningCount());
             f.expire();
@@ -239,7 +187,7 @@ class RequestResourceAccountingTest {
             });
             var replacement = replacementRef.get();
             assertNotEquals(oldReservation.reservationToken(), replacement.reservationToken());
-            oldClaim.complete(DeliveryResult.delivered());
+            f.publishRoute(oldClaim);
             f.expire();
             assertFalse(f.decode.release(oldReservation, DecodeEndpoint.ReleaseReason.EXPIRED).released());
             assertFalse(f.decode.release(oldReservation, DecodeEndpoint.ReleaseReason.COUNTERPART_FINISHED).released());
@@ -326,11 +274,14 @@ class RequestResourceAccountingTest {
             var member = new PrefillAdmissionResources.Member(item, acquisition.permit());
             try (var owner = PrefillAdmissionResources.createCommittedOwner(List.of(member))) {
                 owner.bindCommitResult(commitResult);
-                var claim = RequestLifecycleTestSupport.claimBatchWithoutPrediction(
-                        requests, item, 1L, () -> owner.transferToEndpoint(item));
+                var claim = RequestLifecycleTestSupport.claimRouteWithoutPrediction(requests, item, () -> owner.transferToEndpoint(item));
                 assertNotNull(claim);
                 return claim;
             }
+        }
+
+        void publishRoute(DeliveryClaim claim) {
+            requests.publishRoute(claim, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), List.of(), 0L), 30_000L);
         }
 
         void assertReserved() {
@@ -352,7 +303,6 @@ class RequestResourceAccountingTest {
             assertEquals(0, prefill.queuedRequestCount(), "Prefill queue membership");
             assertEquals(0, prefill.getCommittedRequestCount(), "Prefill inflight");
             assertEquals(0, prefill.getSingleRequestCount(), "Prefill individual lease");
-            assertEquals(0, prefill.getInflightBatchCount(), "Prefill batch occupancy");
             var view = decode.resourceSnapshot();
             assertEquals(0, view.routing().inputKvReserved(), "Decode hard KV reservation");
             assertEquals(0, view.routing().inputAndMaxOutputKvReserved(), "Decode expected KV reservation");

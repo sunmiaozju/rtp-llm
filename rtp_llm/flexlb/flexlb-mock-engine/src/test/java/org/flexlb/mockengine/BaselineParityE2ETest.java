@@ -1,13 +1,10 @@
 package org.flexlb.mockengine;
 
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.engine.grpc.EngineRpcService.EnqueueBatchRequestPB;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
-import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -19,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
@@ -37,7 +33,7 @@ class BaselineParityE2ETest {
 
     @Test
     @Timeout(90)
-    void singlePlannerWithPriorityDisabledPreservesFifoBatchDecisions() throws Exception {
+    void singlePlannerWithPriorityDisabledPreservesFifoRouteDecisions() throws Exception {
         // autoTpm=false：批队列用 FIFO 序（构造时冻结），全部开关保持默认关闭
         try (AutoTpmE2EHarness h = singlePlannerHarness()) {
             h.fixedWindowDecision().setMaxCollectionWaitMs(5);
@@ -46,7 +42,7 @@ class BaselineParityE2ETest {
             h.startAutoPump(10);
 
             // 预热首笔调度与引擎调用，并从测量记录中排除。
-            h.scheduler.submit(h.context(1999, 50)).get(10, TimeUnit.SECONDS);
+            h.submitAndGenerate(h.context(1999, 50)).get(10, TimeUnit.SECONDS);
             AutoTpmE2EHarness.await(() -> !h.engineArrivalOrder.isEmpty(), 5_000,
                     "warm-up request must reach the engine");
             h.engineArrivalOrder.clear();
@@ -63,7 +59,7 @@ class BaselineParityE2ETest {
                     submissionOrder.add(requestId);
                     priorityByRid.put(requestId, priority);
                     submitNanos.put(requestId, System.nanoTime());
-                    futures.add(h.scheduler.submit(h.context(requestId, priority)));
+                    futures.add(h.submitAndGenerate(h.context(requestId, priority)));
                 }
             }
             int total = PER_PRIORITY * PRIORITIES.length;
@@ -82,23 +78,6 @@ class BaselineParityE2ETest {
             assertEquals(total, arrivals.size(), "every measured request must reach the engine exactly once");
             assertEquals(new HashSet<>(submissionOrder), new HashSet<>(arrivals),
                     "engine arrivals must contain every measured request and no unexpected request");
-
-            // RequestSchedulerTestRuntime supplies incrementing batch IDs. This
-            // fixture has one Prefill and one PrefillQueue, so BatchDeliveryStrategy
-            // assigns them in decision order before committing and submitting to
-            // the asynchronous dispatcher. Preserve request order within each batch;
-            // ordering RPC batches by ID removes only dispatch-thread arrival races.
-            ArgumentCaptor<EnqueueBatchRequestPB> batches = ArgumentCaptor.forClass(EnqueueBatchRequestPB.class);
-            verify(h.grpcClient, atLeastOnce()).batchEnqueueAsync(anyString(), anyInt(), batches.capture());
-            List<Long> decisionOrder = batches.getAllValues().stream()
-                    .sorted(Comparator.comparingLong(EnqueueBatchRequestPB::getBatchId))
-                    .flatMap(batch -> batch.getDpSlotsList().stream())
-                    .flatMap(slot -> slot.getRequestsList().stream())
-                    .map(request -> request.getInput().getRequestId())
-                    .filter(priorityByRid::containsKey)
-                    .toList();
-            assertEquals(submissionOrder, decisionOrder,
-                    "with one planner and priority disabled batch decisions must preserve FIFO");
 
             // 无任何抢占痕迹
             verify(h.requestReporter, never()).reportVictim(anyInt(), anyInt(),

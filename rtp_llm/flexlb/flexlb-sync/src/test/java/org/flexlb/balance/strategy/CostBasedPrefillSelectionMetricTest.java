@@ -671,20 +671,14 @@ class CostBasedPrefillSelectionMetricTest {
         verify(cache).findMatchingEngines(any());
     }
 
-    @ParameterizedTest
-    @CsvSource({"false,NON_BATCH", "true,BATCH"})
-    void everyDeliveryModeReportsItsSelectionEstimates(
-            boolean batchDelivery, String deliveryMode) {
-        config.setDispatcher(batchDelivery
-                ? new DispatcherConfig()
-                : DispatcherConfig.nonBatch());
-
+    @Test
+    void nonBatchReportsItsSelectionEstimates() {
         try (SelectedRole selected = select()) {
             ArgumentCaptor<Long> ttft = ArgumentCaptor.forClass(Long.class);
             ArgumentCaptor<Long> execution = ArgumentCaptor.forClass(Long.class);
             verify(reporter).reportPrefillSelectedEstimates(
                     Mockito.eq(RoleType.PREFILL), Mockito.eq("10.0.0.1:8080"),
-                    Mockito.eq(deliveryMode), ttft.capture(), execution.capture());
+                    Mockito.eq("NON_BATCH"), ttft.capture(), execution.capture());
             assertEquals(selected.serverStatus().getPrefillTime(), ttft.getValue());
             assertEquals(selected.prefillWorkMs(), execution.getValue());
         }

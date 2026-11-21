@@ -26,34 +26,19 @@ public final class PrefillCleanupDeadlockFixture {
     private final EndpointGenerationLifecycle generation = new EndpointGenerationLifecycle(() -> { });
     private final ScheduledRequest next;
 
-    public PrefillCleanupDeadlockFixture(long requestId, boolean batch) {
+    public PrefillCleanupDeadlockFixture(long requestId) {
         ScheduledRequest first = item(requestId);
         next = item(requestId + 1);
-        if (batch) {
-            enqueue(first);
-            try (var reservation = state.reserveBatch(first, 1L, 2, generation.tryAcquireHandoff()).reservation()) {
-                assertNotNull(reservation);
-                try (var handoff = reservation.commit(List.of(first), 20L)) {
-                    assertNotNull(handoff);
-                }
-            }
-        } else {
-            enqueue(first);
-            try (var reservation = state.reserveSingle(first, 20L).reservation()) {
-                assertNotNull(reservation);
-                try (var handoff = state.commitSingleGroup(
-                        List.of(first), List.of(reservation), generation.tryAcquireHandoff())) {
-                    assertNotNull(handoff);
-                }
+        enqueue(first);
+        try (var reservation = state.reserveSingle(first, 20L).reservation()) {
+            assertNotNull(reservation);
+            try (var handoff = state.commitSingleGroup(
+                    List.of(first), List.of(reservation), generation.tryAcquireHandoff())) {
+                assertNotNull(handoff);
             }
         }
         enqueue(next);
         clock.set(200);
-    }
-
-    public void sweepBatches(Predicate<String> retain) {
-        assertEquals(0, state.evictExpiredBatches(10L, retain));
-        assertEquals(1, state.stats().batchCount());
     }
 
     public void sweepSingles(Predicate<String> retain) {
@@ -61,8 +46,8 @@ public final class PrefillCleanupDeadlockFixture {
         assertEquals(1, state.stats().singleRequests());
     }
 
-    public void reserveNextBatch() {
-        try (var reservation = state.reserveBatch(next, 2L, 2, generation.tryAcquireHandoff()).reservation()) {
+    public void reserveNextRequest() {
+        try (var reservation = state.reserveSingle(next, 20L).reservation()) {
             assertNotNull(reservation);
         }
     }

@@ -53,31 +53,16 @@ public final class PrefillQueueEnqueuer {
         boolean subQueueCountAdded = false;
         queueState.lock();
         try {
-            if (prefillEndpoint.isEngineSubQueueMode()) {
-                subQueueCountAdded = prefillEndpoint.tryReserveEngineSubQueueSlot(item.ctx().getConfig());
-                if (subQueueCountAdded) {
-                    attempt = enqueueUnderLock(item);
-                } else {
-                    // 共享排队名额已满：只能替换掉这台 Prefill 上一个还在排队的请求。
-                    attempt = new EnqueueAttempt(false, null, null);
-                    if (!queueState.isStopped() && config.allowsPreemption(VictimStage.PREFILL_QUEUED)) {
-                        ScheduledRequest victim = prefillState.oneQueuedPreemptionVictim(item.priority());
-                        if (victim != null) {
-                            victims = List.of(victim);
-                            attempt = replaceQueuedRequestsUnderLock(item, victims);
-                        }
-                    }
-                }
-            } else {
-                // BATCH 模式会统计排队请求数，但不受共享排队名额限制。
-                prefillEndpoint.increaseEngineSubQueueCount();
-                subQueueCountAdded = true;
+            subQueueCountAdded = prefillEndpoint.tryReserveEngineSubQueueSlot(item.ctx().getConfig());
+            if (subQueueCountAdded) {
                 attempt = enqueueUnderLock(item);
-                if (!attempt.accepted() && attempt.failure() == null && !queueState.isStopped()
-                        && config.allowsPreemption(VictimStage.PREFILL_QUEUED)) {
-                    long maxOutstandingRequests = maxOutstandingRequests(item);
-                    victims = prefillState.queuedPreemptionVictims(item.priority(), maxOutstandingRequests);
-                    if (!victims.isEmpty()) {
+            } else {
+                // 共享排队名额已满：只能替换掉这台 Prefill 上一个还在排队的请求。
+                attempt = new EnqueueAttempt(false, null, null);
+                if (!queueState.isStopped() && config.allowsPreemption(VictimStage.PREFILL_QUEUED)) {
+                    ScheduledRequest victim = prefillState.oneQueuedPreemptionVictim(item.priority());
+                    if (victim != null) {
+                        victims = List.of(victim);
                         attempt = replaceQueuedRequestsUnderLock(item, victims);
                     }
                 }
@@ -224,7 +209,6 @@ public final class PrefillQueueEnqueuer {
 
     private static long maxOutstandingRequests(ScheduledRequest item) {
         DispatcherConfig dispatcher = item.ctx().getConfig().getDispatcher();
-        return dispatcher.getType() == DispatcherConfig.Type.BATCH
-                ? 0L : dispatcher.getMaxInflightPerPrefillWorker();
+        return dispatcher.getMaxInflightPerPrefillWorker();
     }
 }

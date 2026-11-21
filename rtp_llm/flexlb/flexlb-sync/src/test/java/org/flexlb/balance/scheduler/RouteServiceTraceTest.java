@@ -8,7 +8,6 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.service.RouteService;
 import org.flexlb.service.TheoryCacheHitReporter;
 import org.flexlb.service.monitor.AsyncRequestMetrics;
@@ -21,8 +20,6 @@ import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.concurrent.CompletableFuture;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.any;
@@ -43,56 +40,30 @@ class RouteServiceTraceTest {
         FlexlbTrace.configure(null, "");
     }
 
-    @Test
-    void modesKeepOriginalFutureOwnershipAndCompatibleTraceLabels() {
-        for (String mode : new String[]{"QUEUE", "BATCH"}) {
-            FlexlbConfig config = new FlexlbConfig();
-            SchedulingTestConfig.useFifoQueue(config);
-            if (mode.equals("QUEUE")) {
-                SchedulingTestConfig.useNonBatchDispatcher(config);
-            } else {
-                SchedulingTestConfig.useBatchDispatcher(config);
-            }
-            RequestScheduler scheduler = mock(RequestScheduler.class);
-            CompletableFuture<Response> pending = new CompletableFuture<>();
-            when(scheduler.submit(any())).thenReturn(pending);
-            RouteService service =
-                    new RouteService(scheduler, mock(TheoryCacheHitReporter.class), mock(AsyncRequestMetrics.class));
-            BalanceContext ctx = new BalanceContext(config);
-            Request request = new Request();
-            request.setRequestId("700");
-            ctx.setRequest(request);
-            ctx.setGenerateInputPb(ByteString.copyFromUtf8("input"));
-            Span span = mock(Span.class);
-            when(span.storeInContext(any(Context.class))).thenCallRealMethod();
-            ctx.setTraceContext(Context.root().with(span));
-            CompletableFuture<Response> result = service.route(ctx);
-            verify(span).setAttribute(FlexlbTrace.SCHEDULE_MODE, mode);
-            assertSame(pending, result);
-            result.cancel(true);
-            assertTrue(pending.isCancelled());
-            verify(scheduler).submit(ctx);
-        }
-    }
-
-    @Test
-    void missingBatchInputStillRejectsWithoutDirectFallback() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+    @ParameterizedTest
+    @EnumSource(DispatcherConfig.Type.class)
+    void modesKeepOriginalFutureOwnershipAndCompatibleTraceLabels(DispatcherConfig.Type mode) {
+        FlexlbConfig config = SchedulingTestConfig.newConfig();
+        config.getDispatcher().setType(mode);
         RequestScheduler scheduler = mock(RequestScheduler.class);
-        AsyncRequestMetrics metrics = mock(AsyncRequestMetrics.class);
-        RouteService service = new RouteService(scheduler, mock(TheoryCacheHitReporter.class), metrics);
+        CompletableFuture<Response> pending = new CompletableFuture<>();
+        when(scheduler.submit(any())).thenReturn(pending);
+        RouteService service =
+                new RouteService(scheduler, mock(TheoryCacheHitReporter.class), mock(AsyncRequestMetrics.class));
         BalanceContext ctx = new BalanceContext(config);
         Request request = new Request();
-        request.setRequestId("701");
+        request.setRequestId("700");
         ctx.setRequest(request);
+        ctx.setGenerateInputPb(ByteString.copyFromUtf8("input"));
         Span span = mock(Span.class);
         when(span.storeInContext(any(Context.class))).thenCallRealMethod();
         ctx.setTraceContext(Context.root().with(span));
-        Response response = service.route(ctx).join();
-        assertFalse(response.isSuccess());
-        assertEquals(StrategyErrorType.INVALID_REQUEST.getErrorCode(), response.getCode());
-        verify(span).setAttribute(FlexlbTrace.SCHEDULE_MODE, "BATCH");
-        verifyNoInteractions(scheduler, metrics);
+        CompletableFuture<Response> result = service.route(ctx);
+        verify(span).setAttribute(FlexlbTrace.SCHEDULE_MODE, "QUEUE");
+        assertSame(pending, result);
+        result.cancel(true);
+        assertTrue(pending.isCancelled());
+        verify(scheduler).submit(ctx);
     }
 
     @ParameterizedTest

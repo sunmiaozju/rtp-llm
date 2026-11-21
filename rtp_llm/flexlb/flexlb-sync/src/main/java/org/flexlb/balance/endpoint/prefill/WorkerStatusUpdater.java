@@ -1,11 +1,6 @@
 package org.flexlb.balance.endpoint.prefill;
 
-import org.flexlb.balance.endpoint.prefill.batch.BatchPrefill;
-import org.flexlb.balance.endpoint.prefill.batch.BatchProgress;
-import org.flexlb.balance.endpoint.prefill.batch.FinishedBatch;
-import org.flexlb.balance.endpoint.prefill.batch.LiveBatchMembers;
 import org.flexlb.balance.estimate.WorkView.Phase;
-import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.enums.PriorityPreemptionProgress;
@@ -18,7 +13,6 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.function.ToLongFunction;
 
 /**
  * 根据引擎上报的状态和心跳更新 Prefill 的请求记录：删除已完成的请求，更新排队中和运行中的进度，
@@ -42,18 +36,13 @@ public final class WorkerStatusUpdater {
             WorkerStatus.EngineObservation engine = observation.engine();
             IdentityHashMap<RequestEntry, Phase> individualPhases =
                     new IdentityHashMap<>();
-            IdentityHashMap<BatchProgress, Phase> batchPhases = new IdentityHashMap<>();
             long nextUnknown = collectRunningTasks(engine.runningTaskList(), Map.of(), PrefillState
                     .saturatedAdd(Math.max(0L, engine.waitingQueryLen()), Math.max(0L, engine.runningQueryLen())),
-                    individualPhases, batchPhases, facts);
+                    individualPhases, facts);
             schedulingInputsChanged = nextUnknown != prefillState.unknownEngineRequestCount;
             for (var observed : individualPhases.entrySet()) {
                 schedulingInputsChanged |= observed.getKey().singleRequestProgress.phase() != observed.getValue();
                 observed.getKey().singleRequestProgress.updateProgressFromWorkerStatus(observed.getValue(), nowMs);
-            }
-            for (var observed : batchPhases.entrySet()) {
-                schedulingInputsChanged |= observed.getKey().phase() != observed.getValue();
-                observed.getKey().updateProgressFromWorkerStatus(observed.getValue(), nowMs);
             }
             capacityReleased = nextUnknown < prefillState.unknownEngineRequestCount;
             prefillState.unknownEngineRequestCount = nextUnknown;
@@ -73,7 +62,6 @@ public final class WorkerStatusUpdater {
      * 读负载视图的线程要么看到上报前的记录和状态，要么看到两者都已更新，不会看到只更新了一半。
      */
     public WorkerStatusResult updateFromWorkerStatus(WorkerStatus.StatusObservation observation,
-                                                     ToLongFunction<List<ScheduledRequest>> predictBatchTime,
                                                      Runnable publishStatus,
                                                      Runnable onPublishFailure) {
         WorkerStatus.EngineObservation engine = observation.engine();
@@ -84,13 +72,10 @@ public final class WorkerStatusUpdater {
         prefillState.lock.lock();
         try {
             long nowMs = prefillState.clock.getAsLong();
-            IdentityHashMap<BatchProgress, LiveBatchMembers> membersByBatch =
-                    prefillState.batchPrefill.liveBatchMembers();
             Map<String, FinishReport> finishReports = collectFinishedTasks(finishedTasks);
             Map<String, WorkerStatus.TaskObservation> activeTasks =
                     engine.runningTaskList();
             IdentityHashMap<RequestEntry, FinishReport> settlements = new IdentityHashMap<>(finishReports.size());
-            IdentityHashMap<BatchProgress, Phase> batchPhases = new IdentityHashMap<>();
             for (FinishReport finishReport : finishReports.values()) {
                 RequestEntry entry = prefillState.requests.get(finishReport.requestId());
                 if (entry == null || settlements.put(entry, finishReport) != null) {
@@ -98,34 +83,24 @@ public final class WorkerStatusUpdater {
                             "status terminal lost its exact owner request_id=" + finishReport.requestId());
                 }
             }
-            Set<LiveBatchMembers> changedBatches =
-                    BatchPrefill.collectChangedBatches(settlements.keySet(), membersByBatch);
             long reportedActive = PrefillState.saturatedAdd(
                     Math.max(0L, engine.waitingQueryLen()),
                     Math.max(0L, engine.runningQueryLen()));
             IdentityHashMap<RequestEntry, Phase> individualPhases =
                     new IdentityHashMap<>();
-            long nextUnknown = collectRunningTasks(activeTasks, finishReports, reportedActive, individualPhases,
-                    batchPhases, null);
-            IdentityHashMap<BatchProgress, Long> predictions = new IdentityHashMap<>();
-            prefillState.batchPrefill.prepareBatchPredictions(changedBatches, finishReports, batchPhases,
-                    predictBatchTime, predictions);
-            outcome = buildResult(finishReports, activeTasks, membersByBatch);
+            long nextUnknown = collectRunningTasks(activeTasks, finishReports, reportedActive, individualPhases, null);
+            outcome = buildResult(finishReports, activeTasks);
 
             // 从这里开始只对上面已经检查过的条目做赋值和删除。
             // 如果发现数据不一致，就记到已经建好的结果里，并让 worker 下线清理。
             canonicalMutationStarted = true;
             prefillState.cachedCommittedWork = null;
             prefillState.recordMutation();
-            for (Map.Entry<RequestEntry, FinishReport> settlement : settlements.entrySet()) {
-                RequestEntry entry = settlement.getKey();
-                capacityReleased |= prefillState.removeCommittedEntry(entry, settlement.getValue(),
-                        entry.batchProgress == null ? null : membersByBatch.get(entry.batchProgress), null, nowMs);
+            for (RequestEntry entry : settlements.keySet()) {
+                capacityReleased |= prefillState.removeCommittedEntry(entry);
             }
             individualPhases.forEach(
                     (entry, phase) -> entry.singleRequestProgress.updateProgressFromWorkerStatus(phase, nowMs));
-            batchPhases.forEach((batch, phase) -> batch.updateProgressFromWorkerStatus(phase, nowMs));
-            predictions.forEach((batch, prediction) -> batch.resetRemainingWork(prediction, nowMs));
             capacityReleased |= nextUnknown < prefillState.unknownEngineRequestCount;
             prefillState.unknownEngineRequestCount = nextUnknown;
             // Status reduction changes counts after invalidating the old work revision.
@@ -166,14 +141,13 @@ public final class WorkerStatusUpdater {
     private static WorkerStatusResult withPublicationFailure(WorkerStatusResult outcome, Throwable failure) {
         return outcome.publicationFailure() != null
                 ? outcome
-                : new WorkerStatusResult(outcome.schedulerFacts(), outcome.finishedBatches(), failure);
+                : new WorkerStatusResult(outcome.schedulerFacts(), failure);
     }
 
     private long collectRunningTasks(Map<String, WorkerStatus.TaskObservation> activeTasks,
                                      Map<String, FinishReport> finishReports,
                                      long reportedActive,
                                      IdentityHashMap<RequestEntry, Phase> individualPhases,
-                                     IdentityHashMap<BatchProgress, Phase> batchPhases,
                                      List<WorkerStatusFact> activeFacts) {
         prefillState.requireLock();
         Set<String> unknownDetailed = new HashSet<>();
@@ -183,7 +157,7 @@ public final class WorkerStatusUpdater {
                 continue;
             }
             RequestEntry entry = prefillState.requests.get(task.requestId());
-            if (entry == null || !BatchPrefill.matchesObservedBatch(entry, task.batchId())) {
+            if (entry == null) {
                 if (!task.isPriorityCancelProgress()) {
                     unknownDetailed.add(task.requestId());
                 }
@@ -200,11 +174,7 @@ public final class WorkerStatusUpdater {
             }
             Phase observed = task.phase() == TaskPhase.RUNNING
                     ? Phase.ENGINE_RUNNING : Phase.ENGINE_QUEUED;
-            if (entry.batchProgress == null) {
-                individualPhases.put(entry, observed);
-            } else {
-                batchPhases.merge(entry.batchProgress, observed, BatchPrefill::strongerEnginePhase);
-            }
+            individualPhases.put(entry, observed);
         }
         long scalarUnknown = Math.max(
                 0L, reportedActive - knownObserved.size());
@@ -216,10 +186,10 @@ public final class WorkerStatusUpdater {
         Map<String, FinishReport> finishReports = new HashMap<>();
         for (WorkerStatus.TaskObservation task : finishedTasks.values()) {
             RequestEntry entry = prefillState.requests.get(task.requestId());
-            if (entry == null || !BatchPrefill.matchesObservedBatch(entry, task.batchId())) {
+            if (entry == null) {
                 continue;
             }
-            FinishReport finishReport = FinishReport.from(task, entry.batchProgress != null);
+            FinishReport finishReport = FinishReport.from(task);
             finishReports.merge(task.requestId(), finishReport, FinishReport::merge);
         }
         return finishReports;
@@ -231,8 +201,7 @@ public final class WorkerStatusUpdater {
      * later published by the endpoint; reduction only binds a callback failure.
      */
     private WorkerStatusResult buildResult(Map<String, FinishReport> finishReports,
-                                           Map<String, WorkerStatus.TaskObservation> activeTasks,
-                                           IdentityHashMap<BatchProgress, LiveBatchMembers> membersByBatch) {
+                                           Map<String, WorkerStatus.TaskObservation> activeTasks) {
         prefillState.requireLock();
         List<WorkerStatusFact> schedulerFacts = new ArrayList<>(finishReports.size() + activeTasks.size());
         for (FinishReport finishReport : finishReports.values()) {
@@ -251,15 +220,14 @@ public final class WorkerStatusUpdater {
             }
         }
 
-        List<FinishedBatch> finishedBatches = BatchPrefill.collectFinishedBatches(membersByBatch, finishReports);
-        return new WorkerStatusResult(schedulerFacts, finishedBatches, null);
+        return new WorkerStatusResult(schedulerFacts, null);
     }
 
     /** Resolve activity only through the exact committed ledger identity. */
     private WorkerStatusFact runningFact(WorkerStatus.TaskObservation task) {
         prefillState.requireLock();
         RequestEntry entry = prefillState.requests.get(task.requestId());
-        if (entry == null || entry.isActive() || !BatchPrefill.matchesObservedBatch(entry, task.batchId())
+        if (entry == null || entry.isActive()
                 || entry.committedItem == null || task.isPriorityCancelProgress()) {
             return null;
         }
@@ -267,7 +235,7 @@ public final class WorkerStatusUpdater {
     }
 
     private static WorkerStatusFact finishedFact(RequestEntry entry, FinishReport finishReport) {
-        if (entry == null || entry.committedItem == null || !finishReport.reportedByWorker()) {
+        if (entry == null || entry.committedItem == null) {
             return null;
         }
         WorkerStatusFact.Kind kind = finishReport.errorCode() == 0L

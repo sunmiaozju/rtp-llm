@@ -1,8 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.endpoint.prefill.CommitResult;
-import org.flexlb.balance.endpoint.prefill.ReservationResult;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
@@ -17,8 +14,6 @@ import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -43,91 +38,6 @@ class TwinOverloadAdmissionTest {
     @AfterEach
     void closeEndpoints() {
         endpoints.forEach(WorkerEndpoint::close);
-    }
-
-    @Test
-    void groupSizeLimitAloneDoesNotCapTotalInflightRequests() {
-        FlexlbConfig config = config(null);
-        PrefillEndpoint endpoint = prefill(config);
-        commitBatch(endpoint, config, 1L, 1L);
-        commitBatch(endpoint, config, 2L, 9L);
-
-        assertEquals(2, endpoint.getInflightBatchCount());
-        assertEquals(16, endpoint.observedRequestCount(),
-                "maxRequests=8 bounds one decision, not the engine's total inflight work");
-    }
-
-    @Test
-    void boundedBatchSlotRemainsOccupiedUntilLastMemberFinishes() {
-        FlexlbConfig config = config(1);
-        PrefillEndpoint endpoint = prefill(config);
-        commitBatch(endpoint, config, 11L, 1L);
-        assertEquals(8, endpoint.observedRequestCount());
-        assertTrue(!endpoint.batchAdmissionAvailability(1).isAvailable());
-
-        Map<String, TaskInfoPB.Builder> finished = tasks(1L, 7, 11L, TaskPhase.RUNNING);
-        applyStatus(endpoint, tasks(8L, 1, 11L, TaskPhase.RUNNING), finished);
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount(),
-                "completed members immediately leave ownership while the last member retains the batch");
-        assertTrue(!endpoint.batchAdmissionAvailability(1).isAvailable(),
-                "seven finished members do not release the final member's batch slot");
-
-        applyStatus(endpoint, Map.of(), tasks(8L, 1, 11L, TaskPhase.RUNNING));
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-        assertTrue(endpoint.batchAdmissionAvailability(1).isAvailable());
-        // The full snapshot may repeat across polls without releasing ownership twice.
-        applyStatus(endpoint, Map.of(), tasks(8L, 1, 11L, TaskPhase.RUNNING));
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @ParameterizedTest
-    @EnumSource(value = TaskPhase.class, names = {"RECEIVED", "RUNNING"})
-    void locallyOwnedBatchStatusMustRetainExactlyOneDeliverySlot(TaskPhase phase) {
-        FlexlbConfig config = config(2);
-        PrefillEndpoint endpoint = prefill(config);
-        commitBatch(endpoint, config, 70L, 101L);
-        assertEquals(8, endpoint.observedRequestCount());
-
-        applyStatus(endpoint, tasks(101L, 8, 70L, phase), Map.of());
-        assertEquals(8, endpoint.observedRequestCount(),
-                "the local batch and its engine observation describe the same eight requests");
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.getInflightBatchCount(),
-                "a local batch must consume one slot without being counted again by worker status");
-
-        applyStatus(endpoint, tasks(101L, 8, 70L, phase), Map.of());
-        assertEquals(1, endpoint.getInflightBatchCount(),
-                "repeated status must neither release nor duplicate the local batch slot");
-
-        applyStatus(endpoint, Map.of(), tasks(101L, 8, 70L, phase));
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void localBatchReservationMustBlockAnotherUntilReleased() {
-        FlexlbConfig config = config(1);
-        PrefillEndpoint endpoint = prefill(config);
-        ScheduledRequest first = item(endpoint, config, 1L);
-        ScheduledRequest staged = item(endpoint, config, 2L);
-        assertTrue(EndpointTestSupport.offer(endpoint, first));
-        assertTrue(EndpointTestSupport.offer(endpoint, staged));
-        ReservationResult<BatchReservation> acquired = endpoint.reserveBatch(first, 70L, 1);
-        assertEquals(ReservationResult.Status.SUCCESS, acquired.status());
-        try (BatchReservation ignored = acquired.reservation()) {
-            assertEquals(2, endpoint.queuedRequestCount());
-            ReservationResult<BatchReservation> blocked = endpoint.reserveBatch(staged, 71L, 1);
-            try (BatchReservation unexpected = blocked.reservation()) {
-                assertEquals(ReservationResult.Status.CAPACITY_FULL, blocked.status(),
-                        "a locally reserved batch must occupy the only slot at final admission");
-            }
-        }
-        assertEquals(2, endpoint.queuedRequestCount());
-        ReservationResult<BatchReservation> resumed = endpoint.reserveBatch(staged, 71L, 1);
-        try (BatchReservation ignored = resumed.reservation()) {
-            assertEquals(ReservationResult.Status.SUCCESS, resumed.status());
-        }
     }
 
     @Test
@@ -196,22 +106,6 @@ class TwinOverloadAdmissionTest {
             config.getDispatcher().setMaxInflightPerPrefillWorker(batchLimit);
         }
         return config;
-    }
-
-    private static void commitBatch(PrefillEndpoint endpoint, FlexlbConfig config, long batchId, long firstRequestId) {
-        List<ScheduledRequest> items = new ArrayList<>();
-        for (long id = firstRequestId; id < firstRequestId + 8; id++) {
-            ScheduledRequest item = item(endpoint, config, id);
-            assertTrue(EndpointTestSupport.offer(endpoint, item));
-            items.add(item);
-        }
-        int limit = config.getDispatcher().getMaxInflightPerPrefillWorker();
-        ReservationResult<BatchReservation> acquisition = endpoint.reserveBatch(items.getFirst(), batchId, limit);
-        assertEquals(ReservationResult.Status.SUCCESS, acquisition.status());
-        try (BatchReservation reservation = acquisition.reservation();
-                CommitResult ignored = reservation.commit(items, 300_000L)) {
-            // Releasing the handoff closes only the endpoint hold, not engine work.
-        }
     }
 
     private static ScheduledRequest item(PrefillEndpoint endpoint, FlexlbConfig config, long id) {

@@ -122,7 +122,7 @@ class UniConfigConfigSourceTest {
         assertThat(updates).hasValue(1);
         String currentConfig = """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},"scheduler":{"type":"QUEUE"},
-                "dispatcher":{"type":"BATCH"},"consistency":{"type":"NONE"},
+                "dispatcher":{"type":"NON_BATCH_V2"},"consistency":{"type":"NONE"},
                 "fallbackBatchTokenCapacity":1048585}
                 """;
         response.set(new Response(200, currentConfig));

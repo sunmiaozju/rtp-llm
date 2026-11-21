@@ -1,7 +1,6 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
 import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.NonBatchTransaction;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
@@ -85,8 +84,7 @@ public class RequestRegistry {
         this.reporter = reporter;
         this.requestReporter = requestReporter;
         this.expirationTimer = new ExpirationTimer(this, configService);
-        this.completionPublisher = new RequestCompletionPublisher(
-                completionPublisherWorkers(configService), reporter);
+        this.completionPublisher = new RequestCompletionPublisher(completionPublisherWorkers(configService));
         this.terminalCleanup = new RequestTerminalCleanup(expirationTimer, requestReporter);
     }
 
@@ -707,20 +705,6 @@ public class RequestRegistry {
                         + (error == null ? "endpoint publication failed" : error.getMessage())); }
     }
 
-    public DeliveryBlockReason.Attempt<BatchDeliveryStrategy.BatchTransaction> prepareBatchDelivery(
-            ScheduledRequest item, BatchDeliveryStrategy strategy) {
-        RequestSlot slot = entryFor(item);
-        return slot == null ? DeliveryBlockReason.Attempt.rejected(DeliveryBlockReason.OWNERSHIP_LOST)
-                : slot.prepareDispatch(item, () -> strategy.prepareAdmission(item));
-    }
-
-    public DeliveryBlockReason.Attempt<ScheduledRequest> prepareBatchMember(
-            ScheduledRequest item, BatchDeliveryStrategy.BatchTransaction transaction) {
-        RequestSlot slot = entryFor(item);
-        return slot == null ? DeliveryBlockReason.Attempt.rejected(DeliveryBlockReason.OWNERSHIP_LOST)
-                : slot.prepareDispatch(item, () -> transaction.append(item));
-    }
-
     public DeliveryBlockReason.Attempt<ScheduledRequest> prepareRouteMember(ScheduledRequest item,
                                                                             NonBatchTransaction transaction,
                                                                             PrefillTimePredictor.Evaluator evaluator) {
@@ -729,20 +713,10 @@ public class RequestRegistry {
                 : slot.prepareDispatch(item, () -> transaction.append(item, evaluator));
     }
 
-    public DeliveryClaim claimBatchDelivery(ScheduledRequest item, BatchDeliveryStrategy.BatchTransaction transaction) {
-        RequestSlot slot = entryFor(item);
-        return slot == null ? null : slot.claimDelivery(item, DeliveryClaimKind.BATCH_ENQUEUE,
-                transaction.batchId(), () -> transaction.transferToEndpoint(item));
-    }
-
     public DeliveryClaim claimRouteDelivery(ScheduledRequest item, PrefillAdmissionResources.CommittedAdmissionOwner admission) {
         RequestSlot slot = entryFor(item);
         return slot == null ? null : slot.claimDelivery(item, DeliveryClaimKind.ROUTE_DECISION,
                 0L, () -> admission.transferToEndpoint(item));
-    }
-
-    public void setDeliveryPrediction(DeliveryClaim claim, WorkView precedingWork, long predictedMs) {
-        claim.slot.setDeliveryPrediction(claim, precedingWork, predictedMs);
     }
 
     public void publishRoute(DeliveryClaim claim, WorkView precedingWork, long predictedMs) {

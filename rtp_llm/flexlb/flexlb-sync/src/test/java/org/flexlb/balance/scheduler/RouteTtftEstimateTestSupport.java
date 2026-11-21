@@ -1,6 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.QueueView;
@@ -28,8 +27,6 @@ final class RouteTtftEstimateTestSupport {
 
     static final PrefillTtftEstimate.TtftEstimationRule ROUTE =
             new NonBatchTtftEstimator().ttftEstimationRule();
-    static final PrefillTtftEstimate.TtftEstimationRule BATCH =
-            new BatchTtftEstimator().ttftEstimationRule();
 
     static final PrefillTimePredictor.Evaluator TOKEN_EVALUATOR =
             new PrefillTimePredictor.Evaluator() {
@@ -137,15 +134,14 @@ final class RouteTtftEstimateTestSupport {
     }
 
     static WorkView noCommittedWork() {
-        return work(List.of(), List.of(), 0L);
+        return work(List.of(), 0L);
     }
 
     static WorkView work(
             List<WorkView.RequestWork> requests,
-            List<WorkView.BatchWork> batches,
             long unknownRequestCount) {
         return new WorkView(
-                NOW_MS, requests, batches, unknownRequestCount);
+                NOW_MS, requests, unknownRequestCount);
     }
 
     static PrefillTtftEstimate.Candidate estimate(

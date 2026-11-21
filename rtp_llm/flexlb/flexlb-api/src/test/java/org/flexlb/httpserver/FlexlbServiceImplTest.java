@@ -23,7 +23,6 @@ import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RequestPhase;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
-import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.schedule.grpc.FlexlbScheduleProtocol;
 import org.flexlb.service.RouteService;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
@@ -78,10 +77,10 @@ class FlexlbServiceImplTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void enabledFallbackReturnsBeforeContextValidationOrMasterSelection(boolean batchDispatch) {
+    void enabledFallbackReturnsBeforeContextValidationOrMasterSelection(boolean useV2) {
         FlexlbConfig config = routingConfig();
         config.setEnableFallback(true);
-        if (batchDispatch) {
+        if (useV2) {
             config.setDispatcher(new DispatcherConfig());
         }
         when(configService.loadBalanceConfig()).thenReturn(config);
@@ -167,54 +166,8 @@ class FlexlbServiceImplTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"007", "+7", "-0", "request-a", "9223372036854775808", "8"})
-    void rejectsBatchIdsThatCannotMatchTheEngineBeforeRouting(String requestId) {
-        FlexlbConfig config = routingConfig();
-        config.setDispatcher(new DispatcherConfig());
-        when(configService.loadBalanceConfig()).thenReturn(config);
-        StreamObserver<FlexlbScheduleProtocol.FlexlbScheduleResponsePB> observer = mock(StreamObserver.class);
-
-        service.schedule(FlexlbScheduleProtocol.FlexlbScheduleRequestPB.newBuilder()
-                .setRequestIdStr(requestId)
-                .setGenerateInput(EngineRpcService.GenerateInputPB.newBuilder().setRequestId(7L)
-                        .build().toByteString())
-                .build(), observer);
-
-        ArgumentCaptor<FlexlbScheduleProtocol.FlexlbScheduleResponsePB> response =
-                ArgumentCaptor.forClass(FlexlbScheduleProtocol.FlexlbScheduleResponsePB.class);
-        verify(observer).onNext(response.capture());
-        verify(observer).onCompleted();
-        assertFalse(response.getValue().getSuccess());
-        assertEquals(StrategyErrorType.INVALID_REQUEST.getErrorCode(), response.getValue().getCode());
-        assertTrue(response.getValue().getErrorMessage().contains("canonical int64"));
-        verifyNoInteractions(routeService, grpcForwarder);
-    }
-
-    @Test
-    void batchGenerationRejectsMissingOrMalformedInputBeforeRouting() {
-        FlexlbConfig config = routingConfig();
-        config.setDispatcher(new DispatcherConfig());
-        when(configService.loadBalanceConfig()).thenReturn(config);
-
-        for (ByteString input : List.of(ByteString.EMPTY, ByteString.copyFrom(new byte[]{(byte) 0x80}))) {
-            StreamObserver<FlexlbScheduleProtocol.FlexlbScheduleResponsePB> observer = mock(StreamObserver.class);
-            service.schedule(FlexlbScheduleProtocol.FlexlbScheduleRequestPB.newBuilder()
-                    .setRequestIdStr("7").setGenerateInput(input).build(), observer);
-
-            ArgumentCaptor<FlexlbScheduleProtocol.FlexlbScheduleResponsePB> response =
-                    ArgumentCaptor.forClass(FlexlbScheduleProtocol.FlexlbScheduleResponsePB.class);
-            verify(observer).onNext(response.capture());
-            verify(observer).onCompleted();
-            assertFalse(response.getValue().getSuccess());
-            assertEquals(StrategyErrorType.INVALID_REQUEST.getErrorCode(), response.getValue().getCode());
-            assertTrue(response.getValue().getErrorMessage().contains("generate_input"));
-        }
-        verifyNoInteractions(routeService, grpcForwarder);
-    }
-
-    @ParameterizedTest
     @ValueSource(longs = {7L, 9007199254740993L, Long.MIN_VALUE, Long.MAX_VALUE})
-    void batchRoutingKeepsLargeEngineIdsAsExactStrings(long requestId) {
+    void routeKeepsLargeEngineIdsAsExactStrings(long requestId) {
         FlexlbConfig config = routingConfig();
         config.setDispatcher(new DispatcherConfig());
         when(configService.loadBalanceConfig()).thenReturn(config);
@@ -225,8 +178,6 @@ class FlexlbServiceImplTest {
         service.schedule(FlexlbScheduleProtocol.FlexlbScheduleRequestPB.newBuilder()
                 .setRequestId(requestId)
                 .setRequestIdStr(Long.toString(requestId))
-                .setGenerateInput(EngineRpcService.GenerateInputPB.newBuilder().setRequestId(requestId)
-                        .build().toByteString())
                 .build(), mock(StreamObserver.class));
 
         ArgumentCaptor<BalanceContext> context = ArgumentCaptor.forClass(BalanceContext.class);
@@ -236,7 +187,7 @@ class FlexlbServiceImplTest {
     }
 
     @Test
-    void batchEncoderRoutingDoesNotRequireAnEngineGenerationPayload() {
+    void encoderRoutingDoesNotRequireAnEngineGenerationPayload() {
         FlexlbConfig config = routingConfig();
         config.setDispatcher(new DispatcherConfig());
         when(configService.loadBalanceConfig()).thenReturn(config);
@@ -1447,8 +1398,7 @@ class FlexlbServiceImplTest {
         when(lbStatusConsistencyService.isNeedConsistency()).thenReturn(true);
         when(lbStatusConsistencyService.isMaster()).thenReturn(false);
         when(routeService.getRequestState("88", 0L)).thenReturn(new RequestState("88",
-                0L, RequestState.Phase.ACKNOWLEDGED, DeliveryClaimKind.BATCH_ENQUEUE,
-                1001L, 10L, 20L, "already dispatched"));
+                0L, RequestState.Phase.ACKNOWLEDGED, DeliveryClaimKind.ROUTE_DECISION, 0L, 10L, 20L, "already dispatched"));
         StreamObserver<FlexlbScheduleProtocol.FlexlbScheduleResponsePB> observer = mock(StreamObserver.class);
         service.schedule(FlexlbScheduleProtocol.FlexlbScheduleRequestPB.newBuilder()
                 .setRequestIdStr("88").setForwardHop(1).build(), observer);
@@ -1466,21 +1416,21 @@ class FlexlbServiceImplTest {
         when(lbStatusConsistencyService.isNeedConsistency()).thenReturn(true);
         when(lbStatusConsistencyService.isMaster()).thenReturn(false);
         RequestState owned = new RequestState("86", 0L, RequestState.Phase.ACKNOWLEDGED,
-                DeliveryClaimKind.BATCH_ENQUEUE, 1001L, 10L, 20L, "owned here");
-        when(routeService.getRequestState("86", 1001L)).thenReturn(owned);
-        when(routeService.cancelRequest("86", 1001L, CancelReason.CLIENT_CANCELLED)).thenReturn(owned);
+                DeliveryClaimKind.ROUTE_DECISION, 0L, 10L, 20L, "owned here");
+        when(routeService.getRequestState("86", 0L)).thenReturn(owned);
+        when(routeService.cancelRequest("86", 0L, CancelReason.CLIENT_CANCELLED)).thenReturn(owned);
         service.getRequestState(FlexlbScheduleProtocol.GetRequestStateRequestPB.newBuilder()
-                .setRequestIdStr("86").setBatchId(1001).build(), mock(StreamObserver.class));
+                .setRequestIdStr("86").setBatchId(0L).build(), mock(StreamObserver.class));
         service.cancel(FlexlbScheduleProtocol.FlexlbCancelRequestPB.newBuilder()
-                .setRequestIdStr("86").setBatchId(1001).build(), mock(StreamObserver.class));
-        verify(routeService).cancelRequest("86", 1001L, CancelReason.CLIENT_CANCELLED);
+                .setRequestIdStr("86").setBatchId(0L).build(), mock(StreamObserver.class));
+        verify(routeService).cancelRequest("86", 0L, CancelReason.CLIENT_CANCELLED);
         verifyNoInteractions(grpcForwarder);
     }
 
     @Test
     void lifecycleReturnsNumericIdFromScheduleRecord() {
         RequestState state = new RequestState("007", 123L, RequestState.Phase.ACKNOWLEDGED,
-                DeliveryClaimKind.BATCH_ENQUEUE, 1001L, 10L, 20L, "routed");
+                DeliveryClaimKind.ROUTE_DECISION, 0L, 10L, 20L, "routed");
         when(routeService.getRequestState("007", 0L)).thenReturn(state);
         StreamObserver<FlexlbScheduleProtocol.GetRequestStateResponsePB> observer = mock(StreamObserver.class);
 
@@ -1498,7 +1448,7 @@ class FlexlbServiceImplTest {
     @Test
     void lifecycleKeepsDefaultNumericIdForStringOnlyRequest() {
         RequestState state = new RequestState("007", 0L, RequestState.Phase.ACKNOWLEDGED,
-                DeliveryClaimKind.BATCH_ENQUEUE, 1001L, 10L, 20L, "routed");
+                DeliveryClaimKind.ROUTE_DECISION, 0L, 10L, 20L, "routed");
         when(routeService.getRequestState("007", 0L)).thenReturn(state);
         StreamObserver<FlexlbScheduleProtocol.GetRequestStateResponsePB> observer = mock(StreamObserver.class);
 
@@ -2114,7 +2064,7 @@ class FlexlbServiceImplTest {
     }
 
     @Test
-    void testSchedule_returnsBatchIdAndLifecycle() {
+    void testSchedule_returnsRouteLifecycle() {
         when(lbStatusConsistencyService.isNeedConsistency()).thenReturn(false);
         Response response = new Response();
         response.setSuccess(true);
@@ -2122,8 +2072,8 @@ class FlexlbServiceImplTest {
         when(routeService.route(any())).thenReturn(CompletableFuture.completedFuture(response));
         when(routeService.getRequestState("700", 0)).thenReturn(
                 new RequestState("700", 0L, RequestState.Phase.ACKNOWLEDGED,
-                        DeliveryClaimKind.BATCH_ENQUEUE, 1001L, 10L, 20L,
-                        "engine acknowledged batch"));
+                        DeliveryClaimKind.ROUTE_DECISION, 0L, 10L, 20L,
+                        "route decision delivered"));
         StreamObserver<FlexlbScheduleProtocol.FlexlbScheduleResponsePB> observer = mock(StreamObserver.class);
 
         service.schedule(FlexlbScheduleProtocol.FlexlbScheduleRequestPB.newBuilder()
@@ -2135,7 +2085,7 @@ class FlexlbServiceImplTest {
         verify(observer).onNext(captor.capture());
         assertEquals(FlexlbScheduleProtocol.RequestStatePB.REQUEST_STATE_ACKNOWLEDGED,
                 captor.getValue().getLifecycle().getState());
-        assertEquals(1001L, captor.getValue().getLifecycle().getBatchId());
+        assertEquals(0L, captor.getValue().getLifecycle().getBatchId());
     }
 
     @Test

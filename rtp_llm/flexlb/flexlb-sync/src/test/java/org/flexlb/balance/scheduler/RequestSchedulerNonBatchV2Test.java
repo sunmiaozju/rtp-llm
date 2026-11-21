@@ -27,7 +27,7 @@ class RequestSchedulerNonBatchV2Test {
 
     @Test
     void generationRequestsGoToSchedulerV2() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         config.getDispatcher().setType(DispatcherConfig.Type.NON_BATCH_V2);
         RequestRegistry registry = mock(RequestRegistry.class);
         RequestSchedulerV2 schedulerV2 = mock(RequestSchedulerV2.class);
@@ -52,7 +52,7 @@ class RequestSchedulerNonBatchV2Test {
 
     @Test
     void encoderPhaseQueriesStayOnRequestRegistry() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         config.getDispatcher().setType(DispatcherConfig.Type.NON_BATCH_V2);
         RequestRegistry registry = mock(RequestRegistry.class);
         RequestSchedulerV2 schedulerV2 = mock(RequestSchedulerV2.class);

@@ -13,17 +13,14 @@ import java.util.List;
 public final class RawWorkView {
     public final long createdAtMs;
     private final List<WorkView.RequestWork> requests;
-    private final List<WorkView.BatchWork> batches;
     private final long unknownRequestCount;
     private volatile WorkView workView;
 
     public RawWorkView(long createdAtMs,
                        List<WorkView.RequestWork> requests,
-                       List<WorkView.BatchWork> batches,
                        long unknownRequestCount) {
         this.createdAtMs = createdAtMs;
         this.requests = requests;
-        this.batches = batches;
         this.unknownRequestCount = unknownRequestCount;
     }
 
@@ -39,12 +36,7 @@ public final class RawWorkView {
             if (workView == null) {
                 List<WorkView.RequestWork> orderedRequests =
                         requests.stream().sorted(Comparator.comparing(WorkView.RequestWork::requestId)).toList();
-                List<WorkView.BatchWork> orderedBatches = batches.stream()
-                        .sorted(Comparator.comparingLong(WorkView.BatchWork::batchId))
-                        .map(batch -> new WorkView.BatchWork(batch.batchId(),
-                                batch.requestIds().stream().sorted().toList(), batch.phase(), batch.remainingWorkMs()))
-                        .toList();
-                workView = new WorkView(createdAtMs, orderedRequests, orderedBatches, unknownRequestCount);
+                workView = new WorkView(createdAtMs, orderedRequests, unknownRequestCount);
             }
             return workView;
         }

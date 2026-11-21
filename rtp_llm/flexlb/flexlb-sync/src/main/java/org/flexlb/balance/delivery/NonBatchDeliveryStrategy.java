@@ -44,13 +44,11 @@ public final class NonBatchDeliveryStrategy implements DeliveryStrategy {
         BlockedRequest blocked = null;
         try {
             for (ScheduledRequest item : candidates) {
-                if (prefill.isEngineSubQueueMode()) {
-                    long maxDispatchLimit = item.ctx().getConfig().getDispatcher().getMaxInflightPerPrefillWorker();
-                    if (!prefill.canDeliver(maxDispatchLimit, requestsPreparedForDelivery.size() + 1)) {
-                        blocked = new BlockedRequest(item, DeliveryBlockReason.deliveryUnavailable(
-                                prefill.routeAdmissionAvailability(maxDispatchLimit)));
-                        break;
-                    }
+                long maxDispatchLimit = item.ctx().getConfig().getDispatcher().getMaxInflightPerPrefillWorker();
+                if (!prefill.canDeliver(maxDispatchLimit, requestsPreparedForDelivery.size() + 1)) {
+                    blocked = new BlockedRequest(item, DeliveryBlockReason.deliveryUnavailable(
+                            prefill.routeAdmissionAvailability(maxDispatchLimit)));
+                    break;
                 }
                 DeliveryBlockReason.Attempt<ScheduledRequest> attempt =
                         requests.prepareRouteMember(item, transaction, evaluator);

@@ -922,11 +922,6 @@ public class EndpointRegistry {
                     ep.evictExpiredRequests(
                             ttlMs, retainForSchedulerCleanup), ttlMs);
         });
-        getEndpointsByRole(RoleType.PDFUSION).forEach((endpoint, worker) -> {
-            PrefillEndpoint ep = (PrefillEndpoint) worker;
-            logEndpointEviction(RoleType.PDFUSION, endpoint,
-                    ep.evictExpiredBatches(ttlMs), ttlMs);
-        });
     }
 
     /**

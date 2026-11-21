@@ -61,7 +61,7 @@ class EncoderSchedulingIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        config = SchedulingTestConfig.batchConfig();
+        config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useNonBatchDispatcher(config);
         configService = mock(ConfigService.class);

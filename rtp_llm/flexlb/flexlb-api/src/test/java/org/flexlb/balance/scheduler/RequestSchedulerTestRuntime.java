@@ -1,14 +1,11 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
-import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.DeliveryMetrics;
 import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.delivery.NonBatchDeliveryStrategy;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.eviction.EvictionManager;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
@@ -18,7 +15,6 @@ import org.flexlb.balance.strategy.EncoderStrategy;
 import org.flexlb.balance.strategy.RandomStrategy;
 import org.flexlb.balance.strategy.SelectedRole;
 import org.flexlb.config.ConfigService;
-import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
@@ -35,8 +31,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Supplier;
 
 /**
  * Test-only composition root for API integration fixtures.
@@ -59,39 +53,23 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
     private final BindingRouter router;
 
     public RequestSchedulerTestRuntime(ConfigService configService,
-                                       Supplier<DeliveryBlockReason.Attempt<BatchDeliveryStrategy.PreparedSubmission>> prepareBatchSubmission,
                                        BatchSchedulerReporter batchReporter,
                                        RequestSchedulerReporter requestReporter) {
+        this(configService, batchReporter, requestReporter, new DeliveryMetrics(batchReporter));
+    }
+
+    RequestSchedulerTestRuntime(ConfigService configService,
+                                BatchSchedulerReporter batchReporter,
+                                RequestSchedulerReporter requestReporter,
+                                DeliveryMetrics deliveryMetrics) {
         this.lifecycle = new RequestRegistry(
                 configService, batchReporter, requestReporter);
         this.endpointEvents = new EndpointEventHandler(lifecycle, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
                 configService, new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
-        DispatcherConfig dispatcher = Objects.requireNonNull(
-                configService.loadBalanceConfig().getDispatcher(),
-                "dispatcher");
-        DeliveryStrategy deliveryStrategy = switch (dispatcher.getType()) {
-            case BATCH -> {
-                AtomicLong batchIds = new AtomicLong();
-                yield new BatchDeliveryStrategy(
-                        Objects.requireNonNull(
-                                prepareBatchSubmission,
-                                "prepareBatchSubmission"),
-                        batchIds::incrementAndGet,
-                        lifecycle,
-                        new DeliveryMetrics(batchReporter));
-            }
-            case NON_BATCH ->
-                    new NonBatchDeliveryStrategy(
-                            lifecycle,
-                            new DeliveryMetrics(batchReporter));
-            case NON_BATCH_V2 -> throw new IllegalArgumentException("该测试环境仅用于 BATCH 和 NON_BATCH");
-        };
+        DeliveryStrategy deliveryStrategy = new NonBatchDeliveryStrategy(lifecycle, deliveryMetrics);
         this.registry = new EndpointRegistry(configService, endpointEvents, batchReporter, deliveryStrategy,
-                dispatcher.getType() == DispatcherConfig.Type.BATCH
-                        ? new BatchTtftEstimator()
-                        : new NonBatchTtftEstimator(),
-                placementAvailability, queueCapacity, new PrefillQueueRegistry(), requestReporter);
+                new NonBatchTtftEstimator(), placementAvailability, queueCapacity, new PrefillQueueRegistry(), requestReporter);
         this.router = new BindingRouter(new org.flexlb.sync.status.WorkerDirectory(registry), configService, lifecycle);
         var cancelChannel = org.mockito.Mockito.mock(org.flexlb.balance.eviction.EngineCancelChannel.class);
         var preemption = new org.flexlb.balance.eviction.DecodePreemptionCoordinator(cancelChannel, lifecycle, requestReporter);

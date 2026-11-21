@@ -1,6 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.prefill.WorkerStatusFact;
@@ -53,7 +52,7 @@ class RequestInactivityTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         config.getRequestLifecycle().getRequest().setTimeoutMs(TIMEOUT_MS);
         config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(TIMEOUT_MS);
         ConfigService service = mock(ConfigService.class);
@@ -76,10 +75,10 @@ class RequestInactivityTest {
                 prefill, decode, reservation, registeredAtMs);
         var registered = new RequestLifecycleTestSupport.Registered(item, future);
         RequestLifecycleTestSupport.bind(registry, registered);
-        claim = RequestLifecycleTestSupport.claimBatch(registry, item, 1L, () -> true);
+        claim = RequestLifecycleTestSupport.claimRouteWithoutPrediction(registry, item, () -> true);
         assertNotNull(claim);
         handedOffAtMs = (long) org.springframework.test.util.ReflectionTestUtils
-                .getField(slot, "batchEnqueueStartedAtMs");
+                .getField(slot, "deliveryStartedAtMs");
     }
 
     @AfterEach
@@ -125,28 +124,18 @@ class RequestInactivityTest {
     }
 
     @Test
-    void missingDeliveryReplyExpiresPurelyLocally() throws Exception {
-        registry.expireInactiveRequest(slot, handedOffAtMs + TIMEOUT_MS - 1L);
+    void unpublishedRouteExpiresPurelyLocally() throws Exception {
+        registry.expireInactiveRequest(slot, registeredAtMs + TIMEOUT_MS - 1L);
         assertFalse(item.future().isDone(), "no transport callback has confirmed delivery");
         assertLiveAndCharged();
 
-        registry.expireInactiveRequest(slot, handedOffAtMs + TIMEOUT_MS);
+        registry.expireInactiveRequest(slot, registeredAtMs + TIMEOUT_MS);
         assertExpiredAndReleased(RequestState.Phase.TIMED_OUT);
         assertFalse(item.future().get(1L, TimeUnit.SECONDS).isSuccess());
 
         // A late delivery acknowledgement must not resurrect the expired request.
-        claim.complete(DeliveryResult.delivered());
+        registry.publishRoute(claim, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), java.util.List.of(), 0L), 30_000L);
         assertExpiredAndReleased(RequestState.Phase.TIMED_OUT);
-    }
-
-    @ParameterizedTest
-    @EnumSource(value = DeliveryResult.Status.class, names = {"UNCERTAIN", "TIMED_OUT"})
-    void uncertainDeliveryKeepsOnlyABoundedConfirmationWait(DeliveryResult.Status outcome) throws Exception {
-        claim.complete(new DeliveryResult(outcome, new IllegalStateException("reply was lost")));
-        assertLiveAndCharged();
-        registry.expireInactiveRequest(slot, handedOffAtMs + TIMEOUT_MS);
-        assertExpiredAndReleased(RequestState.Phase.TIMED_OUT);
-        assertFalse(item.future().get(1L, TimeUnit.SECONDS).isSuccess());
     }
 
     @Test
@@ -159,7 +148,7 @@ class RequestInactivityTest {
         synchronized (slot) {
             assertEquals(CancelReason.CLIENT_CANCELLED, RequestLifecycleTestSupport.<CancelReason>inspect(slot, "requireCancellationFirstCauseLocked"));
         }
-        registry.expireInactiveRequest(slot, handedOffAtMs + TIMEOUT_MS);
+        registry.expireInactiveRequest(slot, registeredAtMs + TIMEOUT_MS);
         assertExpiredAndReleased(RequestState.Phase.CANCELLED);
         registry.expireInactiveRequest(slot, registeredAtMs + 2L * TIMEOUT_MS);
         assertExpiredAndReleased(RequestState.Phase.CANCELLED);
@@ -194,7 +183,7 @@ class RequestInactivityTest {
     @ParameterizedTest
     @EnumSource(value = RoleType.class, names = {"PREFILL", "DECODE"})
     void statusBeforeCancellationCheckInvalidatesTheEarlierExpirationDecision(RoleType source) {
-        long originalDeadline = handedOffAtMs + TIMEOUT_MS;
+        long originalDeadline = registeredAtMs + TIMEOUT_MS;
         synchronized (slot) {
             assertTrue(RequestLifecycleTestSupport.<Boolean>inspect(slot, "requestInactiveLocked", originalDeadline), "the timer's earlier observation is expired");
         }
@@ -265,7 +254,7 @@ class RequestInactivityTest {
     }
 
     private void acknowledgeDelivery() throws Exception {
-        claim.complete(DeliveryResult.delivered());
+        registry.publishRoute(claim, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), java.util.List.of(), 0L), 30_000L);
         assertTrue(item.future().get(1L, TimeUnit.SECONDS).isSuccess());
     }
 

@@ -21,8 +21,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * A single inference request queued for a priority scheduling decision.
  *
  * <p>Extracted from {@link RequestScheduler} to reduce coupling
- * with {@link org.flexlb.balance.queue.WorkerBatcher}. A decision group may be delivered through a
- * batch RPC or returned as individual route decisions.
+ * with {@link org.flexlb.balance.queue.WorkerBatcher}. Each request receives its own route decision.
  *
  * <p>Carries direct {@link PrefillEndpoint} / {@link DecodeEndpoint} references
  * so downstream operations (commit, rollback, ack) avoid repeated
@@ -47,7 +46,6 @@ public final class ScheduledRequest implements Prioritized {
     private final long enqueueSequence;
     private final long expiresAtMs;
     private final long hitCache;
-    private final int maxInflightBatchesPerPrefillWorker;
     private final boolean routeDelivery;
     /**
      * Publish-time NON_BATCH ownership. It has exactly one downstream owner:
@@ -96,8 +94,6 @@ public final class ScheduledRequest implements Prioritized {
         this.hitCache = hitCacheOf(prefill);
         FlexlbConfig schedulingConfig = ctx.getConfig();
         this.routeDelivery = schedulingConfig.getDispatcher().getType() == DispatcherConfig.Type.NON_BATCH;
-        this.maxInflightBatchesPerPrefillWorker = routeDelivery ? 0
-                : schedulingConfig.getDispatcher().getMaxInflightPerPrefillWorker();
     }
 
     // -- accessors --
@@ -139,10 +135,6 @@ public final class ScheduledRequest implements Prioritized {
     public boolean requestExpired(long nowMs) {
         return expiresAtMs <= 0L || nowMs >= expiresAtMs;
     }
-    public int maxInflightBatchesPerPrefillWorker() {
-        return maxInflightBatchesPerPrefillWorker;
-    }
-
     /**
      * Whether ACTIVE publication must atomically own one single reservation.
      */

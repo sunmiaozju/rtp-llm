@@ -8,11 +8,7 @@ import java.util.OptionalLong;
 /**
  * Immutable view of Prefill work which has crossed an endpoint lifecycle boundary.
  *
- * <p>Known request and batch work is intentionally kept separate from
- * {@link #unknownRequestCount()}. A committed batch whose repack prediction is
- * unavailable retains its request identities and carries an empty
- * {@link BatchWork#remainingWorkMs()}. Neither form of unknown work may be
- * converted into fabricated milliseconds by a load estimate.
+ * <p>Requests observed only through aggregate engine counters have no known duration.
  */
 public final class WorkView {
 
@@ -21,17 +17,14 @@ public final class WorkView {
 
     private final long createdAtMs;
     private final List<RequestWork> requests;
-    private final List<BatchWork> batches;
     private final long unknownRequestCount;
     private final long knownNonRunningWorkMs;
     private final long[] runningWorkMs;
     private final String[] requestIds;
-    private final boolean unknownWork;
 
-    public WorkView(long createdAtMs, List<RequestWork> requests, List<BatchWork> batches, long unknownRequestCount) {
+    public WorkView(long createdAtMs, List<RequestWork> requests, long unknownRequestCount) {
         this.createdAtMs = createdAtMs;
         this.requests = requests;
-        this.batches = batches;
         if (unknownRequestCount < 0L) {
             throw new IllegalArgumentException(
                     "unknownRequestCount must be non-negative");
@@ -41,7 +34,6 @@ public final class WorkView {
         int runningCount = 0;
         int requestIdCount = this.requests.size();
         long nonRunningMs = 0L;
-        boolean hasUnknown = unknownRequestCount > 0L;
         for (RequestWork request : this.requests) {
             if (request.phase() == Phase.ENGINE_RUNNING) {
                 runningCount++;
@@ -50,41 +42,18 @@ public final class WorkView {
                         nonRunningMs, request.remainingWorkMs());
             }
         }
-        for (BatchWork batch : this.batches) {
-            requestIdCount = Math.addExact(
-                    requestIdCount, batch.requestIds().size());
-            if (batch.remainingWorkMs().isEmpty()) {
-                hasUnknown = true;
-            } else if (batch.phase() == Phase.ENGINE_RUNNING) {
-                runningCount++;
-            } else {
-                nonRunningMs = saturatedAdd(
-                        nonRunningMs, batch.remainingWorkMs().getAsLong());
-            }
-        }
 
         this.knownNonRunningWorkMs = nonRunningMs;
         this.runningWorkMs = runningCount == 0
                 ? EMPTY_LONGS : new long[runningCount];
         this.requestIds = requestIdCount == 0
                 ? EMPTY_STRINGS : new String[requestIdCount];
-        this.unknownWork = hasUnknown;
         int runningIndex = 0;
         int requestIdIndex = 0;
         for (RequestWork request : this.requests) {
             requestIds[requestIdIndex++] = request.requestId();
             if (request.phase() == Phase.ENGINE_RUNNING) {
                 runningWorkMs[runningIndex++] = request.remainingWorkMs();
-            }
-        }
-        for (BatchWork batch : this.batches) {
-            for (String requestId : batch.requestIds()) {
-                requestIds[requestIdIndex++] = requestId;
-            }
-            if (batch.phase() == Phase.ENGINE_RUNNING
-                    && batch.remainingWorkMs().isPresent()) {
-                runningWorkMs[runningIndex++] =
-                        batch.remainingWorkMs().getAsLong();
             }
         }
         Arrays.sort(requestIds);
@@ -96,10 +65,6 @@ public final class WorkView {
 
     public List<RequestWork> requests() {
         return requests;
-    }
-
-    public List<BatchWork> batches() {
-        return batches;
     }
 
     public long unknownRequestCount() {
@@ -126,31 +91,8 @@ public final class WorkView {
         }
     }
 
-    /** One EnqueueBatch work unit, identified by batch id and its live members. */
-    public record BatchWork(long batchId,
-                            List<String> requestIds,
-                            Phase phase,
-                            OptionalLong remainingWorkMs) {
-
-        public BatchWork {
-            if (remainingWorkMs.isPresent()
-                    && remainingWorkMs.getAsLong() < 0L) {
-                throw new IllegalArgumentException(
-                        "remaining batch work must be non-negative");
-            }
-        }
-
-        /** Convenience constructor for a batch with a known work estimate. */
-        public BatchWork(long batchId,
-                         List<String> requestIds,
-                         Phase phase,
-                         long remainingWorkMs) {
-            this(batchId, requestIds, phase, OptionalLong.of(remainingWorkMs));
-        }
-    }
-
     public boolean hasUnknownWork() {
-        return unknownWork;
+        return unknownRequestCount > 0L;
     }
 
     public boolean containsRequest(String requestId) {
@@ -206,17 +148,17 @@ public final class WorkView {
             return false;
         }
         return createdAtMs == that.createdAtMs && unknownRequestCount == that.unknownRequestCount
-                && requests.equals(that.requests) && batches.equals(that.batches);
+                && requests.equals(that.requests);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(createdAtMs, requests, batches, unknownRequestCount);
+        return Objects.hash(createdAtMs, requests, unknownRequestCount);
     }
 
     @Override
     public String toString() {
-        return "WorkView[createdAtMs=" + createdAtMs + ", requests=" + requests + ", batches=" + batches
+        return "WorkView[createdAtMs=" + createdAtMs + ", requests=" + requests
                 + ", unknownRequestCount=" + unknownRequestCount + ']';
     }
 

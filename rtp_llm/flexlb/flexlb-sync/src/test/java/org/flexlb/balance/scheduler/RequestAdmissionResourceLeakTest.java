@@ -42,7 +42,7 @@ class RequestAdmissionResourceLeakTest {
 
     @BeforeEach
     void setUp() {
-        config = SchedulingTestConfig.batchConfig();
+        config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.usePriorityQueue(config);
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);

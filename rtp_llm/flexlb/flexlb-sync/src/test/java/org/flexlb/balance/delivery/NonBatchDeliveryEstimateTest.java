@@ -1,6 +1,5 @@
 package org.flexlb.balance.delivery;
 
-import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.planner.GroupPlanner;
@@ -20,11 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 /**
  * Exact-value behavior contracts for the frozen
  * {@link PrefillTtftEstimate.TtftEstimationRule} SPI as implemented by
- * {@link NonBatchDeliveryStrategy} and {@link BatchDeliveryStrategy}.
- *
- * <p>Route service is a lazy cumulative prefix sum (asking for member i
- * evaluates only items 0..i). Batch service independently predicts each
- * prefix length via {@code batchDurationMs(items[0..i+1])}.
+ * {@link NonBatchDeliveryStrategy}.
  */
 @DisplayName("Delivery rule contracts")
 class NonBatchDeliveryEstimateTest {
@@ -145,81 +140,12 @@ class NonBatchDeliveryEstimateTest {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    @Nested
-    @DisplayName("Batch rule: per-prefix independent prediction")
-    class BatchService {
-
-        private final PrefillTtftEstimate.TtftEstimationRule rule =
-                new BatchTtftEstimator().ttftEstimationRule();
-
-        @Test
-        void eachMemberGetsBatchDurationOfItsExactPrefix() {
-            // batchDurationMs returns 100*items.size() for discrimination.
-            List<GroupPlanner.Item> items =
-                    List.of(item(1L, 100L), item(2L, 200L), item(3L, 50L));
-            CountingPredictions pred = new CountingPredictions();
-            PrefillTtftEstimate.GroupService svc =
-                    rule.service(plan(items, OptionalDouble.empty()), pred);
-            // offset(0) = batchDurationMs([item1]) = 100*1 = 100
-            assertEquals(100L, svc.completionOffsetMs(0));
-            // offset(1) = batchDurationMs([item1,item2]) = 100*2 = 200
-            assertEquals(200L, svc.completionOffsetMs(1));
-            // offset(2) = batchDurationMs([item1,item2,item3]) = 100*3 = 300
-            assertEquals(300L, svc.completionOffsetMs(2));
-            assertEquals(300L, svc.totalDurationMs());
-        }
-
-        @Test
-        void resetRecomputesOffsetsForLargerAndSmallerPlans() {
-            var initial =
-                    rule.service(plan(List.of(item(1L, 1_000L)), OptionalDouble.empty()), new CountingPredictions());
-            assertEquals(100L, initial.totalDurationMs());
-
-            CountingPredictions largerPredictions = new CountingPredictions();
-            var larger =
-                    rule.service(plan(List.of(item(2L, 10L), item(3L, 20L), item(4L, 30L)), OptionalDouble.empty()),
-                            largerPredictions);
-            assertEquals(300L, larger.totalDurationMs());
-            assertEquals(100L, larger.completionOffsetMs(0));
-            assertEquals(2, largerPredictions.batchDurationCalls());
-
-            CountingPredictions smallerPredictions = new CountingPredictions();
-            var smaller = rule.service(plan(List.of(item(5L, 7L)), OptionalDouble.empty()), smallerPredictions);
-            assertEquals(100L, smaller.totalDurationMs());
-            assertEquals(1, smallerPredictions.batchDurationCalls());
-        }
-
-        @Test
-        void eachPrefixIsComputedIndependentlyAndMemoized() {
-            List<GroupPlanner.Item> items = List.of(item(1L, 100L), item(2L, 200L));
-            CountingPredictions pred = new CountingPredictions();
-            PrefillTtftEstimate.GroupService svc =
-                    rule.service(plan(items, OptionalDouble.empty()), pred);
-            svc.completionOffsetMs(0);
-            svc.completionOffsetMs(0); // repeated
-            svc.completionOffsetMs(1);
-            svc.completionOffsetMs(1); // repeated
-            // Each prefix evaluated exactly once.
-            assertEquals(2, pred.batchDurationCalls());
-        }
-
-        @Test
-        void planningDurationDelegates() {
-            List<GroupPlanner.Item> items = List.of(item(1L, 100L), item(2L, 200L));
-            CountingPredictions pred = new CountingPredictions();
-            PrefillTtftEstimate.GroupPlanning planning = rule.planning(pred);
-            // Batch planning returns batchPlanningDurationMs = 777 always.
-            assertEquals(777.0, planning.durationMs(items, items.size() - 1));
-        }
-    }
-
     // ═══════════════════════════════════════════════════════════════════════
     private static final class CountingPredictions
             implements PrefillTtftEstimate.Predictions {
 
         private final Map<String, Integer> itemCalls = new HashMap<>();
         private Set<String> failingIds = Set.of();
-        private int batchDurationCalls;
 
         void failOn(long... ids) {
             var set = new java.util.HashSet<String>();
@@ -231,10 +157,6 @@ class NonBatchDeliveryEstimateTest {
             return itemCalls.getOrDefault(Long.toString(id), 0);
         }
 
-        int batchDurationCalls() {
-            return batchDurationCalls;
-        }
-
         @Override
         public long itemDurationMs(GroupPlanner.Item item) {
             itemCalls.merge(item.requestId(), 1, Integer::sum);
@@ -242,17 +164,6 @@ class NonBatchDeliveryEstimateTest {
                 throw new RuntimeException("fail " + item.requestId());
             }
             return item.seqLen(); // deterministic: seqLen as duration
-        }
-
-        @Override
-        public double batchPlanningDurationMs(List<GroupPlanner.Item> items) {
-            return 777.0;
-        }
-
-        @Override
-        public long batchDurationMs(List<GroupPlanner.Item> items) {
-            batchDurationCalls++;
-            return 100L * items.size(); // discriminating: prefix-size dependent
         }
 
     }

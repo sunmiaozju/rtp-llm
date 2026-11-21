@@ -39,7 +39,7 @@ class EnvironmentConfigSourceTest {
         });
 
         FlexlbConfig config = configService.loadBalanceConfig();
-        assertThat(config.isBatchDispatch()).isFalse();
+        assertThat(config.getDispatcher().typeName()).isEqualTo("NON_BATCH");
         assertThat(config.getObservability().getLogging().getLevel())
                 .isEqualTo(LogLevel.DEBUG);
         assertThat(config.getObservability().getLogging().isStdoutEnabled()).isTrue();

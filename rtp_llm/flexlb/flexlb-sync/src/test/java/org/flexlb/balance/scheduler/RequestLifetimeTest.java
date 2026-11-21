@@ -1,24 +1,17 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.prefill.WorkerStatusFact;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.scheduler.RequestSlot.AdmissionHandle;
-import org.flexlb.balance.scheduler.RequestSlot.DeliveryClaim;
-import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.route.RoleType;
-import org.flexlb.service.monitor.BatchSchedulerReporter;
-import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.List;
 import java.util.OptionalLong;
@@ -61,7 +54,7 @@ class RequestLifetimeTest {
         assertEquals(100_000L, visibilityDeadline(emptyWork(1_000L), 20_000L, 1.5, 60_000L).orElseThrow());
         WorkView preceding = new WorkView(1_000L, List.of(
                 new WorkView.RequestWork("1", WorkView.Phase.ENGINE_RUNNING, 20_000L),
-                new WorkView.RequestWork("2", WorkView.Phase.ENGINE_QUEUED, 3_000L)), List.of(), 0L);
+                new WorkView.RequestWork("2", WorkView.Phase.ENGINE_QUEUED, 3_000L)), 0L);
         assertEquals(68_000L, visibilityDeadline(preceding, 20_000L, 1.5, 16_000L).orElseThrow());
     }
 
@@ -70,9 +63,9 @@ class RequestLifetimeTest {
         WorkView preceding = new WorkView(1_000L, List.of(
                 new WorkView.RequestWork("1", WorkView.Phase.ENGINE_RUNNING, 20_000L),
                 new WorkView.RequestWork("2", WorkView.Phase.ENGINE_QUEUED, 7_000L),
-                new WorkView.RequestWork("3", WorkView.Phase.COMMITTED, 3_000L)), List.of(
-                new WorkView.BatchWork(4L, List.of("4"), WorkView.Phase.ENGINE_RUNNING, 8_000L),
-                new WorkView.BatchWork(5L, List.of("5"), WorkView.Phase.ENGINE_QUEUED, 4_000L)), 0L);
+                new WorkView.RequestWork("3", WorkView.Phase.COMMITTED, 3_000L),
+                new WorkView.RequestWork("4", WorkView.Phase.ENGINE_RUNNING, 8_000L),
+                new WorkView.RequestWork("5", WorkView.Phase.ENGINE_QUEUED, 4_000L)), 0L);
         assertEquals(63_500L, visibilityDeadline(preceding, 11_000L, 1, 500L).orElseThrow());
         assertEquals(56_000L, visibilityDeadline(preceding, 11_000L, 1, 11_000L).orElseThrow());
         assertEquals(66_000L, visibilityDeadline(preceding, 11_000L, 1, 31_000L).orElseThrow());
@@ -80,18 +73,13 @@ class RequestLifetimeTest {
 
     @Test
     void unknownPredecessorsNeverBecomeACompleteEstimate() {
-        WorkView unknownBatch = new WorkView(1_000L, List.of(), List.of(
-                new WorkView.BatchWork(1L, List.of("1"), WorkView.Phase.COMMITTED,
-                        OptionalLong.empty())), 0L);
-        for (WorkView preceding : List.of(unknownWork(1_000L), unknownBatch)) {
-            assertTrue(visibilityDeadline(preceding, 20_000L, 2, 60_000L).isEmpty());
-        }
+        assertTrue(visibilityDeadline(unknownWork(1_000L), 20_000L, 2, 60_000L).isEmpty());
     }
 
     @Test
     void combinedWorkSaturatesWithoutWrapping() {
         WorkView preceding = new WorkView(1_000L, List.of(
-                new WorkView.RequestWork("1", WorkView.Phase.COMMITTED, Long.MAX_VALUE)), List.of(), 0L);
+                new WorkView.RequestWork("1", WorkView.Phase.COMMITTED, Long.MAX_VALUE)), 0L);
         assertEquals(Long.MAX_VALUE, visibilityDeadline(preceding, 1L, 2, 60_000L).orElseThrow());
     }
 
@@ -308,79 +296,6 @@ class RequestLifetimeTest {
         }
     }
 
-    @ParameterizedTest
-    @CsvSource({"PREFILL,true", "DECODE,true", "PREFILL,false", "DECODE,false"})
-    void uncertaintyAllowsActualAckIndependentlyOfMatchingEngineEvidence(RoleType evidenceSource,
-                                                                         boolean ackBeforeEvidence)
-            throws Exception {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
-        ConfigService service = mock(ConfigService.class);
-        when(service.loadBalanceConfig()).thenReturn(config);
-        RequestRegistry registry = new RequestRegistry(service, mock(BatchSchedulerReporter.class),
-                mock(RequestSchedulerReporter.class));
-        try {
-            BalanceContext context = RequestLifecycleTestSupport.context(config, 202L);
-            var future = registry.register(context);
-            RequestSlot slot = registry.requestSlot("202");
-            PrefillEndpoint prefill = mock(PrefillEndpoint.class);
-            DecodeEndpoint decode = mock(DecodeEndpoint.class);
-            var reservation = new DecodeEndpoint.ReservationHandle(1L, "202", 1L);
-            ScheduledRequest item = new ScheduledRequest(context, future, new Response(), prefillServer(), null,
-                    prefill, decode, reservation, System.currentTimeMillis());
-            RequestLifecycleTestSupport.bind(registry, new RequestLifecycleTestSupport.Registered(item, future));
-            DeliveryClaim claim = RequestLifecycleTestSupport.claimBatchWithoutPrediction(registry, item, 7L, () -> true);
-            assertNotNull(claim);
-            synchronized (slot) {
-                startPrediction(slot);
-                var deadline = mock(ExpirationTimer.DecisionDeadline.class);
-                when(deadline.deadlineAtMs()).thenReturn(slot.decisionDeadlineAtMs().orElseThrow());
-                assertTrue(slot.installDecisionDeadline(deadline));
-                assertTrue(slot.onDecisionVisibilityDeadline(deadline).needsConfirmation());
-                assertFalse(RequestLifecycleTestSupport.<Boolean>inspect(slot, "hasCancellationFirstCauseLocked"));
-            }
-            if (ackBeforeEvidence) {
-                claim.complete(DeliveryResult.delivered());
-            }
-            if (ackBeforeEvidence) {
-                assertTrue(future.get(1L, TimeUnit.SECONDS).isSuccess(),
-                        "uncertainty cannot hold a real EnqueueBatch ACK");
-            } else {
-                assertFalse(future.isDone());
-            }
-
-            EndpointEventHandler eventHandler = new EndpointEventHandler(registry,
-                    org.mockito.Mockito.mock(PrefillQueueRegistry.class), mock(org.flexlb.config.ConfigService.class),
-                    new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
-                    org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
-            if (evidenceSource == RoleType.PREFILL) {
-                eventHandler.onPrefillStatus(prefill,
-                        org.flexlb.balance.endpoint.EndpointTestSupport.statusObservation(RoleType.PREFILL),
-                        List.of(WorkerStatusFact.active(item)));
-            } else {
-                eventHandler.onDecodeStatus(decode,
-                        List.of(org.flexlb.balance.endpoint.WorkerStatusFact.active(reservation)));
-            }
-
-            if (!ackBeforeEvidence) {
-                assertFalse(future.isDone(), "Engine activity cannot create an EnqueueBatch ACK");
-                claim.complete(DeliveryResult.delivered());
-            }
-            assertTrue(future.get(1L, TimeUnit.SECONDS).isSuccess());
-            synchronized (slot) {
-                assertEquals(evidenceSource == RoleType.DECODE, RequestLifecycleTestSupport.<Boolean>inspect(slot, "decodeOwnsRequestLocked"));
-                assertTrue(slot.isLiveGeneration());
-                observePrefill(slot, item, true);
-                assertFalse(RequestLifecycleTestSupport.<Boolean>inspect(slot, "needsDecisionConfirmationLocked"));
-            }
-        } finally {
-            if (registry.closeAdmissionAndAwaitMutations()) {
-                registry.closeOutstandingAndTerminalize();
-                registry.closeExpiration();
-                registry.closePublisher();
-            }
-        }
-    }
-
     @Test
     void timerChecksInactivityAfterThePublicFutureHasCompleted() throws Exception {
         Fixture fixture = fixture(true, true);
@@ -500,11 +415,11 @@ class RequestLifetimeTest {
     }
 
     private static WorkView emptyWork(long createdAtMs) {
-        return new WorkView(createdAtMs, List.of(), List.of(), 0L);
+        return new WorkView(createdAtMs, List.of(), 0L);
     }
 
     private static WorkView unknownWork(long createdAtMs) {
-        return new WorkView(createdAtMs, List.of(), List.of(), 1L);
+        return new WorkView(createdAtMs, List.of(), 1L);
     }
 
     private static OptionalLong visibilityDeadline(WorkView preceding, long unstartedWorkMs,

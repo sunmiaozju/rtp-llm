@@ -99,8 +99,6 @@ public final class RequestSlot {
         private final ScheduledRequest item;
         private final DeliveryClaimKind kind;
         private final long correlationId;
-        /** Prevents repeated complete() calls; guarded by the owning slot. */
-        private boolean completeCalled;
 
         private DeliveryClaim(RequestSlot slot, ScheduledRequest item, DeliveryClaimKind kind, long correlationId) {
             this.slot = slot;
@@ -109,9 +107,6 @@ public final class RequestSlot {
             this.correlationId = correlationId;
         }
 
-        public void complete(DeliveryResult result) {
-            slot.completeDelivery(this, result);
-        }
     }
 
     private final ExpirationTimer expirationTimer;
@@ -133,7 +128,6 @@ public final class RequestSlot {
     private String detail = "queued";
     private DeliveryClaimKind deliveryClaimKind = DeliveryClaimKind.NONE;
     private long batchId;
-    private long batchEnqueueStartedAtMs;
     /** Cleared exactly when the directory removes this request generation. */
     private boolean currentGeneration = true;
 
@@ -748,7 +742,7 @@ public final class RequestSlot {
         DeliveryClaim claim = null;
         InactivityDeadline replacedInactivity = null;
         synchronized (this) {
-            if (kind == DeliveryClaimKind.NONE || kind == DeliveryClaimKind.BATCH_ENQUEUE && correlationId <= 0L) {
+            if (kind == DeliveryClaimKind.NONE) {
                 throw new IllegalArgumentException("invalid delivery identity");
             }
             if (!ownsPreparedDeliveryLocked(exact)) { return null; }
@@ -772,9 +766,7 @@ public final class RequestSlot {
                 deliveryStartedAtMs = nowMs;
                 replacedInactivity = inactivityDeadline;
                 inactivityDeadline = null;
-                if (kind == DeliveryClaimKind.BATCH_ENQUEUE) { batchEnqueueStartedAtMs = nowMs; }
-                transitionLocked(RequestState.Phase.DISPATCHING,
-                        kind == DeliveryClaimKind.BATCH_ENQUEUE ? "batch enqueue started" : "route decision delivery started");
+                transitionLocked(RequestState.Phase.DISPATCHING, "route decision delivery started");
             }
             cleanup = claim == null && cleanupProgress != null && cleanupProgress.expired;
         }
@@ -814,16 +806,6 @@ public final class RequestSlot {
                 && !state.isTerminal();
     }
 
-    void setDeliveryPrediction(DeliveryClaim claim, WorkView work, long predictedMs) {
-        DecisionDeadline obsolete;
-        synchronized (this) {
-            if (!ownsDeliveryClaimLocked(claim)) { return; }
-            obsolete = updateDeliveryPredictionLocked(work, predictedMs, System.currentTimeMillis());
-        }
-        expirationTimer.releaseDecisionDeadline(obsolete);
-        expirationTimer.attachDecisionDeadline(this);
-    }
-
     void publishRoute(DeliveryClaim claim, WorkView work, long predictedMs) {
         try {
             publishRouteClaim(claim, work, predictedMs);
@@ -858,48 +840,6 @@ public final class RequestSlot {
         if (source != null) { recordDecodeRetirement(source, exact); }
     }
 
-    private void completeDelivery(DeliveryClaim claim, DeliveryResult result) {
-        SelectedPublication failureResponse = null;
-        RequestEffect acknowledgement = RequestEffect.DEFERRED;
-        boolean failed = result.failed();
-        synchronized (this) {
-            if (claim == null || claim.slot != this) {
-                throw new IllegalArgumentException("foreign delivery claim");
-            }
-            if (claim.kind != DeliveryClaimKind.BATCH_ENQUEUE) {
-                throw new IllegalArgumentException("complete() requires a batch delivery claim");
-            }
-            if (claim.completeCalled && ownsDeliveryClaimLocked(claim)) {
-                throw new IllegalStateException("complete() already called for request " + requestId);
-            }
-            if (claim.completeCalled) { return; }
-            claim.completeCalled = true;
-            if (failed) {
-                failureResponse = selectDeliveryFailureLocked(claim.item, result.status(),
-                        "Delivery failed: " + detailOf(result.cause()));
-            } else if (ownsDeliveryClaimLocked(claim)) {
-                if (result.status() == DeliveryResult.Status.DELIVERED) {
-                    claim.item.ctx().setAckAtMs(System.currentTimeMillis());
-                    claim.item.ctx().setAckAtNanos(System.nanoTime());
-                } else if (!decodeOwnsRequestLocked()) {
-                    markAwaitingConfirmationLocked((result.status() == DeliveryResult.Status.TIMED_OUT
-                            ? "Delivery timed out: " : "Delivery outcome uncertain: ") + detailOf(result.cause()));
-                    return;
-                }
-                acknowledgement = acknowledgeDeliveryLocked(claim.correlationId, null);
-            }
-        }
-        if (failed) {
-            SelectedPublication response = failureResponse;
-            Throwable failure = runStep(null,
-                    response == null ? null : () -> completionPublisher.submit(response));
-            failure = runStep(failure, () -> cleanUpRequest(claim.item, result.status()));
-            rethrowCleanup(failure);
-        } else {
-            execute(acknowledgement);
-        }
-    }
-
     /** Shared confirmation decision for transport, Engine evidence and released preemption. */
     private RequestEffect acknowledgeDeliveryLocked(long expectedBatchId, PreemptionRegistration signal) {
         requireSlotLock("delivery acknowledgement");
@@ -915,11 +855,9 @@ public final class RequestSlot {
         if (state != RequestState.Phase.DISPATCHING) { return RequestEffect.STALE; }
         PublicationPermit permit = requirePublicationPermitLocked(PublicationKind.DELIVERY);
         try {
-            Response response = buildSuccessResponse(item.routeResponse(), deliveryClaimKind == DeliveryClaimKind.BATCH_ENQUEUE);
-            transitionLocked(RequestState.Phase.ACKNOWLEDGED, deliveryClaimKind == DeliveryClaimKind.BATCH_ENQUEUE
-                    ? "batch enqueue acknowledged" : "route decision delivered");
-            DeliveryPublication publication = new DeliveryPublication(item, response, permit,
-                    requestDeadline, batchEnqueueStartedAtMs);
+            Response response = buildSuccessResponse(item.routeResponse(), false);
+            transitionLocked(RequestState.Phase.ACKNOWLEDGED, "route decision delivered");
+            DeliveryPublication publication = new DeliveryPublication(item, response, permit, requestDeadline);
             requestDeadline = null;
             assertInvariantLocked();
             return RequestEffect.delivery(publication, signal);
@@ -1560,18 +1498,8 @@ public final class RequestSlot {
                 && nowMs >= inactivityExpiresAtMsLocked();
     }
 
-    /**
-     * Before batch handoff, silence is measured from registration/status.
-     * Handoff starts one bounded Engine-observation window; ACK does not renew
-     * it. Afterwards only matching Worker facts extend it. Reuse the canonical
-     * handoff timestamp rather than introducing another dispatch state/timer.
-     */
     private long inactivityExpiresAtMsLocked() {
-        long observedSince = lastWorkerStatusAtMs;
-        if (deliveryClaimKind == DeliveryClaimKind.BATCH_ENQUEUE) {
-            observedSince = Math.max(observedSince, batchEnqueueStartedAtMs);
-        }
-        long expiresAtMs = deadlineAfter(observedSince, inactivityTimeoutMs);
+        long expiresAtMs = deadlineAfter(lastWorkerStatusAtMs, inactivityTimeoutMs);
         if (awaitingFirstEngineStatusLocked()) {
             expiresAtMs = Math.min(expiresAtMs, deadlineAfter(deliveryStartedAtMs, statusUpdateTimeoutMs));
         }
@@ -2058,8 +1986,7 @@ public final class RequestSlot {
                     error = StrategyErrorType.DISPATCH_FAILED;
                 } else if (event.workerSuccessful()) {
                     return claimTerminalActionLocked(event, TerminalOutcome.complete("decode completed"),
-                            buildSuccessResponse(activeItem().routeResponse(),
-                                    deliveryClaimKind == DeliveryClaimKind.BATCH_ENQUEUE), true);
+                            buildSuccessResponse(activeItem().routeResponse(), false), true);
                 } else {
                     message = "worker error code " + event.workerErrorCode();
                     outcome = TerminalOutcome.fail(message);
@@ -2345,7 +2272,7 @@ public final class RequestSlot {
     }
 
     record DeliveryPublication(ScheduledRequest item, Response response, PublicationPermit publication,
-            RequestDeadline requestDeadline, long batchEnqueueStartedAtMs) { }
+            RequestDeadline requestDeadline) { }
 
     /** Event disposition and optional outside-lock work; APPLIED need not produce an action. */
     record RequestEffect(Status status, TerminalAction terminal, DeliveryPublication delivery,

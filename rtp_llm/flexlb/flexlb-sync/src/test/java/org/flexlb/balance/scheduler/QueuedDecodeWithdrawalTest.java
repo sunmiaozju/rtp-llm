@@ -1,7 +1,6 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.delivery.DeliveryBlockReason;
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerStatusFact;
@@ -61,7 +60,7 @@ class QueuedDecodeWithdrawalTest {
 
     @BeforeEach
     void setUp() {
-        config = SchedulingTestConfig.batchConfig();
+        config = SchedulingTestConfig.routeConfig();
         service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         registry = new RequestRegistry(service, mock(BatchSchedulerReporter.class), mock(RequestSchedulerReporter.class));
@@ -119,9 +118,9 @@ class QueuedDecodeWithdrawalTest {
         applyStatus(Map.of(), Map.of());
         var item = queued(42);
         var slot = registry.requestSlot("42");
-        var delivery = slot.claimDelivery(item, DeliveryClaimKind.BATCH_ENQUEUE, 7L, () -> true);
+        var delivery = slot.claimDelivery(item, DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
         assertNotNull(delivery);
-        delivery.complete(DeliveryResult.delivered());
+        registry.publishRoute(delivery, new WorkView(System.currentTimeMillis(), List.of(), 0L), 30_000L);
         assertEquals(RequestState.Phase.ACKNOWLEDGED, slot.snapshot().state());
         TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
         task.setRequestIdStr("42");
@@ -210,7 +209,7 @@ class QueuedDecodeWithdrawalTest {
     @Test
     void stoppedWorkerCannotRequeueAfterDispatchHandoff() {
         var item = queued(23);
-        assertNotNull(registry.requestSlot("23").claimDelivery(item, DeliveryClaimKind.BATCH_ENQUEUE, 1L, () -> true));
+        assertNotNull(registry.requestSlot("23").claimDelivery(item, DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true));
         registry.onQueuedWorkerStopped(item);
         verify(queue, never()).requeue(any());
         assertSame(item, registry.requestSlot("23").activeItem());
@@ -243,11 +242,11 @@ class QueuedDecodeWithdrawalTest {
         assertNull(slot.activeItem());
         assertNull(decode.reservationHandle("25"));
         var handedToEndpoint = new AtomicBoolean();
-        assertNull(RequestLifecycleTestSupport.claimBatchWithoutPrediction(registry, item, 1L, () -> {
+        assertNull(RequestLifecycleTestSupport.claimRouteWithoutPrediction(registry, item, () -> {
             handedToEndpoint.set(true);
             return true;
         }));
-        assertNull(slot.claimDelivery(item, DeliveryClaimKind.BATCH_ENQUEUE, 1L, () -> {
+        assertNull(slot.claimDelivery(item, DeliveryClaimKind.ROUTE_DECISION, 0L, () -> {
             handedToEndpoint.set(true);
             return true;
         }));
@@ -292,7 +291,7 @@ class QueuedDecodeWithdrawalTest {
         verify(queue, never()).requeue(any());
 
         registry.publishRoute(claim, new WorkView(System.currentTimeMillis(),
-                List.of(), List.of(), 0L), 30_000L);
+                List.of(), 0L), 30_000L);
 
         assertTrue(item.future().get(2, TimeUnit.SECONDS).isSuccess());
         verify(queue, never()).requeue(any());
@@ -304,7 +303,7 @@ class QueuedDecodeWithdrawalTest {
             registry.applyDecodeRetirementReservation(decode, publishing.decodeReservation());
             registry.applyDecodeRetirementReservation(decode, publishing.decodeReservation());
             assertNull(registry.requestSlot("27").claimDelivery(publishing,
-                    DeliveryClaimKind.BATCH_ENQUEUE, 1L, () -> {
+                    DeliveryClaimKind.ROUTE_DECISION, 0L, () -> {
                         throw new AssertionError("retired Decode must not receive the route");
                     }));
             verify(queue, never()).requeue(any());
@@ -375,7 +374,7 @@ class QueuedDecodeWithdrawalTest {
     }
 
     @Test
-    void prefillBatchRetirementRequeuesInsteadOfPublishingFailure() {
+    void prefillRetirementRequeuesInsteadOfPublishingFailure() {
         var item = queued(34);
         var failure = PrefillAdmissionResources.rejectedPrefill(item, ReservationResult.Status.ENDPOINT_RETIRED, null);
         assertFalse(failure.accepted());
@@ -388,10 +387,13 @@ class QueuedDecodeWithdrawalTest {
     @Test
     void decodeRetirementAfterDeliveryHandoffDoesNotRequeue() throws Exception {
         var item = queued(31);
-        assertNotNull(registry.requestSlot("31").claimDelivery(item, DeliveryClaimKind.BATCH_ENQUEUE, 1L, () -> true));
+        var claim = registry.requestSlot("31").claimDelivery(item, DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true);
+        assertNotNull(claim);
         registry.applyDecodeRetirementReservation(decode, item.decodeReservation());
+        assertFalse(item.future().isDone());
+        registry.publishRoute(claim, new WorkView(System.currentTimeMillis(), List.of(), 0L), 30_000L);
+        item.future().get(2, TimeUnit.SECONDS);
         verify(queue, never()).requeue(any());
-        assertFalse(item.future().get(2, TimeUnit.SECONDS).isSuccess());
     }
 
     @Test

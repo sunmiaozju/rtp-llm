@@ -37,8 +37,12 @@ public final class FlexlbConfigValidator {
 
         JsonNode dispatcher = document.path("dispatcher");
         if (dispatcher.isObject()) {
+            if ("BATCH".equals(dispatcher.path("type").asText())) {
+                throw new ConfigValidationException("dispatcher.type",
+                        "BATCH is no longer supported; use NON_BATCH or NON_BATCH_V2");
+            }
             rejectFieldsExcept(dispatcher, "dispatcher", "type", "maxInflightPerPrefillWorker",
-                    "maxInflightPerEncoderWorker", "fetchAttachTimeoutMs", "prefillSubqueueLimitMultiplier",
+                    "maxInflightPerEncoderWorker", "prefillSubqueueLimitMultiplier",
                     "dispatchStarvationThresholdMs", "cacheMatchResultTtlMs", "decodeQueueThreads",
                     "mainQueueConsumerThreads", "requestPrepareThreads", "requestPrepareMaxThreads");
         }

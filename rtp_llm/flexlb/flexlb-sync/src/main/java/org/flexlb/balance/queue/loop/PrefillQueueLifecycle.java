@@ -308,8 +308,6 @@ public final class PrefillQueueLifecycle {
         }
         if (item != null) {
             prefillEndpoint.reportSubQueueResidence(item);
-        }
-        if (item != null && prefillEndpoint.isEngineSubQueueMode()) {
             capacityBlockedHead.signalCapacityAvailable();
         }
         return item;

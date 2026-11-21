@@ -7,7 +7,6 @@ import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.scheduler.DefaultBatchDispatcher;
 import org.flexlb.balance.scheduler.DefaultRouter;
 import org.flexlb.balance.scheduler.PlacementKey;
 import org.flexlb.balance.scheduler.RequestScheduler;
@@ -66,7 +65,6 @@ import static org.mockito.Mockito.withSettings;
  * <p>Architecture:
  * <pre>
  * Real RequestScheduler (test-only composition root)
- *   ├── Real DefaultBatchDispatcher
  *   │     └── Real EngineGrpcClient (real Netty channels)
  *   │           ↕  real gRPC (Netty)
  *   │     MockPrefillWorker (gRPC server, no model)
@@ -89,7 +87,6 @@ public abstract class FlexLBMockTestBase {
     protected ConfigService configService;
     protected DefaultRouter router;
     protected EngineGrpcClient grpcClient;
-    protected DefaultBatchDispatcher dispatcher;
     protected BatchSchedulerReporter reporter;
     protected WorkerDirectory engineWorkerStatus;
     private RequestSchedulerTestRuntime schedulerRuntime;
@@ -166,9 +163,6 @@ public abstract class FlexLBMockTestBase {
                 mock(CacheMatchConfiguration.class),
                 enqueueTimeoutMillis());
 
-        // 4. Create real dispatcher
-        dispatcher = createDispatcher();
-
         // 5. Reporter (metrics no-op by default)
         reporter = createBatchSchedulerReporter();
 
@@ -177,7 +171,6 @@ public abstract class FlexLBMockTestBase {
         // exist, matching production's constructor graph without reopening it.
         schedulerRuntime = new RequestSchedulerTestRuntime(
                 configService,
-                dispatcher::tryPrepareSubmission,
                 reporter,
                 createRequestSchedulerReporter());
         endpointRegistry = schedulerRuntime.endpointRegistry();
@@ -219,12 +212,9 @@ public abstract class FlexLBMockTestBase {
 
     @AfterEach
     public void tearDownBase() {
-        // Stop scheduler-owned work before tearing down its dispatcher or workers.
+        // Drain scheduler-owned work before stopping workers.
         if (schedulerRuntime != null) {
             schedulerRuntime.close();
-        }
-        if (dispatcher != null) {
-            dispatcher.shutdown();
         }
 
         // Stop additional prefill workers started by tests.
@@ -306,11 +296,6 @@ public abstract class FlexLBMockTestBase {
 
     protected RequestSchedulerReporter createRequestSchedulerReporter() {
         return mock(RequestSchedulerReporter.class);
-    }
-
-    /** Override when an integration fixture needs deterministic dispatcher sizing. */
-    protected DefaultBatchDispatcher createDispatcher() {
-        return new DefaultBatchDispatcher(grpcClient, configService, NoOpFlexMonitor.getInstance());
     }
 
     protected org.flexlb.balance.scheduler.RequestRegistry requestRegistry() {

@@ -94,7 +94,6 @@ final class RequestCompletionPublisher implements AutoCloseable {
 
     private static final int DEFAULT_PUBLISHER_WORKERS = 8;
 
-    private final org.flexlb.service.monitor.BatchSchedulerReporter reporter;
     private final ThreadPoolExecutor executor;
     private final Object lifecycleMonitor = new Object();
     private final ThreadLocal<ArrayDeque<Runnable>> localDrain =
@@ -105,8 +104,7 @@ final class RequestCompletionPublisher implements AutoCloseable {
     private int inFlightPublications;
     private Throwable closeFailure;
 
-    RequestCompletionPublisher(int configuredWorkers, org.flexlb.service.monitor.BatchSchedulerReporter reporter) {
-        this.reporter = reporter;
+    RequestCompletionPublisher(int configuredWorkers) {
         int workers = configuredWorkers > 0
                 ? configuredWorkers : DEFAULT_PUBLISHER_WORKERS;
         AtomicInteger workerSequence = new AtomicInteger();
@@ -175,17 +173,6 @@ final class RequestCompletionPublisher implements AutoCloseable {
             if (delivery.requestDeadline() != null) { expirationTimer.cancel(delivery.requestDeadline()); }
         } catch (Throwable failure) {
             Logger.error("Delivery deadline cancellation failed request_id={}", delivery.item().requestId(), failure);
-        }
-        try {
-            if (delivery.batchEnqueueStartedAtMs() > 0L && delivery.item().ctx().getAckAtMs() > 0L) {
-                reporter.reportDispatchAckTimeMs(org.flexlb.dao.route.RoleType.PREFILL.name(),
-                        delivery.item().prefillEp() == null
-                                ? ""
-                                : delivery.item().prefillEp().getStatus().getMetricIpPort(),
-                        Math.max(0L, delivery.item().ctx().getAckAtMs() - delivery.batchEnqueueStartedAtMs()));
-            }
-        } catch (Throwable failure) {
-            Logger.error("Delivery ACK reporting failed request_id={}", delivery.item().requestId(), failure);
         }
         submit(delivery.publication().slot().selectPublication(delivery.publication(),
                 RequestCompletionPublisher.ResponseCompletion.RESPONSE, delivery.response(), null, false));

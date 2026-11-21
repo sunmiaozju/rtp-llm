@@ -1,7 +1,6 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EncoderEndpoint;
 import org.flexlb.balance.scheduler.RequestLifecycleTestSupport.Registered;
@@ -58,7 +57,7 @@ class RequestRegistryTest {
 
     @BeforeEach
     void setUp() {
-        config = SchedulingTestConfig.batchConfig();
+        config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.usePriorityQueue(config);
         ConfigService configService = mock(ConfigService.class);
         when(configService.loadBalanceConfig()).thenReturn(config);
@@ -761,8 +760,11 @@ class RequestRegistryTest {
         Registered registered = registerItem(703L);
         assertEquals(PlacementResult.Status.SUCCESS, commitRoute(lifecycle, registered));
         RequestSlot old = lifecycle.requestSlot("703");
-        DeliveryClaim delivery = RequestLifecycleTestSupport.claimBatchWithoutPrediction(lifecycle, registered.item(), 17L, () -> true);
+        DeliveryClaim delivery = RequestLifecycleTestSupport.claimRouteWithoutPrediction(lifecycle, registered.item(), () -> true);
         assertNotNull(delivery);
+        synchronized (old) {
+            RequestLifecycleTestSupport.markAcknowledged(old);
+        }
         PreemptionRegistration preemption = lifecycle.tryClaim("703", 1L, 19L, "victim").orElseThrow();
 
         old.expireInactiveRequest(
@@ -771,46 +773,12 @@ class RequestRegistryTest {
         assertTrue(lifecycle.removeExactTerminalRecord(old, Long.MAX_VALUE));
         CompletableFuture<Response> replacement = lifecycle.register(context(703L));
 
-        delivery.complete(org.flexlb.balance.delivery.DeliveryResult.delivered());
+        lifecycle.publishRoute(delivery, new org.flexlb.balance.estimate.WorkView(System.currentTimeMillis(), List.of(), 0L), 30_000L);
         assertFalse(preemption.completePreemption("late engine cancellation"));
         assertFalse(preemption.release());
         assertNull(old.cancelRequest(0L, CancelReason.CLIENT_CANCELLED));
         assertFalse(replacement.isDone());
         assertEquals(RequestState.Phase.QUEUED, lifecycle.getRequestState("703", 0L).state());
-    }
-
-    @Test
-    void invalidBatchIdentityCannotTransferEndpointOwnership() {
-        Registered registered = registerItem(704L);
-        assertEquals(PlacementResult.Status.SUCCESS, commitRoute(lifecycle, registered));
-        var transaction = mock(BatchDeliveryStrategy.BatchTransaction.class);
-        when(transaction.batchId()).thenReturn(0L);
-
-        assertThrows(IllegalArgumentException.class,
-                () -> lifecycle.claimBatchDelivery(registered.item(), transaction));
-
-        org.mockito.Mockito.verify(transaction, org.mockito.Mockito.never()).transferToEndpoint(registered.item());
-        assertEquals(RequestState.Phase.QUEUED, lifecycle.getRequestState("704", 0L).state());
-        assertFalse(registered.future().isDone());
-    }
-
-    @Test
-    void invalidResultDoesNotConsumeDeliveryAndDuplicateResultCannotChangeItsOutcome() throws Exception {
-        Registered registered = registerItem(705L);
-        assertEquals(PlacementResult.Status.SUCCESS, commitRoute(lifecycle, registered));
-        DeliveryClaim claim = RequestLifecycleTestSupport.claimBatch(lifecycle, registered.item(), 23L, () -> true);
-        assertNotNull(claim);
-
-        assertThrows(NullPointerException.class, () -> claim.complete(null));
-        assertEquals(RequestState.Phase.DISPATCHING, lifecycle.getRequestState("705", 23L).state());
-        claim.complete(org.flexlb.balance.delivery.DeliveryResult.delivered());
-        assertTrue(registered.future().get(5, TimeUnit.SECONDS).isSuccess());
-        assertThrows(IllegalStateException.class, () -> claim.complete(
-                org.flexlb.balance.delivery.DeliveryResult.notSent(new IllegalStateException("duplicate failure"))));
-
-        assertEquals(RequestState.Phase.ACKNOWLEDGED, lifecycle.getRequestState("705", 23L).state());
-        org.mockito.Mockito.verify(registered.item().decodeEp(), org.mockito.Mockito.never())
-                .release(registered.item().decodeReservation(), DecodeEndpoint.ReleaseReason.NOT_SENT);
     }
 
     private WeakReference<BalanceContext> cancelAndReferenceContext(long requestId) {

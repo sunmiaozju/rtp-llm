@@ -39,6 +39,7 @@ class PriorityLatencyE2ETest {
         try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT, 1, 1, "5", 1.0, false)) {
             // hold：批次上限大于总量 + 长 fixedWait → 零派发，队列稳定吸收提交
             h.fixedWindowDecision().setMaxRequests(200);
+            h.config.getDispatcher().setPrefillSubqueueLimitMultiplier(200);
             h.fixedWindowDecision().setMaxCollectionWaitMs(10_000);
             // This case measures Prefill priority ordering, not Decode KV
             // admission. Use the large fixture KV pool without a percentage
@@ -57,7 +58,7 @@ class PriorityLatencyE2ETest {
                     long requestId = rid++;
                     submitNanos.put(requestId, System.nanoTime());
                     priorityByRid.put(requestId, priority);
-                    futures.add(h.scheduler.submit(h.context(String.valueOf(requestId), priority)));
+                    futures.add(h.submitAndGenerate(h.context(String.valueOf(requestId), priority)));
                 }
             }
             int total = PER_PRIORITY * PRIORITIES.length;

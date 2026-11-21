@@ -5,9 +5,6 @@ import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.endpoint.prefill.CommitResult;
 import org.flexlb.balance.endpoint.prefill.ReservationResult;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
-import org.flexlb.balance.estimate.WorkView;
-import org.flexlb.balance.prediction.PrefillTimePredictor;
 import org.flexlb.balance.scheduler.RequestSlot.DeliveryClaim;
 import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
@@ -39,7 +36,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 import java.util.HashMap;
@@ -53,17 +49,13 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,7 +73,7 @@ class PrefillEndpointTest {
         WorkerStatus status = EndpointTestSupport.workerStatus(
                 RoleType.PREFILL, "127.0.0.1", 8080, 8090);
 
-        config = org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig();
+        config = org.flexlb.balance.scheduler.SchedulingTestConfig.routeConfig();
         configureBatch(config, config.fixedWindowDecision().getMaxRequests(), 300, null);
         setFormula(config, "10 + 0.1*sum(computeTokens) + 5*batchSize");
 
@@ -293,369 +285,12 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void commitBatchIncreasesInflightCount() {
-        assertEquals(0, endpoint.getInflightBatchCount());
-
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(1, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void releaseBatchDecreasesInflightCount() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-        assertTrue(endpoint.releaseCommittedItem(item));
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0,
-                endpoint.captureLoadView().work().batches().size());
-    }
-
-    @Test
-    void expireBatchMemberReleasesOnlyItsExactOwnership() {
-        ScheduledRequest first = createScheduledRequest(101L, 500, 200);
-        ScheduledRequest sibling = createScheduledRequest(102L, 300, 100);
-        registerBatch(endpoint, 7L, 100, List.of(first, sibling));
-        assertEquals(2, endpoint.getCommittedRequestCount());
-        assertEquals(1, endpoint.getInflightBatchCount());
-
-        assertTrue(endpoint.expireCommittedItem(first));
-        assertFalse(endpoint.expireCommittedItem(first));
-        assertEquals(1, endpoint.getCommittedRequestCount());
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-        assertEquals(1, endpoint.captureLoadView().work().batches().size());
-
-        assertTrue(endpoint.expireCommittedItem(sibling));
-        assertFalse(endpoint.expireCommittedItem(sibling));
-        assertEquals(0, endpoint.getCommittedRequestCount());
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.captureLoadView().work().batches().size());
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void staleExpirationCannotReleaseReusedRequestId() {
-        ScheduledRequest original = createScheduledRequest(101L, 500, 200);
-        registerBatch(endpoint, 7L, 100, List.of(original));
-        assertTrue(endpoint.expireCommittedItem(original));
-
-        ScheduledRequest replacement = createScheduledRequest(101L, 300, 100);
-        registerBatch(endpoint, 8L, 100, List.of(replacement));
-        assertFalse(endpoint.expireCommittedItem(original));
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-        assertTrue(endpoint.expireCommittedItem(replacement));
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void commitMultipleBatches() {
-        ScheduledRequest item1 = createScheduledRequest(1L, 500, 200);
-        ScheduledRequest item2 = createScheduledRequest(2L, 300, 100);
-        ScheduledRequest item3 = createScheduledRequest(3L, 400, 0);
-
-        registerBatch(endpoint, 1L, 100, List.of(item1, item2));
-        registerBatch(endpoint, 2L, 50, List.of(item3));
-
-        assertEquals(2, endpoint.getInflightBatchCount());
-        assertEquals(3, endpoint.observedRequestCount());
-    }
-
-    // ---- repack batch ----
-
-    @ParameterizedTest
-    @CsvSource({"false", "true"})
-    void localMemberCleanupPreservesBatchPrediction(boolean expiration) {
-        ScheduledRequest item1 = createScheduledRequest(1L, 500, 200);
-        ScheduledRequest item2 = createScheduledRequest(2L, 300, 100);
-        registerBatch(endpoint, 1L, 100, List.of(item1, item2));
-
-        assertTrue(expiration ? endpoint.expireCommittedItem(item2) : endpoint.releaseCommittedItem(item2));
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(1, endpoint.observedRequestCount());
-        WorkView remaining = endpoint.captureLoadView().work();
-        assertFalse(remaining.hasUnknownWork());
-        assertEquals(100L, remaining.totalRemainingWorkMs().orElseThrow());
-    }
-
-    @Test
-    void repackBatchAllFailedReturnsNull() {
-        ScheduledRequest item1 = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item1));
-
-        assertTrue(endpoint.releaseCommittedItem(item1));
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0,
-                endpoint.captureLoadView().work().batches().size());
-    }
-
-    @ParameterizedTest
-    @CsvSource({"-1", "-0.1", "0/0", "1/0"})
-    void invalidRepackPredictionUsesDefaultFormula(String formula) {
-        PrefillEndpoint invalidPredictorEndpoint = newEndpointWithFormula(formula);
-        try {
-            ScheduledRequest survivor = createScheduledRequest(
-                    invalidPredictorEndpoint, 1L, 500L, 200L);
-            ScheduledRequest failed = createScheduledRequest(
-                    invalidPredictorEndpoint, 2L, 300L, 100L);
-            registerBatch(
-                    invalidPredictorEndpoint,
-                    1L,
-                    100L,
-                    List.of(survivor, failed));
-
-            assertDoesNotThrow(() -> reportRejectedBatchMember(
-                    invalidPredictorEndpoint, 1L, 2L));
-
-            WorkView snapshot = invalidPredictorEndpoint
-                    .captureLoadView().work();
-            assertEquals(1, invalidPredictorEndpoint.observedRequestCount(),
-                    "membership settlement must not depend on prediction");
-            assertEquals(List.of("1"), snapshot.batches().getFirst().requestIds());
-            assertEquals(360L, snapshot.batches().getFirst().remainingWorkMs().orElseThrow());
-            assertFalse(snapshot.hasUnknownWork());
-            assertEquals(360L, invalidPredictorEndpoint.getLoadMetric().orElseThrow());
-
-            reportSuccessfulBatchMember(
-                    invalidPredictorEndpoint, 1L, 1L, 40L);
-            assertEquals(0, invalidPredictorEndpoint.getInflightBatchCount(),
-                    "fallback prediction must not block later lifecycle settlement");
-            assertEquals(0, invalidPredictorEndpoint.observedRequestCount());
-        } finally {
-            invalidPredictorEndpoint.close();
-        }
-    }
-
-    @Test
-    void throwingRepackPredictorUsesDefaultFormula() throws Exception {
-        ScheduledRequest survivor = createScheduledRequest(1L, 500L, 200L);
-        ScheduledRequest finished = createScheduledRequest(2L, 300L, 100L);
-        registerBatch(endpoint, 1L, 100L, List.of(survivor, finished));
-        PrefillTimePredictor failingPredictor = mock(PrefillTimePredictor.class);
-        org.mockito.Mockito.when(failingPredictor.evaluator()).thenThrow(new IllegalStateException("broken predictor"));
-        var field = PrefillEndpoint.class.getDeclaredField("predictor");
-        field.setAccessible(true);
-        field.set(endpoint, failingPredictor);
-
-        assertDoesNotThrow(() -> reportRejectedBatchMember(endpoint, 1L, 2L));
-        assertEquals(360L, endpoint.captureLoadView().work().totalRemainingWorkMs().orElseThrow());
-        assertEquals(1L, endpoint.observedRequestCount());
-        assertTrue(endpoint.releaseCommittedItem(survivor));
-        assertEquals(0L, endpoint.observedRequestCount());
-        assertEquals(0L, endpoint.getInflightBatchCount());
-    }
-
-    @ParameterizedTest
-    @CsvSource({"500,600,15", "500,-1,65", "-1,20,15"})
-    void repackNormalizesInvalidFeatures(long seqLen, long hitCache, long expectedMs) {
-        ScheduledRequest survivor = org.mockito.Mockito.spy(createScheduledRequest(1L, 500L, 200L));
-        ScheduledRequest finished = createScheduledRequest(2L, 300L, 100L);
-        registerBatch(endpoint, 1L, 100L, List.of(survivor, finished));
-        org.mockito.Mockito.doReturn(seqLen).when(survivor).seqLen();
-        org.mockito.Mockito.doReturn(hitCache).when(survivor).hitCache();
-
-        assertDoesNotThrow(() -> reportRejectedBatchMember(endpoint, 1L, 2L));
-        assertEquals(expectedMs, endpoint.captureLoadView().work().totalRemainingWorkMs().orElseThrow());
-        assertTrue(endpoint.releaseCommittedItem(survivor));
-        assertEquals(0L, endpoint.observedRequestCount());
-    }
-
-    // ---- calibrate ----
-
-    @Test
-    void calibrateRemovesBatchOnSuccess() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
-        TaskInfoPB.Builder successTask = TaskInfoPB.newBuilder();
-        successTask.setRequestIdStr("1");
-        successTask.setBatchId(1L);
-        finished.put("1", successTask);
-
-        calibrate(finished, Map.of());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void completion_observer_failure_does_not_escape_finished_settlement() {
-        registerBatch(endpoint, 9L, 100, List.of(createScheduledRequest(9L, 500, 200)));
-        doThrow(new IllegalStateException("metrics unavailable"))
-                .when(endpointReporter)
-                .reportBatchPredictedTimeMs("PREFILL", "127.0.0.1:8080", 100);
-
-        TaskInfoPB.Builder finished = taskInfo(9L, 9L, null, 0, 125);
-        assertDoesNotThrow(() -> calibrate(Map.of("9", finished), Map.of()));
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-        verify(endpointReporter).reportBatchActualTimeMs("PREFILL", "127.0.0.1:8080", 125);
-        verify(endpointReporter).reportBatchPredictGapMs("PREFILL", "127.0.0.1:8080", 25);
-    }
-
-    @Test
-    void calibrateRepacksOnPartialFailure() {
-        ScheduledRequest item1 = createScheduledRequest(1L, 500, 200);
-        ScheduledRequest item2 = createScheduledRequest(2L, 300, 100);
-        registerBatch(endpoint, 1L, 100, List.of(item1, item2));
-
-        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
-        TaskInfoPB.Builder failedTask = TaskInfoPB.newBuilder();
-        failedTask.setRequestIdStr("2");
-        failedTask.setBatchId(1L);
-        failedTask.getErrorInfoBuilder().setErrorCode(500);
-        failedTask.getErrorInfoBuilder().setErrorMessage("engine error");
-        finished.put("2", failedTask);
-
-        calibrate(finished, Map.of());
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void calibrateKeepsBatchInflightUntilEveryMemberFinishes() {
-        ScheduledRequest shortItem = createScheduledRequest(1L, 500, 200);
-        ScheduledRequest longItem = createScheduledRequest(2L, 10_000, 0);
-        registerBatch(endpoint, 1L, 2_000, List.of(shortItem, longItem));
-
-        TaskInfoPB.Builder finishedShort = taskInfo(1L, 1L, null, 0, 40);
-        TaskInfoPB.Builder runningLong = taskInfo(2L, 1L, TaskPhase.RUNNING, 0, 0);
-        calibrate(Map.of("1", finishedShort), Map.of("2", runningLong));
-
-        assertEquals(1, endpoint.getInflightBatchCount(),
-                "one finished member must not release the whole batch");
-        assertEquals(1, endpoint.observedRequestCount(),
-                "the still-running long member must remain in Master accounting");
-
-        TaskInfoPB.Builder finishedLong = taskInfo(2L, 1L, null, 0, 1_900);
-        calibrate(Map.of("2", finishedLong), Map.of());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void calibrateMixedTerminalMembersKeepsOnlyRunningSurvivor() {
-        ScheduledRequest succeeded = createScheduledRequest(1L, 500, 200);
-        ScheduledRequest failed = createScheduledRequest(2L, 300, 100);
-        ScheduledRequest running = createScheduledRequest(3L, 10_000, 0);
-        registerBatch(endpoint, 1L, 2_000, List.of(succeeded, failed, running));
-
-        TaskInfoPB.Builder success = taskInfo(1L, 1L, null, 0, 40);
-        TaskInfoPB.Builder failure = taskInfo(2L, 1L, null, 500, 50);
-        TaskInfoPB.Builder runningTask = taskInfo(3L, 1L, TaskPhase.RUNNING, 0, 0);
-        calibrate(Map.of("1", success, "2", failure), Map.of("3", runningTask));
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-
-        // WorkerStatus may repeat a terminal observation in adjacent snapshots.
-        // Repeating it must not decrement the survivor count again.
-        calibrate(Map.of("1", success), Map.of("3", runningTask));
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void calibrateAllFailuresClearsBatchIdempotentlyWithoutCompletionMetrics() {
-        registerBatch(endpoint, 1L, 2_000, List.of(
-                createScheduledRequest(1L, 500, 200),
-                createScheduledRequest(2L, 10_000, 0)));
-
-        TaskInfoPB.Builder firstFailure = taskInfo(1L, 1L, null, 500, 40);
-        TaskInfoPB.Builder secondFailure = taskInfo(2L, 1L, null, 501, 50);
-        calibrate(Map.of("1", firstFailure, "2", secondFailure), Map.of());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-        verify(endpointReporter, never()).reportBatchPredictedTimeMs(
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
-
-        calibrate(Map.of("1", firstFailure, "2", secondFailure), Map.of());
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount(),
-                "repeated failure deltas must not decrement the ledger twice");
-    }
-
-    @Test
-    void repeatedSuccessfulTerminalReportsCompletionExactlyOnce() {
-        registerBatch(endpoint, 1L, 100, List.of(createScheduledRequest(1L, 500, 200)));
-        TaskInfoPB.Builder success = taskInfo(1L, 1L, null, 0, 40);
-
-        calibrate(Map.of("1", success), Map.of());
-        calibrate(Map.of("1", success), Map.of());
-
-        assertEquals(0, endpoint.observedRequestCount());
-        verify(endpointReporter).reportBatchPredictedTimeMs(
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
-        verify(endpointReporter).reportBatchActualTimeMs(
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
-        verify(endpointReporter).reportBatchPredictGapMs(
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
-    }
-
-    @Test
-    void batchInflightReanchorsAcrossRunningQueuedRunning() {
-        registerBatch(endpoint, 1L, 5_000,
-                List.of(createScheduledRequest(1L, 500, 0)));
-        assertEquals(WorkView.Phase.COMMITTED,
-                onlyBatchWork(endpoint).phase());
-
-        calibrate(Map.of(), Map.of(
-                "1", taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0)));
-        assertEquals(WorkView.Phase.ENGINE_RUNNING,
-                onlyBatchWork(endpoint).phase());
-
-        calibrate(Map.of(), Map.of(
-                "1", taskInfo(1L, 1L, TaskPhase.PENDING, 0, 0)));
-        assertEquals(WorkView.Phase.ENGINE_QUEUED,
-                onlyBatchWork(endpoint).phase());
-
-        calibrate(Map.of(), Map.of(
-                "1", taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0)));
-        assertEquals(WorkView.Phase.ENGINE_RUNNING,
-                onlyBatchWork(endpoint).phase());
-    }
-
-    @Test
-    void batchInflightMaxAgeMeasuresTimeSinceLatestActivity()
-            throws InterruptedException {
-        // The refactor unified inflight age tracking onto a single
-        // last-observation clock. A recent Engine observation both keeps the
-        // canonical owner alive (eviction) and resets the reported max age; the
-        // age then grows with the time elapsed since that last observation.
-        registerBatch(endpoint, 1L, 5_000,
-                List.of(createScheduledRequest(1L, 500, 0)));
-        Thread.sleep(20);
-        calibrate(Map.of(), Map.of(
-                "1", taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0)));
-
-        assertEquals(0, endpoint.evictExpiredBatches(5),
-                "recent Engine activity keeps the canonical owner live");
-        Thread.sleep(15);
-        endpoint.reportBatchMetrics(endpointReporter);
-        verify(endpointReporter).reportInflightMaxAgeMs(
-                anyString(), anyString(),
-                org.mockito.ArgumentMatchers.longThat(age -> age >= 10));
-    }
-
-    @Test
     void inflightMaxAgeMetricTracksTimeSinceLatestObservation()
             throws InterruptedException {
         // Reported max age measures staleness (time since the batch was last
         // observed), not wall-clock time since creation: a fresh RUNNING
         // observation resets it, after which it grows with elapsed idle time.
-        registerBatch(endpoint, 1L, 5_000, List.of(createScheduledRequest(1L, 500, 0)));
+        commitQueuedRoute(endpoint, 1L, 5_000L);
         calibrate(Map.of(), Map.of(
                 "1", taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0)));
         Thread.sleep(30);
@@ -667,86 +302,8 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void runningObservationRefreshesBatchInactivityTtl() throws InterruptedException {
-        ScheduledRequest longItem = createScheduledRequest(1L, 10_000, 0);
-        registerBatch(endpoint, 1L, 2_000, List.of(longItem));
-
-        Thread.sleep(150);
-        TaskInfoPB.Builder running = taskInfo(1L, 1L, TaskPhase.RUNNING, 0, 0);
-        calibrate(Map.of(), Map.of("1", running));
-
-        assertEquals(0, endpoint.evictExpiredBatches(100),
-                "an actively observed long-running batch must not be evicted by creation age");
-        assertEquals(1, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void foreignRunningObservationDoesNotRefreshBatchInactivityTtl() throws InterruptedException {
-        registerBatch(endpoint, 1L, 2_000, List.of(createScheduledRequest(1L, 10_000, 0)));
-        Thread.sleep(10);
-
-        TaskInfoPB.Builder foreign = taskInfo(999L, 1L, TaskPhase.RUNNING, 0, 0);
-        calibrate(Map.of(), Map.of("999", foreign));
-
-        assertEquals(1, endpoint.evictExpiredBatches(1));
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void partialCompletionKeepsFixedWindowMaxInflightGateClosed() throws Exception {
-        ScheduledRequest shortItem = createScheduledRequest(101L, 500, 200);
-        ScheduledRequest longItem = createScheduledRequest(102L, 10_000, 0);
-        registerBatch(endpoint, 700L, 2_000,
-                List.of(shortItem, longItem));
-        assertFalse(endpoint.batchAdmissionAvailability(1).isAvailable());
-
-        calibrate(
-                Map.of("101", taskInfo(101L, 700L, null, 0, 40)),
-                Map.of("102", taskInfo(
-                        102L, 700L, TaskPhase.RUNNING, 0, 0)));
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertFalse(endpoint.batchAdmissionAvailability(1).isAvailable(),
-                "a short member finishing must not reopen maxInflight=1 while its long sibling runs");
-
-        calibrate(
-                Map.of("102", taskInfo(102L, 700L, null, 0, 1_900)),
-                Map.of());
-
-        assertTrue(endpoint.batchAdmissionAvailability(1).isAvailable(),
-                "the final member must reopen the exact batch availability source");
-    }
-
-    @Test
-    void calibrateHandlesTaskWithNoBatchId() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
-        TaskInfoPB.Builder badTask = TaskInfoPB.newBuilder();
-        badTask.setRequestIdStr("999"); // non-colliding: won't match batchId=1
-        badTask.setBatchId(-1);
-        finished.put("1", badTask);
-
-        // should not throw, just log a warning for missing non-batch inflight
-        calibrate(finished, Map.of());
-        assertEquals(1, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void calibrateMissingBatchIdDoesNotRetireRealBatchMember() {
-        registerBatch(endpoint, 700L, 100, List.of(createScheduledRequest(101L, 500, 200)));
-
-        calibrate(Map.of("101", priorityCanceledTask(101L, -1L)), Map.of());
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-    }
-
-    @Test
     void calibrateMissingBatchIdRemovesDirectRequestLedgerEntry() {
         commitQueuedRoute(endpoint, 101L, 100L);
-        assertEquals(0, endpoint.getInflightBatchCount());
         assertEquals(1, endpoint.getSingleRequestCount());
 
         TaskInfoPB.Builder finished = TaskInfoPB.newBuilder();
@@ -759,325 +316,13 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void calibrateMissingBatchIdLeavesMembersUntilExactBatchTerminal() {
-        registerBatch(endpoint, 700L, 100, List.of(
-                createScheduledRequest(101L, 500, 200),
-                createScheduledRequest(102L, 300, 100)));
-
-        calibrate(Map.of("101", priorityCanceledTask(101L, -1L)), Map.of());
-
-        // A missing-batch-id terminal cannot be attributed to the batch, so no
-        // member is retired: both members remain committed.
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(2, endpoint.observedRequestCount(),
-                "a terminal without a valid batch id retires no batch member");
-
-        TaskInfoPB.Builder survivingSuccess = TaskInfoPB.newBuilder();
-        survivingSuccess.setRequestIdStr("102");
-        survivingSuccess.setBatchId(700L);
-        calibrate(Map.of("102", survivingSuccess), Map.of());
-        // The exact-batch terminal retires only its own member; member 101,
-        // whose only terminal named no batch id, stays with the original batch.
-        assertEquals(1, endpoint.getInflightBatchCount(),
-                "the exact-batch terminal retires only its own member");
-        assertEquals(1, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void directRequestIdMatchingQueueBatchIdDoesNotOverwriteEitherLifecycle() {
-        // DIRECT request 101 and QUEUE batch 101 live in different ledgers.
-        // Completing the DIRECT request must not erase QUEUE member 201.
-        registerBatch(endpoint, 101L, 100, List.of(createScheduledRequest(201L, 500, 200)));
-        commitQueuedRoute(endpoint, 101L, 100L);
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(1, endpoint.getSingleRequestCount());
-
-        calibrate(Map.of("101", priorityCanceledTask(101L, -1L)), Map.of());
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(0, endpoint.getSingleRequestCount());
-        assertEquals(1, endpoint.observedRequestCount());
-
-        TaskInfoPB.Builder foreignBatchMemberSuccess = TaskInfoPB.newBuilder();
-        foreignBatchMemberSuccess.setRequestIdStr("201");
-        foreignBatchMemberSuccess.setBatchId(101L);
-        calibrate(Map.of("201", foreignBatchMemberSuccess), Map.of());
-        assertEquals(0, endpoint.getInflightBatchCount(),
-                "the matching QUEUE batch id must survive until its own member finishes");
-        assertEquals(0,
-                endpoint.captureLoadView().work().batches().size());
-    }
-
-    @Test
-    void calibrateMissingBatchIdDoesNotGuessAcrossDuplicateLiveBatches() {
-        ScheduledRequest first = createScheduledRequest(101L, 500, 200);
-        ScheduledRequest reusedRequestId = createScheduledRequest(101L, 300, 100);
-        registerBatch(endpoint, 700L, 100, List.of(first));
-
-        ReservationResult<BatchReservation> duplicate = endpoint.reserveBatch(reusedRequestId, 701L, 10);
-
-        assertFalse(duplicate.status() == ReservationResult.Status.SUCCESS,
-                "the canonical ledger rejects ambiguous duplicate live owners");
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(1, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void calibrateMissingBatchIdPreservesExactBatchMember() {
-        ScheduledRequest firstItem = createScheduledRequest(101L, 500, 200);
-        ScheduledRequest sibling = createScheduledRequest(102L, 300, 100);
-        registerBatch(endpoint, 700L, 100,
-                List.of(firstItem, sibling));
-
-        calibrate(Map.of("102", priorityCanceledTask(102L, -1L)), Map.of());
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(2, endpoint.observedRequestCount());
-
-        TaskInfoPB.Builder canceled = priorityCanceledTask(101L, -1L);
-        calibrate(Map.of("101", canceled), Map.of());
-        assertEquals(1, endpoint.getInflightBatchCount(),
-                "generic endpoint calibration must not bypass the exact-batch reducer");
-        assertEquals(2, endpoint.observedRequestCount());
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        assertEquals(2, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void authoritativeWorkerTerminalSettlesBatchMemberImmediately() {
-        ScheduledRequest firstItem = createScheduledRequest(101L, 500, 200);
-        registerBatch(
-                endpoint,
-                700L,
-                100,
-                List.of(firstItem));
-
-        calibrate(Map.of(
-                "101", taskInfo(101L, 700L, null, 0, 10)), Map.of());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(0, endpoint.observedRequestCount());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void authoritativeWorkerTerminalAppliesLearningImmediately() {
-        PrefillEndpoint learningEndpoint = createLearningEndpoint();
-        try {
-            PrefillTimePredictor.Evaluator initialEvaluator =
-                    learningEndpoint.getPredictor().evaluator();
-            // LearningPredictor publishes one model revision per four valid
-            // completions. Seed three unchanged samples first.
-            for (int sample = 1; sample <= 3; sample++) {
-                long batchId = 8_000L + sample;
-                long requestId = 9_000L + sample;
-                registerBatch(
-                        learningEndpoint,
-                        batchId,
-                        100L,
-                        List.of(createScheduledRequest(
-                                learningEndpoint, requestId, 500L, 200L)));
-                reportSuccessfulBatchMember(
-                        learningEndpoint, batchId, requestId, 100L + sample);
-            }
-            assertSame(initialEvaluator,
-                    learningEndpoint.getPredictor().evaluator());
-
-            long batchId = 8_004L;
-            long requestId = 9_004L;
-            ScheduledRequest firstItem = createScheduledRequest(
-                    learningEndpoint, requestId, 500L, 200L);
-            registerBatch(
-                    learningEndpoint,
-                    batchId,
-                    100L,
-                    List.of(firstItem));
-
-            reportSuccessfulBatchMember(
-                    learningEndpoint, batchId, requestId, 104L);
-            assertNotSame(initialEvaluator,
-                    learningEndpoint.getPredictor().evaluator(),
-                    "the authoritative terminal reaches predictor learning immediately");
-            assertEquals(0, learningEndpoint.getInflightBatchCount());
-
-            assertNotSame(initialEvaluator,
-                    learningEndpoint.getPredictor().evaluator());
-            assertEquals(0, learningEndpoint.getInflightBatchCount());
-        } finally {
-            learningEndpoint.close();
-        }
-    }
-
-    @Test
-    void unchangedLearningAddsNoSignalBeyondWorkerStatus() {
-        PrefillEndpoint learningEndpoint = createLearningEndpoint();
-        try {
-            PrefillTimePredictor.Evaluator initialEvaluator =
-                    learningEndpoint.getPredictor().evaluator();
-            long batchId = 8_101L;
-            long requestId = 9_101L;
-            ScheduledRequest firstItem = createScheduledRequest(
-                    learningEndpoint, requestId, 500L, 200L);
-            registerBatch(
-                    learningEndpoint,
-                    batchId,
-                    100L,
-                    List.of(firstItem));
-
-            reportSuccessfulBatchMember(
-                    learningEndpoint, batchId, requestId, 101L);
-            assertSame(initialEvaluator,
-                    learningEndpoint.getPredictor().evaluator());
-
-            assertSame(initialEvaluator,
-                    learningEndpoint.getPredictor().evaluator(),
-                    "the first sample returns MODEL_UNCHANGED");
-            assertEquals(0, learningEndpoint.getInflightBatchCount());
-        } finally {
-            learningEndpoint.close();
-        }
-    }
-
-    @Test
-    void finishedSettlementMakesLateExpirationANoOp() {
-        ScheduledRequest item = createScheduledRequest(101L, 500, 200);
-        registerBatch(
-                endpoint,
-                700L,
-                100,
-                List.of(item));
-
-        calibrate(Map.of(
-                "101", taskInfo(101L, 700L, null, 0, 10)), Map.of());
-
-        assertFalse(endpoint.expireCommittedItem(item));
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0,
-                endpoint.captureLoadView().work().batches().size());
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void missingBatchIdTerminalDoesNotReleaseFixedWindowSlot() throws Exception {
-        registerBatch(endpoint, 700L, 100,
-                List.of(createScheduledRequest(101L, 500, 200)));
-        assertFalse(endpoint.batchAdmissionAvailability(1).isAvailable(),
-                "maxInflight=1 must stay closed while the ledger is occupied");
-
-        calibrate(Map.of(
-                "101", priorityCanceledTask(101L, -1L)), Map.of());
-
-        // A terminal without a valid batch id cannot be attributed to the
-        // batch member, so the exact fixed-window slot stays occupied.
-        assertFalse(endpoint.batchAdmissionAvailability(1).isAvailable(),
-                "missing-batch-id terminal cannot release the exact slot");
-        assertEquals(1, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void calibrateDoesNotRemoveBatchWithForeignRequestId() {
-        // Commit batch with requestId=100
-        ScheduledRequest item = createScheduledRequest(100L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-        assertEquals(1, endpoint.getInflightBatchCount());
-
-        // Engine reports success for batchId=1 but with requestId=999 (foreign)
-        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
-        TaskInfoPB.Builder foreignTask = TaskInfoPB.newBuilder();
-        foreignTask.setBatchId(1L);
-        foreignTask.setRequestIdStr("999");
-        finished.put("999", foreignTask);
-
-        calibrate(finished, new HashMap<>());
-        // Batch should NOT be removed — requestId doesn't match
-        assertEquals(1, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void calibrateRemovesBatchWithMatchingRequestId() {
-        ScheduledRequest item = createScheduledRequest(100L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        Map<String, TaskInfoPB.Builder> finished = new HashMap<>();
-        TaskInfoPB.Builder task = TaskInfoPB.newBuilder();
-        task.setBatchId(1L);
-        task.setRequestIdStr("100");
-        finished.put("100", task);
-
-        calibrate(finished, new HashMap<>());
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void calibrateSuccessOnlyRetiresSiblingWhileBatchMemberReconciles() {
-        ScheduledRequest reconciling = createScheduledRequest(101L, 500, 200);
-        ScheduledRequest sibling = createScheduledRequest(102L, 300, 100);
-        registerBatch(endpoint, 7L, 100, List.of(reconciling, sibling));
-
-        TaskInfoPB.Builder siblingSuccess = TaskInfoPB.newBuilder();
-        siblingSuccess.setBatchId(7L);
-        siblingSuccess.setRequestIdStr("102");
-        calibrate(Map.of("102", siblingSuccess), Map.of());
-
-        assertEquals(1, endpoint.getInflightBatchCount(),
-                "sibling success must not erase the reconciling batch member");
-        assertEquals(1, endpoint.observedRequestCount());
-
-        TaskInfoPB.Builder ambiguousMemberSuccess = TaskInfoPB.newBuilder();
-        ambiguousMemberSuccess.setBatchId(7L);
-        ambiguousMemberSuccess.setRequestIdStr("101");
-        calibrate(Map.of("101", ambiguousMemberSuccess), Map.of());
-        assertEquals(0, endpoint.getInflightBatchCount(),
-                "an exact-batch terminal settles the remaining member");
-        assertEquals(0, endpoint.observedRequestCount());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void batchMemberFailuresSettleFromOneWorkerSnapshot() {
-        ScheduledRequest firstItem = createScheduledRequest(101L, 500, 200);
-        ScheduledRequest sibling = createScheduledRequest(102L, 300, 100);
-        registerBatch(endpoint, 7L, 100,
-                List.of(firstItem, sibling));
-
-        TaskInfoPB.Builder firstFailure = taskInfo(101L, 7L, null, 500, 40);
-        TaskInfoPB.Builder siblingFailure = taskInfo(102L, 7L, null, 501, 50);
-        calibrate(Map.of("101", firstFailure, "102", siblingFailure), Map.of());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-        verify(endpointReporter, never()).reportBatchPredictedTimeMs(
-                anyString(), anyString(), org.mockito.ArgumentMatchers.anyLong());
-
-        assertEquals(0, endpoint.observedRequestCount());
-    }
-
-    // ---- committed remaining work ----
-
-    @Test
     void committedWorkMetricIsZeroWhenIdle() {
         assertEquals(0L, endpoint.getLoadMetric().orElseThrow());
     }
 
     @Test
     void committedWorkMetricReflectsInflightPrediction() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 5000, List.of(item)); // 5s prediction
+        commitQueuedRoute(endpoint, 1L, 5_000L);
 
         long remainingWorkMs = endpoint.getLoadMetric().orElseThrow();
         assertTrue(remainingWorkMs > 0,
@@ -1088,8 +333,7 @@ class PrefillEndpointTest {
 
     @Test
     void runningCommittedWorkMetricDecreasesWithElapsedTime() throws InterruptedException {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 5000, List.of(item));
+        commitQueuedRoute(endpoint, 1L, 5_000L);
 
         long remainingBefore = endpoint.getLoadMetric().orElseThrow();
 
@@ -1112,48 +356,9 @@ class PrefillEndpointTest {
     // ---- eviction ----
 
     @Test
-    void evictExpiredBatchesCleansUpStaleEntries() throws InterruptedException {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-
-        // Wait a bit so the batch ages
-        Thread.sleep(10);
-
-        int evicted = endpoint.evictExpiredBatches(1); // 1ms TTL — should evict
-        assertEquals(1, evicted);
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void evictExpiredBatchesFreshEntriesSurvive() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        int evicted = endpoint.evictExpiredBatches(60_000); // 60s TTL — fresh entry survives
-        assertEquals(0, evicted);
-        assertEquals(1, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void expireUnobservedBatchDoesNotWaitForAnEngineReply() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(endpoint, 1L, 100, List.of(item));
-
-        assertTrue(endpoint.expireCommittedItem(item));
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.observedRequestCount());
-        assertFalse(endpoint.expireCommittedItem(item));
-    }
-
-    // ---- observedRequestCount ----
-
-    @Test
     void observedRequestCountUnionsEngineTasksWithLocalLedger() {
-        registerBatch(endpoint, 1L, 100, List.of(
-                createScheduledRequest(101L, 500, 0),
-                createScheduledRequest(102L, 500, 0)));
+        commitQueuedRoute(endpoint, 101L, 100L);
+        commitQueuedRoute(endpoint, 102L, 100L);
 
         TaskInfoPB.Builder overlapping = taskInfo(102L, 1L, TaskPhase.RUNNING, 0, 0);
         TaskInfoPB.Builder untrackedOne = taskInfo(900L, 90L, TaskPhase.RUNNING, 0, 0);
@@ -1177,7 +382,7 @@ class PrefillEndpointTest {
 
     @Test
     void observedRequestCountFallsBackToEngineQueryLengthScalars() {
-        registerBatch(endpoint, 1L, 100, List.of(createScheduledRequest(101L, 500, 0)));
+        commitQueuedRoute(endpoint, 101L, 100L);
 
         WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
         response.setWaitingQueryLen(3);
@@ -1192,7 +397,7 @@ class PrefillEndpointTest {
 
     @Test
     void observedRequestCountUsesConservativeScalarBoundForPartialTaskDetails() {
-        registerBatch(endpoint, 1L, 100, List.of(createScheduledRequest(101L, 500, 0)));
+        commitQueuedRoute(endpoint, 101L, 100L);
 
         TaskInfoPB.Builder overlapping = taskInfo(101L, 1L, TaskPhase.RUNNING, 0, 0);
         WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
@@ -1344,33 +549,6 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void batchRequestGaugesRetainTheirOriginalMeaningWithoutTheNonBatchMetric() {
-        SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        try {
-            BatchSchedulerReporter reporter = new BatchSchedulerReporter(new MicrometerFlexMonitor(registry));
-            reporter.init();
-            registerBatch(endpoint, 1L, 100L, List.of(
-                    createScheduledRequest(101L, 500, 0),
-                    createScheduledRequest(102L, 500, 0)));
-            endpoint.reportBatchMetrics(reporter);
-            assertEquals(2.0, registry.get("flexlb.app.flexlb.inflight.request.count")
-                    .tags("role", "PREFILL", "engineIp", "127.0.0.1:8080").gauge().value());
-            WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
-            WorkerStatusPBs.setRunningTasks(response, Map.of("101", taskInfo(101L, 1L, TaskPhase.RECEIVED, 0, 0)));
-            EndpointTestSupport.applyStatus(endpoint, response);
-            endpoint.reportBatchMetrics(reporter);
-
-            assertEquals(0.0, registry.get("flexlb.app.flexlb.inflight.request.count")
-                    .tags("role", "PREFILL", "engineIp", "127.0.0.1:8080").gauge().value());
-            assertNull(registry.find("flexlb.app.flexlb.worker.status.unconfirmed.request.count").gauge());
-            assertEquals(1.0, registry.get("flexlb.app.flexlb.inflight.batch.count")
-                    .tags("role", "PREFILL", "engineIp", "127.0.0.1:8080").gauge().value());
-        } finally {
-            registry.close();
-        }
-    }
-
-    @Test
     void nonBatchQueueGaugeSeparatesQueuedRequestsFromEngineOnlyWork() {
         FlexlbConfig requestConfig = org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig();
         requestConfig.setDispatcher(DispatcherConfig.nonBatch());
@@ -1493,7 +671,6 @@ class PrefillEndpointTest {
 
             verify(reporter).reportBatcherQueueSize(role.name(), "127.0.0.1:8080", 0);
             verify(reporter, never()).reportBatcherQueueDepthByPriority(any(), any(), anyInt(), anyInt());
-            verify(reporter).reportInflightBatchCount(role.name(), "127.0.0.1:8080", 0);
             verify(reporter).reportInflightRequestCount(role.name(), "127.0.0.1:8080", 0);
             verify(reporter).reportInflightMaxAgeMs(role.name(), "127.0.0.1:8080", 0L);
         } finally {
@@ -1750,28 +927,6 @@ class PrefillEndpointTest {
     }
 
     @Test
-    void closePreservesRegisteredLifecycleAndRejectsNewBatchReservations() {
-        ScheduledRequest item = createScheduledRequest(1L, 500, 200);
-        registerBatch(
-                endpoint,
-                1L,
-                100,
-                List.of(item));
-        assertEquals(1, endpoint.getInflightBatchCount());
-
-        endpoint.close();
-        assertEquals(0, endpoint.getInflightBatchCount());
-        EndpointTestSupport.PrefillRetirement retirement =
-                requestRuntime.prefillRetirements().stream()
-                        .findFirst()
-                        .orElseThrow();
-        assertTrue(retirement.ownedItems().contains(item),
-                "retirement must publish the exact canonical owner");
-        assertEquals(ReservationResult.Status.ENDPOINT_RETIRED, endpoint.reserveBatch(item, 2L, 1).status());
-        endpoint.close();
-    }
-
-    @Test
     void closeHandlesEveryCommittedRouteAcrossSchedulingModes() {
         commitQueuedRoute(endpoint, 100L, 100L);
         ScheduledRequest route = createScheduledRequest(200L, 200L, 0L);
@@ -1870,23 +1025,6 @@ class PrefillEndpointTest {
         EndpointTestSupport.applyStatus(endpoint, response);
     }
 
-    private static void reportRejectedBatchMember(PrefillEndpoint target, long batchId, long requestId) {
-        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
-        WorkerStatusPBs.setFinishedTasks(response,
-                Map.of(Long.toString(requestId), taskInfo(requestId, batchId, null, 500, 0)));
-        EndpointTestSupport.applyStatus(target, response);
-    }
-
-    private static void reportSuccessfulBatchMember(PrefillEndpoint target,
-                                                    long batchId,
-                                                    long requestId,
-                                                    long executionTimeMs) {
-        WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
-        WorkerStatusPBs.setFinishedTasks(response,
-                Map.of(Long.toString(requestId), taskInfo(requestId, batchId, null, 0, executionTimeMs)));
-        EndpointTestSupport.applyStatus(target, response);
-    }
-
     private static PrefillEndpoint createLearningEndpoint() {
         WorkerStatus status = EndpointTestSupport.workerStatus(
                 RoleType.PREFILL, "127.0.0.8", 8080, 8090);
@@ -1910,14 +1048,6 @@ class PrefillEndpointTest {
                 mock(BatchSchedulerReporter.class));
         created.startGeneration();
         return created;
-    }
-
-    private static WorkView.BatchWork onlyBatchWork(
-            PrefillEndpoint target) {
-        List<WorkView.BatchWork> batches =
-                target.captureLoadView().work().batches();
-        assertEquals(1, batches.size());
-        return batches.get(0);
     }
 
     private ScheduledRequest createScheduledRequest(long requestId, long seqLen, long hitCacheLen) {
@@ -2023,21 +1153,6 @@ class PrefillEndpointTest {
         task.getErrorInfoBuilder().setErrorCode(errorCode);
         task.setExecutionTimeMs(executionTimeMs);
         return task;
-    }
-
-    private static void registerBatch(PrefillEndpoint target,
-                                      long batchId,
-                                      long predictedMs,
-                                      List<ScheduledRequest> items) {
-        for (ScheduledRequest item : items) {
-            if (!EndpointTestSupport.offer(target, item)) {
-                throw new IllegalStateException(
-                        "test item could not be offered to the endpoint queue");
-            }
-        }
-        try (CommitResult ignored = EndpointTestSupport.commitBatch(target, batchId, predictedMs, items)) {
-            // Keep canonical ledger ownership; release only the generation pin.
-        }
     }
 
     private static void commitQueuedRoute(PrefillEndpoint target, long requestId, long predictedMs) {

@@ -1,6 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
 import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.DeliveryGroup;
 import org.flexlb.balance.delivery.DeliveryMetrics;
@@ -11,8 +10,6 @@ import org.flexlb.balance.delivery.NonBatchTransaction;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.balance.endpoint.prefill.CommitResult;
-import org.flexlb.balance.endpoint.prefill.ReservationResult;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.WorkView;
@@ -34,7 +31,6 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
-import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 
 /** Exact-capability fakes for final delivery-strategy tests. */
@@ -95,6 +91,7 @@ public final class DeliveryStrategyTestSupport {
             long seqLen,
             long hitCache) {
         ScheduledRequest item = Mockito.mock(ScheduledRequest.class);
+        Mockito.when(item.ctx()).thenReturn(new org.flexlb.dao.BalanceContext(SchedulingTestConfig.routeConfig()));
         Mockito.when(item.requestId()).thenReturn(requestId);
         Mockito.when(item.priority()).thenReturn(priority);
         Mockito.when(item.enqueuedAtMs()).thenReturn(enqueuedAtMs);
@@ -160,7 +157,7 @@ public final class DeliveryStrategyTestSupport {
 
     /** Concrete endpoint capabilities used by the real delivery transaction. */
     static final class TestEndpointCapabilities {
-        private WorkView precedingWork = new WorkView(1_000L, List.of(), List.of(), 0L);
+        private WorkView precedingWork = new WorkView(1_000L, List.of(), 0L);
         private final PrefillEndpoint prefill = Mockito.mock(PrefillEndpoint.class);
         private final PrefillEndpoint.RouteCommitAdmission routeCommit =
                 Mockito.mock(PrefillEndpoint.RouteCommitAdmission.class);
@@ -172,21 +169,15 @@ public final class DeliveryStrategyTestSupport {
         private final Map<String, ScheduledRequest> itemsByRequestId =
                 new HashMap<>();
         private final List<CommitResult> commitResults = new ArrayList<>();
-        private BatchReservation batchReservation;
         private int permitAttempt;
         private int rejectPermitAt = -1;
 
         TestEndpointCapabilities() {
-            DeliveryBlockReason.Availability unavailable = unavailable().availability();
-            Mockito.when(prefill.batchAdmissionAvailability(Mockito.anyInt()))
-                    .thenReturn(unavailable);
+            Mockito.when(prefill.canDeliver(Mockito.anyLong(), Mockito.anyInt())).thenReturn(true);
             Mockito.when(prefill.tryBeginRouteCommitAdmission())
                     .thenReturn(routeCommit);
             Mockito.when(routeCommit.commit(Mockito.anyList(), Mockito.anyList()))
                     .thenAnswer(invocation -> commitResults(1).getFirst());
-            Mockito.when(prefill.reserveBatch(
-                            Mockito.any(), Mockito.anyLong(), Mockito.anyInt()))
-                    .thenAnswer(invocation -> reserveBatch());
             Mockito.when(decode.acquireDispatchPermit(Mockito.any(), Mockito.any()))
                     .thenAnswer(invocation -> acquirePermit(
                             ((DecodeEndpoint.ReservationHandle) invocation.getArgument(0)).requestId()));
@@ -241,19 +232,8 @@ public final class DeliveryStrategyTestSupport {
             return permits.get(item);
         }
 
-        BatchReservation batchReservation() {
-            return batchReservation;
-        }
-
         List<CommitResult> commitResults() {
             return List.copyOf(commitResults);
-        }
-
-        private ReservationResult<BatchReservation> reserveBatch() {
-            batchReservation = Mockito.mock(BatchReservation.class);
-            Mockito.when(batchReservation.commit(Mockito.anyList(), Mockito.anyLong()))
-                    .thenAnswer(invocation -> commitResults(1).getFirst());
-            return ReservationResult.success(batchReservation);
         }
 
         private DecodeEndpoint.EngineDispatchPermitAcquisition acquirePermit(String requestId) {
@@ -309,29 +289,12 @@ public final class DeliveryStrategyTestSupport {
                 ScheduledRequest item = invocation.getArgument(0);
                 if (item == preparationLostFor) { return DeliveryBlockReason.Attempt.rejected(DeliveryBlockReason.OWNERSHIP_LOST); }
                 prepared.add(item);
-                return invocation.getArgument(1, BatchDeliveryStrategy.class).prepareAdmission(item);
-            }).when(requests).prepareBatchDelivery(Mockito.any(), Mockito.any());
-            Mockito.doAnswer(invocation -> {
-                ScheduledRequest item = invocation.getArgument(0);
-                if (item == preparationLostFor) { return DeliveryBlockReason.Attempt.rejected(DeliveryBlockReason.OWNERSHIP_LOST); }
-                prepared.add(item);
-                return invocation.getArgument(1, BatchDeliveryStrategy.BatchTransaction.class).append(item);
-            }).when(requests).prepareBatchMember(Mockito.any(), Mockito.any());
-            Mockito.doAnswer(invocation -> {
-                ScheduledRequest item = invocation.getArgument(0);
-                if (item == preparationLostFor) { return DeliveryBlockReason.Attempt.rejected(DeliveryBlockReason.OWNERSHIP_LOST); }
-                prepared.add(item);
                 return invocation.getArgument(1, NonBatchTransaction.class).append(item, invocation.getArgument(2));
             }).when(requests).prepareRouteMember(Mockito.any(), Mockito.any(), Mockito.any());
             Mockito.doAnswer(invocation -> claim(invocation.getArgument(0), DeliveryClaimKind.ROUTE_DECISION, 0L,
                     () -> invocation.getArgument(1, PrefillAdmissionResources.CommittedAdmissionOwner.class)
                             .transferToEndpoint(invocation.getArgument(0))))
                     .when(requests).claimRouteDelivery(Mockito.any(), Mockito.any());
-            Mockito.doAnswer(invocation -> {
-                var batch = invocation.getArgument(1, BatchDeliveryStrategy.BatchTransaction.class);
-                return claim(invocation.getArgument(0), DeliveryClaimKind.BATCH_ENQUEUE, batch.batchId(),
-                        () -> batch.transferToEndpoint(invocation.getArgument(0)));
-            }).when(requests).claimBatchDelivery(Mockito.any(), Mockito.any());
             Mockito.doAnswer(invocation -> {
                 failDeliveryPreparation(invocation.getArgument(0), invocation.getArgument(1));
                 return null;
@@ -360,15 +323,9 @@ public final class DeliveryStrategyTestSupport {
             DeliveryClaim claim =
                     Mockito.mock(DeliveryClaim.class);
             ReflectionTestUtils.setField(claim, "item", exactItem);
-            Mockito.doAnswer(inv -> { complete(claim, inv.getArgument(0)); return null; })
-                    .when(claim).complete(Mockito.any());
             Mockito.doAnswer(inv -> {
                 precedingWork.put(exactItem, inv.getArgument(1));
                 unstartedWorkMs.put(exactItem, inv.getArgument(2));
-                return null;
-            }).when(requests).setDeliveryPrediction(Mockito.eq(claim), Mockito.any(), Mockito.anyLong());
-            Mockito.doAnswer(inv -> {
-                requests.setDeliveryPrediction(claim, inv.getArgument(1), inv.getArgument(2));
                 complete(claim, DeliveryResult.delivered());
                 return null;
             }).when(requests).publishRoute(Mockito.eq(claim), Mockito.any(), Mockito.anyLong());
@@ -471,111 +428,9 @@ public final class DeliveryStrategyTestSupport {
             DeliveryResult completion) {
     }
 
-    record SubmittedBatch(
-            List<ScheduledRequest> exactItems,
-            long batchId,
-            long predictedMs,
-            String decisionReason) {
-    }
-
-    static final class TestBatchSubmission {
-
-        private DeliveryBlockReason prepareBoundary;
-        private int prepareCount;
-        private int closeCount;
-        private int totalCloseCount;
-        private SubmittedBatch command;
-        private BiConsumer<ScheduledRequest, DeliveryResult> observer;
-        private final List<CompletionEvent> synchronousCompletions =
-                new ArrayList<>();
-        private final List<String> events = new ArrayList<>();
-
-        DeliveryBlockReason.Attempt<BatchDeliveryStrategy.PreparedSubmission>
-                tryPrepareSubmission() {
-            prepareCount++;
-            if (prepareBoundary != null) {
-                return DeliveryBlockReason.Attempt.rejected(prepareBoundary);
-            }
-            return DeliveryBlockReason.Attempt.accepted(
-                    new BatchDeliveryStrategy.PreparedSubmission() {
-                        private boolean submitted;
-
-                        @Override
-                        public void submit(BatchDeliveryStrategy.Delivery delivery) {
-                            submitted = true;
-                            delivery.run((exactItems, batchId, predictedMs, decisionReason, exactObserver) -> {
-                                command = new SubmittedBatch(
-                                        exactItems,
-                                        batchId,
-                                        predictedMs,
-                                        decisionReason);
-                                observer = exactObserver;
-                                events.add("submit");
-                                for (CompletionEvent completion
-                                        : synchronousCompletions) {
-                                    exactObserver.accept(
-                                            completion.item(),
-                                            completion.completion());
-                                }
-                            });
-                        }
-
-                        @Override
-                        public void close() {
-                            totalCloseCount++;
-                            if (!submitted) {
-                                closeCount++;
-                            }
-                            events.add("submission-close");
-                        }
-                    });
-        }
-
-        void prepareBoundary(DeliveryBlockReason value) {
-            prepareBoundary = value;
-        }
-
-        void completeSynchronously(
-                ScheduledRequest item,
-                DeliveryResult completion) {
-            synchronousCompletions.add(new CompletionEvent(item, completion));
-        }
-
-        void complete(
-                ScheduledRequest item,
-                DeliveryResult completion) {
-            observer.accept(item, completion);
-        }
-
-        int prepareCount() {
-            return prepareCount;
-        }
-
-        int closeCount() {
-            return closeCount;
-        }
-
-        int totalCloseCount() {
-            return totalCloseCount;
-        }
-
-        SubmittedBatch command() {
-            return command;
-        }
-
-        BiConsumer<ScheduledRequest, DeliveryResult> observer() {
-            return observer;
-        }
-
-        List<String> events() {
-            return List.copyOf(events);
-        }
-    }
-
     static final class TestTelemetry {
 
         private final List<List<ScheduledRequest>> routes = new ArrayList<>();
-        private final List<BatchTelemetry> batches = new ArrayList<>();
         private final DeliveryMetrics metrics =
                 Mockito.mock(DeliveryMetrics.class);
 
@@ -586,18 +441,6 @@ public final class DeliveryStrategyTestSupport {
             }).when(metrics).routesDelivered(
                     org.mockito.ArgumentMatchers.anyInt(),
                     org.mockito.ArgumentMatchers.anyList());
-            Mockito.doAnswer(invocation -> {
-                batchDispatched(
-                        invocation.getArgument(0), invocation.getArgument(1),
-                        invocation.getArgument(2), invocation.getArgument(3),
-                        invocation.getArgument(4));
-                return null;
-            }).when(metrics).batchDispatched(
-                    org.mockito.ArgumentMatchers.anyLong(),
-                    org.mockito.ArgumentMatchers.anyString(),
-                    org.mockito.ArgumentMatchers.anyInt(),
-                    org.mockito.ArgumentMatchers.anyList(),
-                    org.mockito.ArgumentMatchers.anyLong());
         }
 
         private void routesDelivered(
@@ -606,38 +449,12 @@ public final class DeliveryStrategyTestSupport {
             routes.add(List.copyOf(exactItems));
         }
 
-        private void batchDispatched(
-                long batchId,
-                String decisionReason,
-                int remainingQueueDepth,
-                List<ScheduledRequest> dispatched,
-                long predictedMs) {
-            batches.add(new BatchTelemetry(
-                    batchId, decisionReason, remainingQueueDepth,
-                    dispatched, predictedMs));
-        }
-
         List<List<ScheduledRequest>> routes() {
             return List.copyOf(routes);
         }
 
-        List<BatchTelemetry> batches() {
-            return List.copyOf(batches);
-        }
-
         DeliveryMetrics metrics() {
             return metrics;
-        }
-    }
-
-    record BatchTelemetry(
-            long batchId,
-            String decisionReason,
-            int remainingQueueDepth,
-            List<ScheduledRequest> dispatched,
-            long predictedMs) {
-        BatchTelemetry {
-            dispatched = List.copyOf(dispatched);
         }
     }
 

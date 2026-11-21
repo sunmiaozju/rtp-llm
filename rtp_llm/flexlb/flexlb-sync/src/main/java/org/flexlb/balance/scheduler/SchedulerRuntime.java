@@ -147,7 +147,7 @@ final class SchedulerRuntime {
             warnIsolated("Failed to read shared queue configuration for metrics", failure);
             return;
         }
-        if (config == null || !QueueCapacity.isEngineSubQueueMode(config)) {
+        if (config == null) {
             return;
         }
         try {

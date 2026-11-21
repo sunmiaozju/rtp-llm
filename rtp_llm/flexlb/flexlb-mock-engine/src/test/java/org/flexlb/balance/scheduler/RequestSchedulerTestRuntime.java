@@ -1,15 +1,12 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
-import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.DeliveryMetrics;
 import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.delivery.NonBatchDeliveryStrategy;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
-import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.eviction.DecodePreemptionCoordinator;
 import org.flexlb.balance.eviction.EngineCancelChannel;
@@ -36,8 +33,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -58,26 +53,17 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
     private final SchedulerRuntime runtime;
 
     public RequestSchedulerTestRuntime(ConfigService configService,
-                                       Supplier<DeliveryBlockReason.Attempt<BatchDeliveryStrategy.PreparedSubmission>> prepareBatchSubmission,
                                        BatchSchedulerReporter batchReporter,
                                        RequestSchedulerReporter requestReporter,
                                        EngineCancelChannel cancelChannel) {
-        Objects.requireNonNull(
-                prepareBatchSubmission, "prepareBatchSubmission");
         this.lifecycle = new RequestRegistry(
                 configService, batchReporter, requestReporter);
         this.endpointEvents = new EndpointEventHandler(lifecycle, org.mockito.Mockito.mock(PrefillQueueRegistry.class),
                 configService, new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
-        AtomicLong batchIds = new AtomicLong();
-        DeliveryMetrics deliveryMetrics = new DeliveryMetrics(batchReporter);
-        DeliveryStrategy delivery = configService.loadBalanceConfig().getDispatcher().requiresGenerateInput()
-                ? new BatchDeliveryStrategy(prepareBatchSubmission, batchIds::incrementAndGet, lifecycle, deliveryMetrics)
-                : new NonBatchDeliveryStrategy(lifecycle, deliveryMetrics);
+        DeliveryStrategy delivery = new NonBatchDeliveryStrategy(lifecycle, new DeliveryMetrics(batchReporter));
         this.registry = new EndpointRegistry(configService, endpointEvents, batchReporter, delivery,
-                configService.loadBalanceConfig().getDispatcher().requiresGenerateInput()
-                        ? new BatchTtftEstimator()
-                        : new NonBatchTtftEstimator(),
+                new NonBatchTtftEstimator(),
                 placementAvailability, queueCapacity, new PrefillQueueRegistry(), requestReporter);
         this.evictionManager = new EvictionManager(
                 requestReporter,

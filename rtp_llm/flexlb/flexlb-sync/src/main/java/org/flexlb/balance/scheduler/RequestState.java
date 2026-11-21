@@ -12,19 +12,14 @@ public record RequestState(
         String detail) {
 
     public RequestState {
-        if (deliveryClaimKind == DeliveryClaimKind.BATCH_ENQUEUE
-                && batchId <= 0L) {
-            throw new IllegalArgumentException(
-                    "batch enqueue delivery requires a positive batchId");
-        }
-        if (deliveryClaimKind != DeliveryClaimKind.BATCH_ENQUEUE
-                && batchId != 0L) {
-            throw new IllegalArgumentException(
-                    "only batch enqueue delivery may carry a batchId");
+        if (batchId != 0L) {
+            throw new IllegalArgumentException("route decisions do not carry a batchId");
         }
     }
 
-    /** An expected batch ID of zero accepts any batch, including route delivery. */
+    /**
+     * A legacy batch-specific query or cancel must not match a route-only request.
+     */
     public boolean matchesBatch(long expectedBatchId) {
         return expectedBatchId == 0L || batchId == expectedBatchId;
     }

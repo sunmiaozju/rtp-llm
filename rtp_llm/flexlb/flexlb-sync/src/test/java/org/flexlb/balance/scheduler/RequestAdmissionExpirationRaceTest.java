@@ -34,7 +34,7 @@ class RequestAdmissionExpirationRaceTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void cleanupFailureStillReleasesAdmissionAndAllowsExpiry(boolean abort) throws Exception {
-        var config = SchedulingTestConfig.batchConfig();
+        var config = SchedulingTestConfig.routeConfig();
         config.getRequestLifecycle().getRequest().setTimeoutMs(300L);
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);

@@ -35,6 +35,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -62,17 +63,6 @@ class WorkerBatcherQueueTest {
         for (WorkerBatcher runtime : runtimes) {
             assertNull(runtime.stopAndAwait());
         }
-    }
-
-    @Test
-    void batchModeKeepsPriorityQueueWithoutAnExtraRequestCountLimit() {
-        SchedulingTestConfig.useBatchDispatcher(config).setMaxInflightPerPrefillWorker(1);
-        WorkerBatcher runtime = runningRuntime();
-        ScheduledRequest low = item(901L, 10, Long.MAX_VALUE, 1, 128);
-        ScheduledRequest high = item(902L, 90, Long.MAX_VALUE, 2, 128);
-        assertEquals(ACCEPTED, runtime.offerWithResult(low));
-        assertEquals(ACCEPTED, runtime.offerWithResult(high));
-        assertEquals(List.of(high, low), runtime.captureQueueSnapshot().items());
     }
 
     @Test
@@ -235,6 +225,7 @@ class WorkerBatcherQueueTest {
         PrefillTimePredictor predictor = mock(PrefillTimePredictor.class);
         when(predictor.evaluator()).thenReturn(evaluator);
         PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
+        when(endpoint.tryReserveEngineSubQueueSlot(any())).thenReturn(true);
         when(endpoint.getPredictor()).thenReturn(predictor);
         WorkerStatus status = WorkerStatus.createDiscovered(
                 RoleType.PREFILL,

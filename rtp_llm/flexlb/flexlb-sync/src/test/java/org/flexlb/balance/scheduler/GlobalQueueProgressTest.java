@@ -67,27 +67,18 @@ class GlobalQueueProgressTest {
     }
 
     @Test
-    void globalQueueEntryUsesTheTotalCountOnlyForNonBatchDispatch() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+    void globalQueueEntryUsesTheTotalCount() {
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         config.getScheduler().setMaxQueuedRequests(1);
         QueueCapacity capacity = new QueueCapacity();
 
-        assertFalse(capacity.isGlobalQueueEntryLimitReached(config, 0));
-        assertTrue(capacity.isGlobalQueueEntryLimitReached(config, 1));
-
-        CompletableFuture<Response> batchRequest = new CompletableFuture<>();
-        capacity.increaseTotalQueueCount(batchRequest);
-        assertEquals(1L, capacity.globalQueueAndEngineSubQueueCount());
-        assertFalse(capacity.isGlobalQueueEntryLimitReached(config, 0));
-        capacity.decreaseTotalQueueCount(batchRequest);
-
-        SchedulingTestConfig.useNonBatchDispatcher(config);
+        assertFalse(capacity.isGlobalQueueEntryLimitReached(config));
         CompletableFuture<Response> transferredRequest = new CompletableFuture<>();
         capacity.increaseTotalQueueCount(transferredRequest);
-        assertTrue(capacity.isGlobalQueueEntryLimitReached(config, 0));
+        assertTrue(capacity.isGlobalQueueEntryLimitReached(config));
         capacity.decreaseTotalQueueCount(transferredRequest);
-        assertFalse(capacity.isGlobalQueueEntryLimitReached(config, 0));
+        assertFalse(capacity.isGlobalQueueEntryLimitReached(config));
     }
 
     @Test
@@ -117,7 +108,7 @@ class GlobalQueueProgressTest {
 
     @Test
     void queueBudgetUsesCurrentEndpointCountForEachRoutingShape() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         config.getDispatcher().setMaxInflightPerPrefillWorker(2);
         config.getDispatcher().setPrefillSubqueueLimitMultiplier(3);
         QueueCapacity capacity = new QueueCapacity();
@@ -142,7 +133,7 @@ class GlobalQueueProgressTest {
 
     @Test
     void engineSubQueueReservationsNeverExceedTheConfiguredTotalQueueLimit() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useNonBatchDispatcher(config);
         config.getScheduler().setMaxQueuedRequests(3);
@@ -161,26 +152,8 @@ class GlobalQueueProgressTest {
     }
 
     @Test
-    void batchDispatcherCountsEngineQueueRequestsWithoutApplyingTheSubQueueLimit() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
-        config.getScheduler().setMaxQueuedRequests(1);
-        QueueCapacity capacity = new QueueCapacity();
-
-        capacity.increaseEngineSubQueueCount(RoleType.PREFILL);
-        capacity.increaseEngineSubQueueCount(RoleType.PREFILL);
-        SchedulingTestConfig.useFifoQueue(config);
-        SchedulingTestConfig.useNonBatchDispatcher(config);
-        assertFalse(capacity.tryReserveEngineSubQueueSlot(config, RoleType.PREFILL, 1));
-        capacity.releaseEngineSubQueueSlot(RoleType.PREFILL);
-        assertFalse(capacity.tryReserveEngineSubQueueSlot(config, RoleType.PREFILL, 1));
-        capacity.releaseEngineSubQueueSlot(RoleType.PREFILL);
-        assertTrue(capacity.tryReserveEngineSubQueueSlot(config, RoleType.PREFILL, 1));
-        capacity.releaseEngineSubQueueSlot(RoleType.PREFILL);
-    }
-
-    @Test
     void releasingAnEmptyEngineSubQueueDoesNotCreateExtraCapacity() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useNonBatchDispatcher(config);
         config.getScheduler().setMaxQueuedRequests(1);
@@ -421,7 +394,7 @@ class GlobalQueueProgressTest {
             f.submit(1, "a", 40);
             awaitCondition(() -> f.scheduler.getBlockedRequestCount() == 1);
 
-            FlexlbConfig updated = SchedulingTestConfig.batchConfig();
+            FlexlbConfig updated = SchedulingTestConfig.routeConfig();
             SchedulingTestConfig.usePriorityQueue(updated);
             updated.getScheduler().setMaxQueuedRequests(1);
             updated.priorityOrdering().setHighPriorityThreshold(70);
@@ -542,7 +515,7 @@ class GlobalQueueProgressTest {
             assertEquals(2, queue.size());
             assertEquals(2, queue.maxQueuedRequests());
 
-            FlexlbConfig reduced = SchedulingTestConfig.batchConfig();
+            FlexlbConfig reduced = SchedulingTestConfig.routeConfig();
             reduced.getScheduler().setMaxQueuedRequests(1);
             f.currentConfig.set(reduced);
             assertEquals(1, queue.maxQueuedRequests());
@@ -550,7 +523,7 @@ class GlobalQueueProgressTest {
             assertEquals(StrategyErrorType.QUEUE_FULL.getErrorCode(), f.requests.get(3L).join().getCode());
             assertEquals(2, f.scheduler.getQueuedRequestCount());
 
-            FlexlbConfig increased = SchedulingTestConfig.batchConfig();
+            FlexlbConfig increased = SchedulingTestConfig.routeConfig();
             increased.getScheduler().setMaxQueuedRequests(3);
             f.currentConfig.set(increased);
             f.submit(4, "a");
@@ -830,7 +803,7 @@ class GlobalQueueProgressTest {
         private final RoleType role;
 
         private static FlexlbConfig twoPlannerConfig() {
-            FlexlbConfig config = spy(SchedulingTestConfig.batchConfig());
+            FlexlbConfig config = spy(SchedulingTestConfig.routeConfig());
             var runtime = spy(config.getInternalRuntime());
             when(runtime.getQueuePlannerThreads()).thenReturn(2);
             when(config.getInternalRuntime()).thenReturn(runtime);

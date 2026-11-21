@@ -42,11 +42,6 @@ class EndpointCleanupDeadlockTest {
     }
 
     @Test
-    void prefillCleanupAndReservationFinish() throws Exception {
-        verifyCompletion("prefill");
-    }
-
-    @Test
     void decodeCleanupAndDispatchRejectionFinish() throws Exception {
         verifyCompletion("decode-rejection");
     }
@@ -99,7 +94,7 @@ class EndpointCleanupDeadlockTest {
         }
 
         private static void verifyTimerClose() throws Exception {
-            var config = SchedulingTestConfig.batchConfig();
+            var config = SchedulingTestConfig.routeConfig();
             ConfigService service = mock(ConfigService.class);
             when(service.loadBalanceConfig()).thenReturn(config);
             RequestRegistry registry = mock(RequestRegistry.class);
@@ -149,7 +144,7 @@ class EndpointCleanupDeadlockTest {
                 System.out.println("COMPLETED " + kind);
                 return;
             }
-            var config = SchedulingTestConfig.batchConfig();
+            var config = SchedulingTestConfig.routeConfig();
             ConfigService service = mock(ConfigService.class);
             when(service.loadBalanceConfig()).thenReturn(config);
             RequestRegistry registry = new RequestRegistry(service,
@@ -185,9 +180,6 @@ class EndpointCleanupDeadlockTest {
                         endpoint, reservation, System.currentTimeMillis());
                 var registered = new RequestLifecycleTestSupport.Registered(item, future);
                 RequestLifecycleTestSupport.bindRoute(registry, registered);
-                var claim = RequestLifecycleTestSupport.claimBatchWithoutPrediction(
-                        registry, item, 1L, () -> true);
-                assertNotNull(claim);
                 // Negative TTL makes the fixture eligible without a wall-clock sleep.
                 sweep = () -> assertEquals(0, endpoint.evictExpiredRequests(-1L, ownership));
                 if (kind.equals("decode-rejection")) {
@@ -207,20 +199,16 @@ class EndpointCleanupDeadlockTest {
                     }).when(endpoint).release(reservation, DecodeEndpoint.ReleaseReason.COUNTERPART_FINISHED);
                 }
                 endpointOperation = switch (kind) {
-                    case "decode-rejection" -> () -> claim.complete(
-                            org.flexlb.balance.delivery.DeliveryResult.notSent(new IllegalStateException("not sent")));
+                    case "decode-rejection" -> () -> registry.failDeliveryPreparation(item,
+                            new IllegalStateException("not sent"));
                     case "decode-terminal" -> () -> slot.processDecodeStatus(endpoint,
                             WorkerStatusFact.terminal(reservation, 0L));
-                    default -> () -> registry.setDeliveryPrediction(claim,
-                            new org.flexlb.balance.estimate.WorkView(
-                                    System.currentTimeMillis(), java.util.List.of(), java.util.List.of(), 0L), 30_000L);
+                    default -> () -> endpoint.release(reservation, DecodeEndpoint.ReleaseReason.NOT_SENT);
                 };
             } else {
-                boolean batch = kind.equals("prefill");
-                var fixture = new PrefillCleanupDeadlockFixture(id, batch);
-                sweep = batch ? () -> fixture.sweepBatches(ownership)
-                        : () -> fixture.sweepSingles(ownership);
-                endpointOperation = fixture::reserveNextBatch;
+                var fixture = new PrefillCleanupDeadlockFixture(id);
+                sweep = () -> fixture.sweepSingles(ownership);
+                endpointOperation = fixture::reserveNextRequest;
             }
             // Reproduce the production lock order, without mocking either lock or ownership check.
             // The slot monitor is held explicitly to isolate the inversion from admission setup.

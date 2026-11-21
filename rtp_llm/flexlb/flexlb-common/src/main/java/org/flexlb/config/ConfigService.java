@@ -268,7 +268,7 @@ public class ConfigService {
         }
         if (document.get("dispatcher") instanceof ObjectNode dispatcher) {
             changed |= preserveStartupMode(dispatcher, "dispatcher.type",
-                    startupDecisionTopology.dispatcherType().name(), Set.of("BATCH", "NON_BATCH", "NON_BATCH_V2"));
+                    startupDecisionTopology.dispatcherType().name(), Set.of("NON_BATCH", "NON_BATCH_V2"));
             JsonNode threads = dispatcher.get("decodeQueueThreads");
             if (threads != null && threads.isIntegralNumber() && threads.canConvertToInt() && threads.intValue() > 0
                     && threads.intValue() != startupDecisionTopology.decodeQueueThreads()) {

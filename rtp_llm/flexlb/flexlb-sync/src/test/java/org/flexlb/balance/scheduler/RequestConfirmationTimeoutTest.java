@@ -1,6 +1,5 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.EndpointTestSupport;
@@ -9,7 +8,6 @@ import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.endpoint.prefill.WorkerStatusFact;
 import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
-import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.scheduler.RequestSlot.DeliveryClaim;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.config.ConfigService;
@@ -129,14 +127,8 @@ class RequestConfirmationTimeoutTest {
                         return true;
                     }
                 };
-                claim = waiting == ConfirmationWait.UNCERTAIN_REPLY
-                        ? RequestLifecycleTestSupport.claimBatchWithoutPrediction(requests, item, 1L, commitPrefill)
-                        : RequestLifecycleTestSupport.claimRouteWithoutPrediction(requests, item, commitPrefill);
+                claim = RequestLifecycleTestSupport.claimRouteWithoutPrediction(requests, item, commitPrefill);
                 assertNotNull(claim);
-                requests.setDeliveryPrediction(claim, new WorkView(System.currentTimeMillis(), List.of(), List.of(), 0L), 30_000L);
-            }
-            if (waiting == ConfirmationWait.UNCERTAIN_REPLY) {
-                claim.complete(DeliveryResult.uncertain(new IllegalStateException("reply was lost")));
             }
             assertEquals(1, requests.trackedRequestCount());
             assertFalse(future.isDone());
@@ -188,8 +180,7 @@ class RequestConfirmationTimeoutTest {
     }
 
     private enum ConfirmationWait {
-        MISSING_REPLY,
-        UNCERTAIN_REPLY,
+        UNPUBLISHED_ROUTE,
         AUTOMATIC_TIMER
     }
 

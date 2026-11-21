@@ -2,22 +2,17 @@ package org.flexlb.mockengine;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.config.VictimStage;
-import org.flexlb.dao.loadbalance.RejectReason;
 import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.loadbalance.StrategyErrorType;
-import org.flexlb.engine.grpc.EngineRpcService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -51,8 +46,8 @@ class PreemptionPhasesE2ETest {
             h.fixedWindowDecision().setMaxCollectionWaitMs(10_000);
             h.fixedWindowDecision().setMaxRequests(100);
 
-            CompletableFuture<Response> low1 = h.scheduler.submit(h.context(101, 30));
-            CompletableFuture<Response> low2 = h.scheduler.submit(h.context(102, 40));
+            CompletableFuture<Response> low1 = h.submitAndGenerate(h.context(101, 30));
+            CompletableFuture<Response> low2 = h.submitAndGenerate(h.context(102, 40));
             AutoTpmE2EHarness.await(
                     () -> h.prefillEndpoint(0).queuedRequestCount() == 2,
                     5_000,
@@ -61,7 +56,7 @@ class PreemptionPhasesE2ETest {
             assertFalse(low1.isDone());
             assertFalse(low2.isDone());
 
-            CompletableFuture<Response> high = h.scheduler.submit(h.context(103, 70));
+            CompletableFuture<Response> high = h.submitAndGenerate(h.context(103, 70));
 
             AutoTpmE2EHarness.await(
                     () -> h.prefillEndpoint(0).queuedRequestCount() == 3,
@@ -89,7 +84,7 @@ class PreemptionPhasesE2ETest {
             // Keep reported expected-KV usage below the final 90% gate while the
             // local hard reservation still reduces real availability to 127.
             h.setDecodeKvCapacity(0, 255, 256);
-            CompletableFuture<Response> low = h.scheduler.submit(h.context(201, 30));
+            CompletableFuture<Response> low = h.submitAndGenerate(h.context(201, 30));
             AutoTpmE2EHarness.await(
                     () -> decodeEp.resourceSnapshot().reserved().containsKey("201"),
                     5_000,
@@ -101,7 +96,7 @@ class PreemptionPhasesE2ETest {
             long requiredKvBefore = decodeEp.routingView().inputKvReserved();
             assertTrue(requiredKvBefore > 0);
 
-            CompletableFuture<Response> high = h.preemptDecode(h.context(202, 70), 0);
+            CompletableFuture<Response> high = h.preemptDecodeAndGenerate(h.context(202, 70), 0);
 
             AutoTpmE2EHarness.await(
                     () -> decodeEp.resourceSnapshot().reserved().containsKey("202"),
@@ -139,167 +134,6 @@ class PreemptionPhasesE2ETest {
 
     // ==================== A3 accepted 让位（真实 cancel 通道） ====================
 
-    @Test
-    @Timeout(30)
-    void a3_accepted_eviction_cancels_via_real_channel_victim_8429_in_order() throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT + 20, 1, 1, "50", 10_000.0, true)) {
-            // 准入允许抢占排队预留和引擎已接收的请求。
-            h.allowPreemption(VictimStage.DECODE_RESERVED, VictimStage.DECODE_ENGINE_OWNED);
-            h.config.getRouter().getRoles().getDecode().getAvailability()
-                    .setMaxEngineRequests(1L);
-            h.fixedWindowDecision().setMaxCollectionWaitMs(10_000);
-            h.fixedWindowDecision().setMaxRequests(1);
-            h.config.priorityOrdering().getPreemption().setTimeoutMs(3_000L);
-
-            DecodeEndpoint decodeEp = h.decodeEndpoint(0);
-            JavaMockEngineCluster.FastRpcService prefillEngine = h.prefillEngines.get(0);
-            JavaMockEngineCluster.FastRpcService decodeEngine = h.decodeEngines.get(0);
-
-            try (AutoCloseable ignored = h.holdBatchAck(301)) {
-                // Dispatch through the canonical queue-to-ledger transfer. The
-                // engine receives the request, while the external ACK remains gated.
-                CompletableFuture<Response> low = h.scheduler.submit(h.context(301, 30));
-                AutoTpmE2EHarness.await(() -> decodeEngine.getRunningCount() >= 1, 2_000,
-                        "victim running on decode mock");
-                h.pumpDecodeOnce(0); // mock v1 equals the discovered fixture cursor
-                h.pumpDecodeOnce(0); // mock v2 publishes the canonical RUNNING owner
-                assertEquals(0, decodeEp.resourceSnapshot().acceptedCount());
-                assertEquals(1, decodeEp.resourceSnapshot().runningCount());
-                assertFalse(low.isDone(), "victim frontend future must still await its ACK");
-
-                // Hold subsequent traffic in the queue after the victim is canonical.
-                h.fixedWindowDecision().setMaxRequests(100);
-
-                // 抢占准入在后台线程等待 Cancel 释放确认。
-                CompletableFuture<Response> high;
-                java.util.concurrent.atomic.AtomicReference<CompletableFuture<Response>> highRef =
-                        new java.util.concurrent.atomic.AtomicReference<>();
-                Thread submitter = new Thread(() ->
-                        highRef.set(h.preemptDecode(h.context(302, 70), 0)), "a3-high-submitter");
-                submitter.start();
-
-                // cancel 意图必须先到达引擎（顺序断言第 1 段：cancel 先于确认）
-                AutoTpmE2EHarness.await(() -> decodeEngine.getCancelledCount() >= 1, 3_000,
-                        "cancel must reach the mock engine");
-                assertFalse(low.isDone(),
-                        "victim must NOT get its terminal before the engine confirms the release (iron rule 4)");
-
-                AtomicReference<EngineRpcService.TaskInfoPB> engineTerminal = new AtomicReference<>();
-                AutoTpmE2EHarness.await(() -> {
-                    AutoTpmE2EHarness.workerStatus(prefillEngine, 0L).getFinishedTaskListList().stream()
-                            // Prefill may also retain the earlier successful P-to-D handoff.
-                            .filter(task -> task.getRequestId() == 301 && task.hasErrorInfo())
-                            .findFirst().ifPresent(engineTerminal::set);
-                    return engineTerminal.get() != null;
-                }, 2_000L, "Mock Engine must publish the authoritative victim terminal");
-                // Engine terminal: CANCELED(2) + 8429; a Cancel RPC ACK alone is not terminal.
-                assertEquals(2, engineTerminal.get().getPriorityPreemptionProgressValue());
-                assertEquals(8429, engineTerminal.get().getErrorInfo().getErrorCode());
-                assertEquals("preempted by higher-priority request", engineTerminal.get().getErrorInfo().getErrorMessage());
-
-                // Decode's cancelled counter advances before Prefill publishes
-                // its authoritative terminal. Poll as production does until
-                // that terminal settles the victim, without releasing its ACK.
-                AutoTpmE2EHarness.await(() -> {
-                    h.pumpPrefillOnce(0);
-                    return low.isDone();
-                }, 2_000, "Prefill confirms the priority cancellation");
-
-                submitter.join(5_000);
-                high = highRef.get();
-                assertNotNull(high);
-
-                Response victim = low.get(2, TimeUnit.SECONDS);
-                assertFalse(victim.isSuccess());
-                assertEquals(StrategyErrorType.PRIORITY_PREEMPTED.getErrorCode(), victim.getCode(),
-                        "accepted victim cancelled via engine must be 8429: " + victim.getErrorMessage());
-                assertTrue(
-                        victim.getErrorMessage().contains(
-                                "priority victim canceled by worker"),
-                        "worker terminal must preserve the typed preemption detail: "
-                                + victim.getErrorMessage());
-
-                // 顺序断言第 2 段：确认后高优才拿到容量（reserve 成功、进入队列待派发）
-                assertTrue(decodeEp.resourceSnapshot().reserved().containsKey("302"),
-                        "incoming may take the freed capacity only after confirmed release");
-                assertFalse(decodeEp.resourceSnapshot().confirmed().stream()
-                        .anyMatch(task -> task.requestId().equals("301")));
-                assertFalse(high.isDone(), "high request waits in the batcher (window held open)");
-                assertEquals(1, decodeEp.getInflightCount());
-
-                // Decode's duplicate terminal is stale after the authoritative
-                // Prefill priority terminal and must not reopen any ownership.
-                h.pumpDecodeOnce(0);
-
-                // 引擎侧无泄漏
-                assertEquals(0, decodeEngine.getRunningCount());
-                assertEquals(1, decodeEngine.getCancelledCount());
-                assertEquals(0, prefillEngine.getDownstreamOwnershipCount());
-                assertEquals(0, decodeEngine.getUpstreamOwnershipCount());
-            }
-        }
-    }
-
-    @Test
-    @Timeout(30)
-    void a3_cancel_timeout_fails_incoming_without_dispatch_and_without_leak() throws Exception {
-        try (AutoTpmE2EHarness h = new AutoTpmE2EHarness(BASE_PORT + 30, 1, 1, "50", 10_000.0, true)) {
-            h.allowPreemption(VictimStage.DECODE_RESERVED, VictimStage.DECODE_ENGINE_OWNED);
-            h.config.getRouter().getRoles().getDecode().getAvailability()
-                    .setMaxEngineRequests(1L);
-            h.fixedWindowDecision().setMaxCollectionWaitMs(10_000);
-            h.fixedWindowDecision().setMaxRequests(1);
-            // 短等待窗口 + 不泵 → 引擎释放永远得不到确认 → 超时
-            h.config.priorityOrdering().getPreemption().setTimeoutMs(100L);
-
-            DecodeEndpoint decodeEp = h.decodeEndpoint(0);
-            JavaMockEngineCluster.FastRpcService prefillEngine = h.prefillEngines.get(0);
-            JavaMockEngineCluster.FastRpcService decodeEngine = h.decodeEngines.get(0);
-
-            try (AutoCloseable ignored = h.holdBatchAck(311)) {
-                CompletableFuture<Response> low = h.scheduler.submit(h.context(311, 30));
-                AutoTpmE2EHarness.await(() -> decodeEngine.getRunningCount() >= 1, 2_000,
-                        "victim running on decode mock");
-                h.pumpDecodeOnce(0); // consume mock v1 at the discovered fixture cursor
-                h.pumpDecodeOnce(0); // apply mock v2 and publish the canonical RUNNING owner
-                assertEquals(0, decodeEp.resourceSnapshot().acceptedCount());
-                assertEquals(1, decodeEp.resourceSnapshot().runningCount());
-                assertFalse(low.isDone(), "victim frontend future must still await its ACK");
-                h.fixedWindowDecision().setMaxRequests(100);
-
-                CompletableFuture<Response> high = h.preemptDecode(h.context(312, 70), 0);
-
-                // 铁律4：cancel 超时绝不乐观派发 —— incoming 明确失败
-                Response highResp = high.get(5, TimeUnit.SECONDS);
-                assertFalse(highResp.isSuccess());
-                assertEquals(StrategyErrorType.RESOURCE_EXHAUSTED.getErrorCode(), highResp.getCode());
-                assertEquals(RejectReason.RESOURCE_EXHAUSTED, highResp.getAdmissionRejectReason());
-                assertTrue(highResp.getErrorMessage().contains("cancel_terminal_unknown"),
-                        "timeout must be explicit: " + highResp.getErrorMessage());
-                assertFalse(decodeEp.resourceSnapshot().reserved().containsKey("312"),
-                        "incoming must NOT take capacity on cancel timeout");
-
-                // victim 保持 CANCEL_REQUESTED，等 WorkerStatus 迟到确认 → 8429 late confirm
-                assertFalse(low.isDone());
-                h.pumpPrefillOnce(0);
-                Response victim = low.get(2, TimeUnit.SECONDS);
-                assertEquals(StrategyErrorType.PRIORITY_PREEMPTED.getErrorCode(), victim.getCode(),
-                        "late CANCELLED confirm still attributes 8429");
-
-                h.pumpDecodeOnce(0);
-
-                // 无泄漏：确认层清空、引擎无 running、调度器 inflight 只剩尚未派发的项
-                assertFalse(decodeEp.resourceSnapshot().confirmed().stream()
-                        .anyMatch(task -> task.requestId().equals("311")));
-                assertEquals(0, decodeEngine.getRunningCount());
-                assertEquals(0, decodeEp.getInflightCount());
-                assertEquals(0L, decodeEp.routingView().inputKvReserved());
-                assertEquals(0, prefillEngine.getDownstreamOwnershipCount());
-                assertEquals(0, decodeEngine.getUpstreamOwnershipCount());
-            }
-        }
-    }
-
     // ==================== A5 同优不抢占 ====================
 
     @Test
@@ -319,7 +153,7 @@ class PreemptionPhasesE2ETest {
                     .setMaxKvUsagePercent(100);
             h.setDecodeKvCapacity(0, 4096, 8192);
             // P50 占据 decode 唯一槽位
-            CompletableFuture<Response> holder = h.scheduler.submit(h.context(501, 50));
+            CompletableFuture<Response> holder = h.submitAndGenerate(h.context(501, 50));
             AutoTpmE2EHarness.await(
                     () -> decodeEp.resourceSnapshot().reserved().containsKey("501"),
                     5_000,
@@ -329,7 +163,7 @@ class PreemptionPhasesE2ETest {
 
             // 同优新请求不能抢占，也不能把瞬时容量不足变成终态 8403；
             // 它保持未绑定，等待精确 Decode 容量变化。
-            CompletableFuture<Response> equal = h.scheduler.submit(h.context(502, 50));
+            CompletableFuture<Response> equal = h.submitAndGenerate(h.context(502, 50));
             assertFalse(equal.isDone());
 
             // victim 完全不受影响

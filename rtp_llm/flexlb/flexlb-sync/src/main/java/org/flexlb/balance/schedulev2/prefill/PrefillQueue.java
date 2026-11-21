@@ -493,7 +493,7 @@ public final class PrefillQueue {
         }
         works.sort(Comparator.comparing(WorkView.RequestWork::requestId));
         QueueView queue = new QueueView(nowMs, itemOrder, constraints, items, null);
-        WorkView work = new WorkView(nowMs, works, List.of(), unknownRequestCount);
+        WorkView work = new WorkView(nowMs, works, unknownRequestCount);
         return new PrefillTtftEstimate.LoadView(queue, work, version);
     }
 }

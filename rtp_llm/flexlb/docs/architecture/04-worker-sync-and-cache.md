@@ -34,11 +34,7 @@ Engine 的生成、取消、结果拉取和 KV 传输协议仍使用现有 int64
 相关转换仅发生在对接这些 Engine RPC 的边界，不用于 Master 内部请求标识。
 `GenerateInputPB`、`EnqueueBatchSuccessPB` 和 `EnqueueBatchErrorPB` 的 ID 仍是 int64，
 对应的读取重载直接转换该字段；字段未设置时按 PB 默认值返回字符串 `"0"`。
-BATCH Generation 的 Schedule 入口在入队前检查 `generate_input` 是有效的 GenerateInputPB，
-并要求字符串 request_id 与该 PB 的 int64 ID 的规范十进制写法完全一致；`"007"`、非数字、
-越界或不一致的 ID 返回 INVALID_REQUEST。大于 JS 精确整数范围的 ID
-通过字符串与支持 int64 的 protobuf 编码传输，不转换为浮点数。
-NON_BATCH 的仅路由请求和 ENCODER 请求仍保留原始字符串，不需要 Engine 生成 payload。
+Master 只返回逐请求路由；Generation 和 Encoder 的 Schedule 请求不需要 Engine 生成 payload。
 对当前 Engine 的取消 RPC 单独要求规范 int64 字符串，拒绝 `"007"` 被归一化后误取消 ID `"7"`。
 
 ### 调度拓扑

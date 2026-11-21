@@ -5,9 +5,7 @@ import org.flexlb.balance.delivery.DeliveryGroup;
 import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.delivery.DeliveryTransaction;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.endpoint.prefill.ReservationResult;
-import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
-import org.flexlb.balance.estimate.BatchTtftEstimator;
+import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.estimate.PrefillTtftEstimate;
 import org.flexlb.balance.estimate.PrefillTtftEstimator;
 import org.flexlb.balance.estimate.WorkView;
@@ -182,10 +180,6 @@ class WorkerBatcherSchedulingTest {
         FlexlbConfig config = singleConfig();
         config.setDispatcher(DispatcherConfig.nonBatch());
         PrefillEndpoint endpoint = stableEndpoint(stableStatus());
-        when(endpoint.isEngineSubQueueMode()).thenReturn(true);
-        when(endpoint.tryReserveEngineSubQueueSlot(any())).thenReturn(true);
-        when(endpoint.reserveSingle(any(), anyLong()))
-                .thenReturn(ReservationResult.success(mock(SingleReservation.class)));
         EventDrivenBlock delivery = new EventDrivenBlock();
         WorkerBatcher runtime = runningRuntime(config, endpoint, delivery);
         long now = System.currentTimeMillis();
@@ -269,7 +263,7 @@ class WorkerBatcherSchedulingTest {
         assertNotNull(inputs.queue().admissionBlock());
         assertNull(inputs.queue().admissionBlock().semantics(),
                 "batch capacity waits must not impose publication restrictions");
-        PrefillTtftEstimate.TtftEstimationRule rule = new BatchTtftEstimator().ttftEstimationRule();
+        PrefillTtftEstimate.TtftEstimationRule rule = new NonBatchTtftEstimator().ttftEstimationRule();
         PrefillTtftEstimate.Candidate candidate = PrefillTtftEstimate.estimate(
                 inputs, new PrefillTtftEstimate.Probe("22", 50, now + 1L, Long.MAX_VALUE, 10L, 0L, 0L),
                 endpoint.getPredictor().evaluator(), rule, now);
@@ -414,27 +408,20 @@ class WorkerBatcherSchedulingTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"NON_BATCH,SINGLE,1,0,single_request", "BATCH,SINGLE,1,0,single_request",
-            "NON_BATCH,FIXED_WINDOW,2,60000,batch_full", "BATCH,FIXED_WINDOW,2,60000,batch_full",
-            "NON_BATCH,FIXED_WINDOW,1,0,fixed_window_timeout", "BATCH,FIXED_WINDOW,1,0,fixed_window_timeout"})
-    void committedGroupIsVisibleBeforeDeliveryPublication(String dispatcher,
-                                                          String policy,
+    @CsvSource({"SINGLE,1,0,single_request", "FIXED_WINDOW,2,60000,batch_full",
+            "FIXED_WINDOW,1,0,fixed_window_timeout"})
+    void committedGroupIsVisibleBeforeDeliveryPublication(String policy,
                                                           int count,
                                                           long windowMs,
                                                           String expectedReason)
             throws Exception {
         FlexlbConfig config = singleConfig();
-        if (dispatcher.equals("NON_BATCH")) {
-            config.setDispatcher(org.flexlb.config.DispatcherConfig.nonBatch());
-        }
         if (policy.equals("FIXED_WINDOW")) {
             var decision = SchedulingTestConfig.useFixedWindowDecision(config);
             decision.setMaxRequests(2);
             decision.setMaxCollectionWaitMs(windowMs);
         }
         PrefillEndpoint endpoint = stableEndpoint(stableStatus());
-        when(endpoint.reserveSingle(any(), anyLong()))
-                .thenAnswer(ignored -> ReservationResult.success(mock(SingleReservation.class)));
         DeliveryStrategy delivery = mock(DeliveryStrategy.class);
         WorkerBatcher runtime = runningRuntime(config, endpoint, delivery, mock(PrefillTtftEstimator.class));
         List<DecisionGroup> published = new CopyOnWriteArrayList<>();
@@ -448,7 +435,7 @@ class WorkerBatcherSchedulingTest {
                 for (ScheduledRequest member : members) {
                     assertTrue(runtime.ownedState().removeQueuedRequest(member));
                 }
-                return new WorkView(System.currentTimeMillis(), List.of(), List.of(), 0L);
+                return new WorkView(System.currentTimeMillis(), List.of(), 0L);
             });
             doAnswer(ignored -> {
                 for (ScheduledRequest member : members) {
@@ -477,7 +464,7 @@ class WorkerBatcherSchedulingTest {
             assertEquals(count, group.committedSize());
             assertEquals(expectedReason, group.reason());
             assertEquals(policy, group.policy());
-            assertEquals(dispatcher, group.dispatcher());
+            assertEquals("NON_BATCH", group.dispatcher());
             assertEquals("10.0.0.1", group.worker());
             assertTrue(group.requestWaitMs() >= 0L);
         }
@@ -513,6 +500,7 @@ class WorkerBatcherSchedulingTest {
         EndpointEventHandler eventHandler = mock(EndpointEventHandler.class);
         WorkerBatcher runtime = new WorkerBatcher(
                 "retired-commit", endpoint, () -> config, delivery, mock(PrefillTtftEstimator.class), eventHandler, new QueueCapacity());
+        useRealReservations(endpoint, runtime);
         runtimes.add(runtime);
         runtime.start();
 
@@ -564,6 +552,7 @@ class WorkerBatcherSchedulingTest {
         EventDrivenBlock delivery = new EventDrivenBlock();
         WorkerBatcher runtime = new WorkerBatcher("hot-window-delivery", endpoint, current::get, delivery, delivery,
                 mock(EndpointEventHandler.class), new QueueCapacity());
+        useRealReservations(endpoint, runtime);
         runtimes.add(runtime);
         runtime.start();
 
@@ -594,16 +583,22 @@ class WorkerBatcherSchedulingTest {
         WorkerBatcher runtime = new WorkerBatcher(
                 "scheduling-test", endpoint, () -> config, delivery, estimator,
                 mock(EndpointEventHandler.class), new QueueCapacity());
+        useRealReservations(endpoint, runtime);
         runtimes.add(runtime);
         runtime.start();
         return runtime;
+    }
+
+    private static void useRealReservations(PrefillEndpoint endpoint, WorkerBatcher runtime) {
+        when(endpoint.reserveSingle(any(), anyLong())).thenAnswer(call ->
+                runtime.ownedState().reserveSingle(call.getArgument(0), call.getArgument(1)));
     }
 
     private static FlexlbConfig singleConfig() {
         FlexlbConfig config = org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useSingleDecision(config);
-        SchedulingTestConfig.useBatchDispatcher(config);
+        SchedulingTestConfig.useNonBatchDispatcher(config);
         return config;
     }
 
@@ -615,7 +610,7 @@ class WorkerBatcherSchedulingTest {
         decision.setMaxRequests(2);
         decision.setMaxCollectionWaitMs(60_000L);
         decision.setMaxPredictedExecutionMs(500L);
-        SchedulingTestConfig.useBatchDispatcher(config);
+        SchedulingTestConfig.useNonBatchDispatcher(config);
         return config;
     }
 
@@ -650,6 +645,7 @@ class WorkerBatcherSchedulingTest {
         when(predictor.evaluator())
                 .thenReturn(mock(PrefillTimePredictor.Evaluator.class));
         PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
+        when(endpoint.tryReserveEngineSubQueueSlot(any())).thenReturn(true);
         when(endpoint.getStatus()).thenReturn(status);
         when(status.getRole()).thenReturn(RoleType.PREFILL);
         when(endpoint.getPredictor()).thenReturn(predictor);

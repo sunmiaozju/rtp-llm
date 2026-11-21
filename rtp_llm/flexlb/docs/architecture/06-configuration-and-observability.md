@@ -92,9 +92,8 @@ QUEUE + NON_BATCH 选路不按该上限剔除 Prefill，子队列等待项不占
 `min(scheduler.maxQueuedRequests, 当前形态的逻辑端点数 × maxInflightPerPrefillWorker × 倍数)` 个待交付名额。
 PREFILL 与 PDFUSION 的端点和待交付名额不合并计算。
 共享名额满时请求留在全局队列等待重新选路。QUEUE + NON_BATCH 下，`scheduler.maxQueuedRequests` 是
-GlobalQueue 和 EngineSubQueue 合计的总排队上限；其他 QUEUE 模式仍只按 GlobalQueue 深度判满。
+GlobalQueue 和 EngineSubQueue 合计的总排队上限。NON_BATCH_V2 也对主队列与 Prefill 子队列合计限流。
 高优新请求仍只从 GlobalQueue 寻找低优受害者。
-BATCH 的批次占位同样使用请求的上限。
 端点创建时固定其工作模式，正常切换调度模式需重启 Master。
 更新后进入的请求使用新值，已进入调度流程的请求保留原有快照。
 降低上限时，已有占位继续保持，直到完成或清理后才按新上限接收请求。
@@ -224,7 +223,7 @@ UniConfig / Nacos 的 v3 部分更新示例：
   `mainQueueMaxAddAttempts` 控制 `NON_BATCH_V2` 主队列一次入队的总尝试次数（含首次），默认 `3`，
   必须是正整数。最后一次申请名额失败后仍可抢占；发起抢占的请求不再重试，释放的名额可由其他请求使用。
   热更新后，新发起的入队操作使用新值，已开始的入队操作沿用原值。
-- `dispatcher`：`BATCH` / `NON_BATCH`。可用
+- `dispatcher`：`NON_BATCH_V2`（默认）/ `NON_BATCH`。显式配置 `BATCH` 会被拒绝。可用
   `maxInflightPerEncoderWorker` 限制每台 Encoder 的在途请求数；未配置时不设额外上限，
   不影响未配置 Encoder 的模型。
 - `router`：角色 availability、execution estimator、selector、cache affinity 和

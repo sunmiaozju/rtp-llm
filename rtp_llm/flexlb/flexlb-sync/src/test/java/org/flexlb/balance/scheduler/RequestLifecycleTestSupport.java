@@ -1,7 +1,6 @@
 package org.flexlb.balance.scheduler;
 
 import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
 import org.flexlb.balance.estimate.WorkView;
 import org.flexlb.balance.scheduler.RequestSlot.AdmissionHandle;
 import org.flexlb.balance.scheduler.RequestSlot.DeliveryClaim;
@@ -83,13 +82,9 @@ final class RequestLifecycleTestSupport {
 
     static DeliveryClaim claimRoute(RequestRegistry registry, ScheduledRequest item, BooleanSupplier handoff) {
         DeliveryClaim claim = claimRouteWithoutPrediction(registry, item, handoff);
-        if (claim != null) { registry.setDeliveryPrediction(claim, emptyWork(), 30_000L); }
-        return claim;
-    }
-
-    static DeliveryClaim claimBatch(RequestRegistry registry, ScheduledRequest item, long batchId, BooleanSupplier handoff) {
-        DeliveryClaim claim = claimBatchWithoutPrediction(registry, item, batchId, handoff);
-        if (claim != null) { registry.setDeliveryPrediction(claim, emptyWork(), 30_000L); }
+        if (claim != null) {
+            registry.publishRoute(claim, emptyWork(), 30_000L);
+        }
         return claim;
     }
 
@@ -99,25 +94,13 @@ final class RequestLifecycleTestSupport {
         return registry.claimRouteDelivery(item, admission);
     }
 
-    static DeliveryClaim claimBatchWithoutPrediction(RequestRegistry registry, ScheduledRequest item, long batchId,
-            BooleanSupplier handoff) {
-        var transaction = org.mockito.Mockito.mock(BatchDeliveryStrategy.BatchTransaction.class);
-        org.mockito.Mockito.when(transaction.batchId()).thenReturn(batchId);
-        org.mockito.Mockito.when(transaction.transferToEndpoint(item)).thenAnswer(call -> handoff.getAsBoolean());
-        return registry.claimBatchDelivery(item, transaction);
-    }
-
     private static WorkView emptyWork() {
-        return new WorkView(System.currentTimeMillis(), java.util.List.of(), java.util.List.of(), 0L);
+        return new WorkView(System.currentTimeMillis(), java.util.List.of(), 0L);
     }
 
     // State-only fixtures deliberately seed a phase without executing publication or timers.
     static void startRouteDelivery(RequestSlot slot) {
         assertNotNull(slot.claimDelivery(slot.activeItem(), DeliveryClaimKind.ROUTE_DECISION, 0L, () -> true));
-    }
-
-    static void startBatchDelivery(RequestSlot slot, long batchId) {
-        assertNotNull(slot.claimDelivery(slot.activeItem(), DeliveryClaimKind.BATCH_ENQUEUE, batchId, () -> true));
     }
 
     static void markAcknowledged(RequestSlot slot) {
@@ -129,10 +112,10 @@ final class RequestLifecycleTestSupport {
     }
 
     static boolean prepareMember(RequestRegistry registry, ScheduledRequest item) {
-        var transaction = org.mockito.Mockito.mock(BatchDeliveryStrategy.BatchTransaction.class);
-        org.mockito.Mockito.when(transaction.append(item))
+        var transaction = org.mockito.Mockito.mock(org.flexlb.balance.delivery.NonBatchTransaction.class);
+        org.mockito.Mockito.when(transaction.append(org.mockito.Mockito.eq(item), org.mockito.Mockito.any()))
                 .thenReturn(org.flexlb.balance.delivery.DeliveryBlockReason.Attempt.accepted(item));
-        return registry.prepareBatchMember(item, transaction).accepted();
+        return registry.prepareRouteMember(item, transaction, DeliveryStrategyTestSupport.EVALUATOR).accepted();
     }
 
     static void awaitGlobalCapacityWaiters(RequestScheduler scheduler, int expected)

@@ -749,10 +749,11 @@ class ConfigServiceTest {
 
     @Test
     void shipped_examples_parse_using_the_runtime_contract() throws Exception {
-        for (String name : new String[]{"flexlb-queue-priority-batch.json", "flexlb-queue-priority-non-batch.json"}) {
-            String document = java.nio.file.Files.readString(java.nio.file.Path.of("../docs/config-examples", name));
-            assertEquals(3, ConfigService.parse(document).getSchemaVersion());
-        }
+        String document = java.nio.file.Files.readString(
+                java.nio.file.Path.of("../docs/config-examples", "flexlb-queue-priority-non-batch.json"));
+        FlexlbConfig config = ConfigService.parse(document);
+        assertEquals(3, config.getSchemaVersion());
+        assertEquals(DispatcherConfig.Type.NON_BATCH, config.getDispatcher().getType());
     }
 
     private static void assertInvalid(String patch, String field) {

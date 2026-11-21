@@ -80,8 +80,8 @@ The online loader accepts schema 3 only. Duplicate keys, unknown or inactive fie
 
 | Setting | Schema 3 behavior |
 | --- | --- |
-| `dispatcher.maxInflightPerPrefillWorker` | Positive integer, default 2 in every mode. BATCH counts batches; NON_BATCH counts requests. |
-| `dispatcher.fetchAttachTimeoutMs` | Positive integer, default 3000 ms. BATCH sends this as Engine `fetch_attach_timeout_ms`, limiting the wait for `FetchResponse` attachment. Engine caps it by the remaining request timeout when present. Once attached, this timer does not limit generation duration. |
+| `dispatcher.type` | `NON_BATCH_V2` (default) or `NON_BATCH`. Explicit `BATCH` configurations are rejected. |
+| `dispatcher.maxInflightPerPrefillWorker` | Positive request count, default 2. |
 | `dispatcher.dispatchStarvationThresholdMs` | NON_BATCH_V2: 500 ms by default; hot-reloadable; 0 means strict order. |
 | `dispatcher.cacheMatchResultTtlMs` | NON_BATCH_V2: default 30000 ms; positive; hot-reloadable. |
 | Prefill ownership | Work remains tracked until authoritative completion, safe rollback or retirement. PDFUSION has no distinct Prefill-completion signal, so its ownership lasts through request termination. |
@@ -112,7 +112,7 @@ export FLEXLB_CONFIG='{
     "ordering": {"type": "FIFO"},
     "decision": {"type": "FIXED_WINDOW", "maxRequests": 8, "maxCollectionWaitMs": 300}
   },
-  "dispatcher": {"type": "BATCH", "maxInflightPerPrefillWorker": 2, "fetchAttachTimeoutMs": 3000},
+  "dispatcher": {"type": "NON_BATCH_V2", "maxInflightPerPrefillWorker": 2},
   "requestLifecycle": {
     "request": {"timeoutMs": 60000},
     "decision": {"lifetime": 2.0}
@@ -252,20 +252,18 @@ interval any client uses (grpc-java clients never ping more often than every 10 
 
 ### Scheduler, ordering, decision, and dispatcher
 
-Under `QUEUE`, ordering, decision formation, and delivery are three independent
-axes:
+With `dispatcher.type=NON_BATCH`, ordering and decision formation are independent:
 
 | Scheduler | Queue ordering | Decision | Dispatcher | Behavior |
 | --- | --- | --- | --- | --- |
 | `QUEUE` | `FIFO` | `SINGLE` | `NON_BATCH` | Form singleton decisions; frontend sends |
-| `QUEUE` | `FIFO` | `SINGLE` | `BATCH` | Master sends singleton `EnqueueBatch` calls |
 | `QUEUE` | `FIFO` | `FIXED_WINDOW` | `NON_BATCH` | Form bounded groups; frontend sends each routed request |
-| `QUEUE` | `FIFO` | `FIXED_WINDOW` | `BATCH` | Form bounded groups; Master sends `EnqueueBatch` |
 
-`PRIORITY` can replace `FIFO` in all four combinations. `FIFO`/`PRIORITY` choose which
-request is considered first, `SINGLE`/`FIXED_WINDOW` choose how many requests form
-one decision group, and `NON_BATCH`/`BATCH` choose whether the frontend or Master
-sends them.
+`PRIORITY` can replace `FIFO` in both combinations. `SINGLE`/`FIXED_WINDOW`
+choose how many requests form one decision group, not how the requests are sent.
+Both dispatchers return a route for each request; the frontend sends the request
+to the selected engine. `NON_BATCH_V2` selects Prefill and Decode in separate
+queue stages and does not use the legacy decision groups.
 
 `FIXED_WINDOW` uses `maxRequests` (positive integer, default 8),
 `maxCollectionWaitMs` (default 300 ms), and optional `maxPredictedExecutionMs`.
@@ -277,7 +275,6 @@ exceed it. A zero collection window can still group already-waiting requests.
 Configuration examples:
 
 - [QUEUE + PRIORITY + NON_BATCH](docs/config-examples/flexlb-queue-priority-non-batch.json)
-- [QUEUE + PRIORITY + BATCH](docs/config-examples/flexlb-queue-priority-batch.json)
 
 NON_BATCH uses `dispatcher.maxInflightPerPrefillWorker` as its per-worker request limit. Example:
 

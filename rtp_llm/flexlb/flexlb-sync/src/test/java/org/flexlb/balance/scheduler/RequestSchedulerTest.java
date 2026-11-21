@@ -59,7 +59,7 @@ class RequestSchedulerTest {
 
     @Test
     void stoppedWorkerDuringRoutePublicationIsPlannedAgainByGlobalQueue() throws Exception {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         RequestRegistry registry = new RequestRegistry(service, mock(BatchSchedulerReporter.class),
@@ -119,7 +119,7 @@ class RequestSchedulerTest {
     @NullSource
     @ValueSource(strings = {"healthy-group", "unavailable-group"})
     void unavailableRequestMustNotStopAHealthyFollowingRequest(String healthyGroup) {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         DefaultRouter router = mockRouter();
@@ -158,7 +158,7 @@ class RequestSchedulerTest {
 
     @Test
     void priorityRescueConsumesTheOriginalExactRoute() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.allowVictim(
                 config, VictimStage.DECODE_RESERVED);
         ConfigService configService = mock(ConfigService.class);
@@ -212,7 +212,7 @@ class RequestSchedulerTest {
 
     @Test
     void fullQueueReplacementAllowsDecodeResourcePreemption() throws Exception {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.allowVictim(config, VictimStage.DECODE_ENGINE_OWNED);
         config.getScheduler().setMaxQueuedRequests(1);
         ConfigService configService = mock(ConfigService.class);
@@ -267,7 +267,7 @@ class RequestSchedulerTest {
 
     @Test
     void nonBatchWaitsWhenEveryEngineRequestSlotIsOccupied() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useFixedWindowDecision(config);
         SchedulingTestConfig.useNonBatchDispatcher(config);
@@ -318,7 +318,7 @@ class RequestSchedulerTest {
 
     @Test
     void planningContinuesWithoutAnAvailablePrefillEndpoint() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useFixedWindowDecision(config)
                 .setMaxRequests(2);
@@ -355,7 +355,7 @@ class RequestSchedulerTest {
     @Test
     void singleDecisionDoesNotSerializeTheGlobalPlanningFrontier()
             throws Exception {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useSingleDecision(config);
         ConfigService configService = mock(ConfigService.class);
@@ -426,7 +426,7 @@ class RequestSchedulerTest {
 
     @Test
     void higherPriorityRequestRunsAheadOfBlockedLowerPriorityFrontier() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.usePriorityQueue(config);
         SchedulingTestConfig.useSingleDecision(config);
         ConfigService configService = mock(ConfigService.class);
@@ -474,7 +474,7 @@ class RequestSchedulerTest {
 
     @Test
     void expiredHeadDoesNotConsumeTheCapacityOpportunity() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         // This contract isolates the ordered-head retry semantics, so it asks
         // for a one-request planning frontier explicitly. A wider frontier may
@@ -531,7 +531,7 @@ class RequestSchedulerTest {
 
     @Test
     void endpointConflictAllowsIndependentSuffixCommit() throws Exception {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         SchedulingTestConfig.useFixedWindowDecision(config)
                 .setMaxRequests(2);
@@ -787,7 +787,7 @@ class RequestSchedulerTest {
 
     @Test
     void staleEndpointConflictReplansWithoutFixedRetryBudget() {
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useFifoQueue(config);
         ConfigService configService = mock(ConfigService.class);
         when(configService.loadBalanceConfig()).thenReturn(config);
@@ -843,11 +843,11 @@ class RequestSchedulerTest {
     void submissionUsesRequestSchedulerModeWithCurrentQueueConfig() throws Exception {
         Fixture fixture = new Fixture(true);
         try {
-            FlexlbConfig requestConfig = SchedulingTestConfig.batchConfig();
+            FlexlbConfig requestConfig = SchedulingTestConfig.routeConfig();
             SchedulingTestConfig.usePriorityQueue(requestConfig);
             when(fixture.context.getConfig()).thenReturn(requestConfig);
             when(fixture.context.getFuture()).thenReturn(fixture.future);
-            FlexlbConfig currentConfig = SchedulingTestConfig.batchConfig();
+            FlexlbConfig currentConfig = SchedulingTestConfig.routeConfig();
             SchedulingTestConfig.usePriorityQueue(currentConfig).setMaxQueuedRequests(2);
             when(fixture.configService.loadBalanceConfig()).thenReturn(currentConfig);
             when(fixture.router.select(fixture.context, null)).thenReturn(
@@ -869,7 +869,7 @@ class RequestSchedulerTest {
     void submissionUsesCurrentGlobalCapacityInsteadOfRequestSnapshot() throws Exception {
         Fixture fixture = new Fixture(true);
         try {
-            FlexlbConfig currentConfig = SchedulingTestConfig.batchConfig();
+            FlexlbConfig currentConfig = SchedulingTestConfig.routeConfig();
             SchedulingTestConfig.usePriorityQueue(currentConfig).setMaxQueuedRequests(1);
             when(fixture.configService.loadBalanceConfig()).thenReturn(currentConfig);
             when(fixture.router.select(fixture.context, null)).thenReturn(
@@ -1021,7 +1021,7 @@ class RequestSchedulerTest {
             this.slotsReleasedDuringPublication = slotsReleasedDuringPublication;
             this.pauseHeadRetry = pauseHeadRetry;
             this.headFuture = headFuture;
-            FlexlbConfig config = SchedulingTestConfig.batchConfig();
+            FlexlbConfig config = SchedulingTestConfig.routeConfig();
             if (plannerThreads > 0) {
                 config = spy(config);
                 var runtime = spy(config.getInternalRuntime());
@@ -1168,7 +1168,7 @@ class RequestSchedulerTest {
 
     private static final class Fixture {
         private final long requestId = 701L;
-        private final FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        private final FlexlbConfig config = SchedulingTestConfig.routeConfig();
         private final ConfigService configService = mock(ConfigService.class);
         private final DefaultRouter router = mockRouter();
         private final EvictionManager evictionManager = mock(EvictionManager.class);

@@ -340,11 +340,12 @@ class MainQueueConsumerTest {
 
     private CountDownLatch signalOnFullSubqueue(Request request, PrefillEndpoint chosenEndpoint) {
         CountDownLatch blocked = new CountDownLatch(1);
+        String chosenAddress = chosenEndpoint.ipPort();
         doAnswer(call -> {
             blocked.countDown();
             return null;
         }).when(reporter)
-                .blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL, chosenEndpoint.ipPort());
+                .blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL, chosenAddress);
         return blocked;
     }
 

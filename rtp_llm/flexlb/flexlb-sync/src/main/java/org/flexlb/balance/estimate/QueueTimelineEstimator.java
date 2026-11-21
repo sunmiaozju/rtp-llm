@@ -2,7 +2,6 @@ package org.flexlb.balance.estimate;
 
 import org.flexlb.balance.planner.GroupPlanner;
 import org.flexlb.balance.prediction.InvalidPrefillPredictionException;
-import org.flexlb.balance.prediction.PrefillBatchFeatures;
 import org.flexlb.balance.prediction.PrefillPredictionBoundary;
 import org.flexlb.balance.prediction.PrefillTimePredictor;
 
@@ -212,7 +211,7 @@ final class QueueTimelineEstimator {
 
             try {
                 PrefillTtftEstimate.GroupService service =
-                        ttftEstimationRule.service(plan, predictions, planning);
+                        ttftEstimationRule.service(plan, predictions);
                 if (probePosition < plan.items().size()) {
                     return candidate(
                             PrefillTtftEstimate.Candidate.State.MODELED,
@@ -572,11 +571,6 @@ final class QueueTimelineEstimator {
         private long cachedSeqLen = -1L;
         private long cachedHitCache = -1L;
         private long cachedSingleMs;
-        private Object cachedBatchSnapshot;
-        private long cachedBatchSeqLen = -1L;
-        private long cachedBatchHitCache = -1L;
-        private double cachedBatchMs;
-        private PrefillBatchFeatures cachedSingletonBatch;
 
         private PredictionBoundary() {
         }
@@ -621,104 +615,6 @@ final class QueueTimelineEstimator {
             return singleMs(seqLen, hitCache);
         }
 
-        @Override
-        public double batchPlanningDurationMs(
-                List<GroupPlanner.Item> items) {
-            try {
-                return PrefillPredictionBoundary.predictDecisionGroupMs(
-                        evaluator, batchFeatures(items));
-            } catch (InvalidPrefillPredictionException invalidPrediction) {
-                throw PredictionFailure.invalid(invalidPrediction);
-            } catch (RuntimeException predictionFailure) {
-                throw PredictionFailure.execution(predictionFailure);
-            }
-        }
-
-        @Override
-        public PrefillTimePredictor.BatchPrediction newBatchPrediction() {
-            PrefillTimePredictor.BatchPrediction batch = evaluator.newBatchPrediction();
-            return (seqLen, hitCache) -> {
-                try {
-                    return PrefillPredictionBoundary.requireValidDecisionGroupMs(batch.append(seqLen, hitCache));
-                } catch (InvalidPrefillPredictionException invalidPrediction) {
-                    throw PredictionFailure.invalid(invalidPrediction);
-                } catch (RuntimeException predictionFailure) {
-                    throw PredictionFailure.execution(predictionFailure);
-                }
-            };
-        }
-
-        private double singletonBatchPlanningDurationMs(
-                long seqLen, long hitCache) {
-            Object snapshot = evaluator.snapshotIdentity();
-            if (cachedBatchSnapshot == snapshot
-                    && cachedBatchSeqLen == seqLen
-                    && cachedBatchHitCache == hitCache) {
-                return cachedBatchMs;
-            }
-            try {
-                double predicted = PrefillPredictionBoundary.predictDecisionGroupMs(
-                        evaluator, singletonBatch(seqLen, hitCache));
-                cachedBatchSnapshot = snapshot;
-                cachedBatchSeqLen = seqLen;
-                cachedBatchHitCache = hitCache;
-                cachedBatchMs = predicted;
-                return predicted;
-            } catch (InvalidPrefillPredictionException invalidPrediction) {
-                throw PredictionFailure.invalid(invalidPrediction);
-            } catch (RuntimeException predictionFailure) {
-                throw PredictionFailure.execution(predictionFailure);
-            }
-        }
-
-        @Override
-        public long batchDurationMs(
-                List<GroupPlanner.Item> items) {
-            try {
-                return PrefillPredictionBoundary.predictCommittedBatchMs(
-                        evaluator, batchFeatures(items));
-            } catch (InvalidPrefillPredictionException invalidPrediction) {
-                throw PredictionFailure.invalid(invalidPrediction);
-            } catch (RuntimeException predictionFailure) {
-                throw PredictionFailure.execution(predictionFailure);
-            }
-        }
-
-        @Override
-        public long singletonBatchDurationMs(
-                long seqLen, long hitCache) {
-            return committedGroupDurationMs(
-                    singletonBatchPlanningDurationMs(seqLen, hitCache));
-        }
-
-        private PrefillBatchFeatures singletonBatch(
-                long seqLen, long hitCache) {
-            PrefillBatchFeatures features = cachedSingletonBatch;
-            if (features == null
-                    || features.items().getFirst().seqLen() != seqLen
-                    || features.items().getFirst().hitCache() != hitCache) {
-                features = new PrefillBatchFeatures(List.of(
-                        new PrefillBatchFeatures.Item(seqLen, hitCache)));
-                cachedSingletonBatch = features;
-            }
-            return features;
-        }
-
-        private long committedGroupDurationMs(double predictedMs) {
-            try {
-                return PrefillPredictionBoundary.committedDecisionGroupMs(predictedMs);
-            } catch (InvalidPrefillPredictionException invalidPrediction) {
-                throw PredictionFailure.invalid(invalidPrediction);
-            }
-        }
-
-        private static PrefillBatchFeatures batchFeatures(
-                List<GroupPlanner.Item> items) {
-            return PrefillBatchFeatures.from(
-                    items,
-                    GroupPlanner.Item::seqLen,
-                    GroupPlanner.Item::hitCache);
-        }
     }
 
     /** Predictor failures preserve the distinction between execution and invalid values. */

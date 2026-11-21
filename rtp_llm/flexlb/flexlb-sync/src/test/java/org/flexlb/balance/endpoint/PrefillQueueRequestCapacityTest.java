@@ -7,8 +7,6 @@ import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.delivery.DeliveryTransaction;
 import org.flexlb.balance.endpoint.prefill.CommitResult;
-import org.flexlb.balance.endpoint.prefill.ReservationResult;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
@@ -503,53 +501,6 @@ class PrefillQueueRequestCapacityTest {
             assertTrue(EndpointTestSupport.offer(fixture.endpoint, item(config, fixture.endpoint, 2L)));
             assertTrue(prepared.await(5L, TimeUnit.SECONDS));
             assertEquals(2, groupSize.get(), "concurrent batch limit must not change each group's size");
-        }
-    }
-
-    @Test
-    void defaultBatchLimitAllowsTwoReservationsAndReopensAfterRelease() {
-        FlexlbConfig config = productionConfig();
-        try (Fixture fixture = fixture(config)) {
-            var items = new ArrayList<ScheduledRequest>();
-            var reservations = new ArrayList<BatchReservation>();
-            try {
-                for (long id = 1L; id <= 3L; id++) {
-                    ScheduledRequest queued = item(config, fixture.endpoint, id);
-                    items.add(queued);
-                    assertEquals(2, queued.maxInflightBatchesPerPrefillWorker());
-                    assertTrue(EndpointTestSupport.offer(fixture.endpoint, queued),
-                            "BATCH does not impose an additional request-count limit on the waiting queue");
-                }
-                for (int index = 0; index < 2; index++) {
-                    var result = fixture.endpoint.reserveBatch(items.get(index), 100L + index,
-                            items.get(index).maxInflightBatchesPerPrefillWorker());
-                    assertEquals(ReservationResult.Status.SUCCESS, result.status());
-                    reservations.add(result.reservation());
-                }
-                assertEquals(ReservationResult.Status.CAPACITY_FULL,
-                        fixture.endpoint.reserveBatch(items.get(2), 102L, 2).status());
-                reservations.removeFirst().close();
-                var replacement = fixture.endpoint.reserveBatch(items.get(2), 102L, 2);
-                assertEquals(ReservationResult.Status.SUCCESS, replacement.status());
-                reservations.add(replacement.reservation());
-            } finally {
-                reservations.forEach(BatchReservation::close);
-            }
-        }
-    }
-
-    @Test
-    void batchModeDoesNotReportTwoLevelQueueResidenceOrOldestWait() {
-        FlexlbConfig config = productionConfig();
-        config.getScheduler().getDecision().setMaxCollectionWaitMs(60_000L);
-        try (Fixture fixture = fixture(config)) {
-            ScheduledRequest waiting = item(config, fixture.endpoint, 1L);
-            assertTrue(EndpointTestSupport.offer(fixture.endpoint, waiting));
-            fixture.endpoint.reportBatchMetrics(fixture.reporter);
-            assertTrue(fixture.endpoint.removeQueued(waiting, "cancel waiting batch request"));
-
-            verify(fixture.reporter, never()).reportEngineSubQueueOldestWaitMs(any(), any(), anyLong());
-            verify(fixture.reporter, never()).reportEngineSubQueueResidenceMs(any(), any(), anyLong());
         }
     }
 

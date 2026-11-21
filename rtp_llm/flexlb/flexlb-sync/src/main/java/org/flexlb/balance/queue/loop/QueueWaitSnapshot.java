@@ -22,7 +22,6 @@ public final class QueueWaitSnapshot {
     private final long queueVersion;
     private final int[] requestCountsByPriority;
     private final long prefillRequests;
-    private final int prefillBatchSlots;
     private final DecodeRoutingView decode;
     private volatile Map<String, Object> diagnostics;
 
@@ -32,7 +31,6 @@ public final class QueueWaitSnapshot {
                              long queueVersion,
                              int[] requestCountsByPriority,
                              long prefillRequests,
-                             int prefillBatchSlots,
                              DecodeRoutingView decode) {
         this.endpoint = endpoint;
         this.cause = cause;
@@ -40,7 +38,6 @@ public final class QueueWaitSnapshot {
         this.queueVersion = queueVersion;
         this.requestCountsByPriority = requestCountsByPriority;
         this.prefillRequests = prefillRequests;
-        this.prefillBatchSlots = prefillBatchSlots;
         this.decode = decode;
     }
 
@@ -66,7 +63,6 @@ public final class QueueWaitSnapshot {
         details.put("queueVersion", queueVersion);
         details.put("priorityCounts", Collections.unmodifiableMap(priorityCounts));
         details.put("prefillRequests", prefillRequests);
-        details.put("prefillBatchSlots", prefillBatchSlots);
         if (decode != null) {
             details.put("decode", Map.of("endpoint", decode.address(),
                     "version", decode.admissionVersion(),

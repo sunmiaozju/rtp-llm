@@ -1,4 +1,4 @@
-"""FlexLB stability monitor — concurrent polling of JVM, inflight, and mock-engine metrics."""
+"""Poll JVM metrics, the FlexLB scheduler count, and mock-engine inflight request counts."""
 
 from __future__ import annotations
 
@@ -91,27 +91,15 @@ async def _poll_jvm(
         }
 
 
-async def _poll_inflight(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
+async def _poll_scheduler_inflight(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]:
     try:
         async with session.get(url) as r:
             r.raise_for_status()
             data = await r.json()
-        return {
-            "scheduler_inflight": data.get("scheduler_inflight", 0),
-            "prefill_inflight": {
-                ep.get("ip_port", "?"): ep.get("inflight_batches", 0)
-                for ep in data.get("prefill_endpoints", [])
-            },
-            "decode_inflight": {
-                ep.get("ip_port", "?"): ep.get("inflight_requests", 0)
-                for ep in data.get("decode_endpoints", [])
-            },
-        }
+        return {"scheduler_inflight": data.get("scheduler_inflight")}
     except Exception as exc:
         return {
             "scheduler_inflight": None,
-            "prefill_inflight": None,
-            "decode_inflight": None,
             "inflight_error": _err(exc),
         }
 
@@ -121,7 +109,17 @@ async def _poll_mock(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]
         async with session.get(url) as r:
             r.raise_for_status()
             data = await r.json()
+        engines = data if isinstance(data, list) else data["engines"]
+        inflight_by_role: dict[str, dict[str, int]] = {"prefill": {}, "decode": {}}
+        for engine in engines:
+            counts = inflight_by_role.get(engine.get("role"))
+            address = engine.get("grpc_addr")
+            count = engine.get("inflight")
+            if counts is not None and address and type(count) is int and count >= 0:
+                counts[address] = count
         return {
+            "prefill_inflight": inflight_by_role["prefill"],
+            "decode_inflight": inflight_by_role["decode"],
             "mock_engines": [
                 {
                     "name": e.get("name", ""),
@@ -129,11 +127,16 @@ async def _poll_mock(session: aiohttp.ClientSession, url: str) -> Dict[str, Any]
                     "accepted": e.get("accepted", 0),
                     "completed": e.get("completed", 0),
                 }
-                for e in data.get("engines", [])
+                for e in engines
             ]
         }
     except Exception as exc:
-        return {"mock_engines": None, "mock_error": _err(exc)}
+        return {
+            "prefill_inflight": None,
+            "decode_inflight": None,
+            "mock_engines": None,
+            "mock_error": _err(exc),
+        }
 
 
 async def main() -> None:
@@ -159,7 +162,7 @@ async def main() -> None:
                 poll_start = time.monotonic()
                 jvm, inflight, mock = await asyncio.gather(
                     _poll_jvm(session, mgmt_base, prom_path),
-                    _poll_inflight(session, inflight_url),
+                    _poll_scheduler_inflight(session, inflight_url),
                     _poll_mock(session, mock_url),
                 )
                 record: Dict[str, Any] = {

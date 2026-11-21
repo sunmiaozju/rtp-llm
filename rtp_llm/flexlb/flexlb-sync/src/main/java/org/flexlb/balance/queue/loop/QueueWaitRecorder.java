@@ -31,18 +31,16 @@ public final class QueueWaitRecorder {
 
     /**
      * 记下队首 {@code head} 等待的原因 {@code reason}，同时在队列锁内读出各优先级的排队数、
-     * Prefill 上的请求数和占用的 batch 位置。
+     * Prefill 上的请求数。
      */
     void record(ScheduledRequest head, String reason) {
         int[] requestCountsByPriority = new int[PriorityNormalizer.MAX_PRIORITY + 1];
         long version;
         long prefillRequests;
-        int prefillBatchSlots;
         queueState.lock();
         try {
             version = queueState.queueVersion();
             prefillRequests = prefillState.observedRequestCount();
-            prefillBatchSlots = prefillState.batchLeasesInUse();
             for (int priority = 0; priority < requestCountsByPriority.length; priority++) {
                 requestCountsByPriority[priority] = queueState.activeIndex().size(priority);
             }
@@ -51,7 +49,7 @@ public final class QueueWaitRecorder {
         }
         DecodeRoutingView decode = head.decodeEp() == null ? null : head.decodeEp().routingView();
         latest = new QueueWaitSnapshot(key, reason, System.currentTimeMillis(), version, requestCountsByPriority,
-                prefillRequests, prefillBatchSlots, decode);
+                prefillRequests, decode);
     }
 
     public Map<String, Object> diagnostics() {

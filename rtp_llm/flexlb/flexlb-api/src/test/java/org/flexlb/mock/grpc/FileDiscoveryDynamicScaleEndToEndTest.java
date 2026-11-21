@@ -34,7 +34,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -117,8 +116,6 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
     void setUpFileDiscoveryPipeline() throws Exception {
         // Second initial prefill worker (B), started by the base helper.
         workerB = addPrefillWorker(MockWorkerBehavior.builder().build());
-        completeAcceptedBatches(mockPrefillWorker);
-        completeAcceptedBatches(workerB);
 
         // Initial discovery file: A + B on the prefill domain, base decode worker.
         discoveryFile = tempDir.resolve("discovery-" + System.nanoTime() + ".json");
@@ -243,19 +240,11 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
                         + "routable prefill endpoints for both");
         long initialConvergenceMs = elapsedMs(startMs);
 
-        drainRequests(6);
-        awaitUntil(3_000, () -> mockPrefillWorker.getEnqueueCount() >= 1
-                        && workerB.getEnqueueCount() >= 1,
-                "requests should be distributed across the two initial workers");
-        int countABeforeRemoval = mockPrefillWorker.getEnqueueCount();
-        int countBBeforeAdd = workerB.getEnqueueCount();
-        assertTrue(countABeforeRemoval >= 1 && countBBeforeAdd >= 1,
-                "both initial workers must have received requests");
+        assertEquals(java.util.Set.of(prefillIpPort, workerIpPort(workerB)), drainRequests(6));
 
         // ─── Phase 2: start C (NOT registered) → add to file → it must converge ───
         workerC = new MockPrefillWorker(MockWorkerBehavior.builder().build());
         workerC.start(0);
-        completeAcceptedBatches(workerC);
         String cIpPort = workerIpPort(workerC);
         writeDiscoveryFileAtomic(List.of(
                 physicalIpPort(prefillIp, prefillHttpPort),
@@ -267,8 +256,7 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
         long addConvergenceMs = -1;
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CONVERGENCE_CAP_MS);
         while (System.nanoTime() < deadline) {
-            drainRequests(3);
-            if (workerC.getEnqueueCount() > 0) {
+            if (drainRequests(3).contains(cIpPort)) {
                 cReceived.set(true);
                 addConvergenceMs = elapsedMs(addStartMs);
                 break;
@@ -293,16 +281,7 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
         long removeConvergenceMs = elapsedMs(removeStartMs);
 
         // EndpointRegistry no longer offers A, so the round-robin router cannot pick it.
-        int countAAtRemoval = mockPrefillWorker.getEnqueueCount();
-        int countBAtRemoval = workerB.getEnqueueCount();
-        int countCAtRemoval = workerC.getEnqueueCount();
-        drainRequests(9);
-        assertEquals(countAAtRemoval, mockPrefillWorker.getEnqueueCount(),
-                "removed worker A must not receive any new requests");
-        assertTrue(workerB.getEnqueueCount() > countBAtRemoval,
-                "worker B must keep serving after A's removal");
-        assertTrue(workerC.getEnqueueCount() > countCAtRemoval,
-                "worker C must keep serving after A's removal");
+        assertEquals(java.util.Set.of(workerIpPort(workerB), cIpPort), drainRequests(9));
 
         System.out.printf(
                 "FileDiscoveryDynamicScaleEndToEndTest convergence: initial=%dms, add=%dms, remove=%dms%n",
@@ -404,25 +383,34 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
     //  Helpers
     // ════════════════════════════════════════════════════════════════
 
-    private void completeAcceptedBatches(MockPrefillWorker worker) {
-        worker.getRpcService().onAcceptedBatch(batch -> {
-            worker.getRpcService().completeBatch(batch);
-            mockDecodeWorker.getRpcService().completeBatch(batch);
-        });
-    }
-
-    /** Submit {@code count} requests and wait for every ACK to complete successfully. */
-    private void drainRequests(int count) throws Exception {
-        List<CompletableFuture<Response>> futures = new ArrayList<>(count);
+    /**
+     * Route each request and publish its completion before routing the next one.
+     */
+    private java.util.Set<String> drainRequests(int count) throws Exception {
+        java.util.Set<String> selected = new java.util.HashSet<>();
         long firstId = requestIdCounter.getAndAdd(count);
         for (int i = 0; i < count; i++) {
-            futures.add(submitRequest(Long.toString(firstId + i)));
+            String id = Long.toString(firstId + i);
+            Response response = submitRequest(id).get(5, TimeUnit.SECONDS);
+            assertTrue(response.isSuccess(), "request " + id + " should succeed, code=" + response.getCode());
+            for (ServerStatus target : response.getServerStatus()) {
+                String address = target.getServerIp() + ":" + target.getHttpPort();
+                if (target.getRole() == RoleType.PREFILL) {
+                    selected.add(address);
+                }
+                if (target.getRole() == RoleType.DECODE) {
+                    mockDecodeWorker.getRpcService().completeRequest(id);
+                } else {
+                    MockPrefillWorker worker = address.equals(prefillIpPort) ? mockPrefillWorker
+                            : address.equals(workerIpPort(workerB)) ? workerB : workerC;
+                    assertNotNull(worker);
+                    worker.getRpcService().completeRequest(id);
+                }
+            }
+            awaitUntil(3_000, () -> scheduler.getTrackedRequestCount() == 0,
+                    "the routed request must finish through worker status polling");
         }
-        for (int i = 0; i < count; i++) {
-            Response response = futures.get(i).get(5, TimeUnit.SECONDS);
-            assertTrue(response.isSuccess(),
-                    "request " + (firstId + i) + " should succeed, code=" + response.getCode());
-        }
+        return selected;
     }
 
     /**

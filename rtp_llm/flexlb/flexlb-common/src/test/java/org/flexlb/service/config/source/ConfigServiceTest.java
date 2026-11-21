@@ -57,7 +57,7 @@ class ConfigServiceTest {
 
         ConfigService service = createService(List.of(nacosSource, environmentSource));
 
-        assertThat(service.loadBalanceConfig().isBatchDispatch()).isFalse();
+        assertThat(service.loadBalanceConfig().getDispatcher().typeName()).isEqualTo("NON_BATCH");
         assertThat(service.loadBalanceConfig().getObservability()
                 .getLogging().getLevel()).isEqualTo(LogLevel.WARN);
     }
@@ -71,7 +71,7 @@ class ConfigServiceTest {
         ConfigService service = createService(List.of(environmentSource(Map.of())));
 
         assertThat(unregisteredSource.loaded).isFalse();
-        assertThat(service.loadBalanceConfig().isBatchDispatch()).isTrue();
+        assertThat(service.loadBalanceConfig().getDispatcher().typeName()).isEqualTo("NON_BATCH_V2");
     }
 
     @Test
@@ -360,15 +360,15 @@ class ConfigServiceTest {
     void ordinaryTypeChangesKeepConfiguredSiblingFields() {
         FlexlbConfig base = FlexlbConfigMerger.mergeWithDefaults("""
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},
-                 "dispatcher":{"type":"BATCH","maxInflightPerPrefillWorker":7,"fetchAttachTimeoutMs":1500}}
+                 "dispatcher":{"type":"NON_BATCH_V2","maxInflightPerPrefillWorker":7,"prefillSubqueueLimitMultiplier":5}}
                 """);
 
         FlexlbConfig merged = FlexlbConfigMerger.merge(base,
                 "{\"dispatcher\":{\"type\":\"NON_BATCH\"}}", "test");
 
-        assertThat(merged.isBatchDispatch()).isFalse();
+        assertThat(merged.getDispatcher().typeName()).isEqualTo("NON_BATCH");
         assertThat(merged.getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(7);
-        assertThat(merged.getDispatcher().getFetchAttachTimeoutMs()).isEqualTo(1500);
+        assertThat(merged.getDispatcher().getPrefillSubqueueLimitMultiplier()).isEqualTo(5);
     }
 
     @Test
@@ -419,7 +419,7 @@ class ConfigServiceTest {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},
                  "scheduler":{"type":"QUEUE"},
-                 "dispatcher":{"type":"BATCH","maxInflightPerPrefillWorker":7,"fetchAttachTimeoutMs":1500}}
+                 "dispatcher":{"type":"NON_BATCH_V2","maxInflightPerPrefillWorker":7,"prefillSubqueueLimitMultiplier":5}}
                 """);
         ConfigService service = createService(List.of(environmentSource(Map.of()), source));
 
@@ -428,11 +428,13 @@ class ConfigServiceTest {
                  "dispatcher":{"type":"NON_BATCH","maxInflightPerPrefillWorker":9}}
                 """);
 
-        assertThat(service.loadBalanceConfig().isBatchDispatch()).isTrue();
+        assertThat(service.loadBalanceConfig().getDispatcher().typeName()).isEqualTo("NON_BATCH_V2");
         assertThat(service.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker()).isEqualTo(9);
-        assertThat(service.loadBalanceConfig().getDispatcher().getFetchAttachTimeoutMs()).isEqualTo(1500);
+        assertThat(service.loadBalanceConfig().getDispatcher().getPrefillSubqueueLimitMultiplier()).isEqualTo(5);
         FlexlbConfig previous = service.loadBalanceConfig();
         source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"type\":\"INVALID\"}}");
+        assertThat(service.loadBalanceConfig()).isSameAs(previous);
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"type\":\"BATCH\",\"maxInflightPerPrefillWorker\":11}}");
         assertThat(service.loadBalanceConfig()).isSameAs(previous);
     }
 

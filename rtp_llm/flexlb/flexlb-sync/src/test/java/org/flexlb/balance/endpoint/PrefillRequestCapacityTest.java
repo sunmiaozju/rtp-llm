@@ -100,24 +100,6 @@ class PrefillRequestCapacityTest {
     }
 
     @Test
-    void batchRequestCountDoesNotLimitWaitingAndBatchPermitWaitsForLastMember() {
-        ScheduledRequest first = item(1), second = item(2);
-        assertTrue(enqueue(first, 0L));
-        assertTrue(enqueue(second, 0L));
-        var generation = new EndpointGenerationLifecycle(() -> { });
-        var reservation = state.reserveBatch(first, 10L, 1, generation.tryAcquireHandoff()).reservation();
-        try (var handoff = reservation.commit(List.of(first, second), 0L)) { }
-        assertFalse(state.batchAvailability(1).isAvailable());
-        assertTrue(enqueue(item(3), 0L));
-        assertTrue(state.removeCommittedRequest(first));
-        assertEquals(2L, state.observedRequestCount());
-        assertFalse(state.batchAvailability(1).isAvailable());
-        assertTrue(state.removeCommittedRequest(second));
-        assertEquals(1L, state.observedRequestCount());
-        assertTrue(state.batchAvailability(1).isAvailable());
-    }
-
-    @Test
     void staleOwnerCannotReleaseAReusedRequestId() {
         ScheduledRequest previous = item(1);
         var old = reserve(previous, 1L).reservation();
@@ -225,7 +207,7 @@ class PrefillRequestCapacityTest {
         when(engine.waitingQueryLen()).thenReturn(2L);
         when(observation.engine()).thenReturn(engine);
         when(observation.finishedTasks()).thenReturn(Map.of());
-        var result = state.updateFromWorkerStatus(observation, unused -> 0L, () -> {
+        var result = state.updateFromWorkerStatus(observation, () -> {
             assertFalse(state.canAcceptRequest(2L));
             assertTrue(state.canAcceptRequest(3L));
         }, () -> { });

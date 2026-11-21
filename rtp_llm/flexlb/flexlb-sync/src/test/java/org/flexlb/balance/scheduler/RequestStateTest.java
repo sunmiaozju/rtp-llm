@@ -2,27 +2,12 @@ package org.flexlb.balance.scheduler;
 
 import org.junit.jupiter.api.Test;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Contracts of the immutable request view exposed by RequestRegistry. */
 class RequestStateTest {
-
-    @Test
-    void batchDeliverySnapshotRequiresItsExactBatchIdentity() {
-        RequestState state = state(
-                RequestState.Phase.DISPATCHING,
-                DeliveryClaimKind.BATCH_ENQUEUE,
-                17L);
-
-        assertEquals(17L, state.batchId());
-        assertThrows(IllegalArgumentException.class, () -> state(
-                RequestState.Phase.DISPATCHING,
-                DeliveryClaimKind.BATCH_ENQUEUE,
-                0L));
-    }
 
     @Test
     void requestScopedDeliveryCannotCarryBatchIdentity() {

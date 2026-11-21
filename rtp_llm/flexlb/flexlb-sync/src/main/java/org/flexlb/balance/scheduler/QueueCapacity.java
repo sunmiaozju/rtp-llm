@@ -22,10 +22,6 @@ public final class QueueCapacity {
     private final AtomicInteger pdFusionEngineSubQueueCount = new AtomicInteger();
     private final Set<CompletableFuture<?>> queuedRequestFutures = ConcurrentHashMap.newKeySet();
 
-    public static boolean isEngineSubQueueMode(FlexlbConfig config) {
-        return !config.isBatchDispatch();
-    }
-
     public long globalQueueAndEngineSubQueueCount() {
         return globalQueueAndEngineSubQueueCount.get();
     }
@@ -34,11 +30,8 @@ public final class QueueCapacity {
         return engineSubQueueCount(role).get();
     }
 
-    public boolean isGlobalQueueEntryLimitReached(FlexlbConfig config, int globalQueueSize) {
-        long queuedRequests = isEngineSubQueueMode(config)
-                ? globalQueueAndEngineSubQueueCount.get()
-                : globalQueueSize;
-        return queuedRequests >= config.queueScheduler().getMaxQueuedRequests();
+    public boolean isGlobalQueueEntryLimitReached(FlexlbConfig config) {
+        return globalQueueAndEngineSubQueueCount.get() >= config.queueScheduler().getMaxQueuedRequests();
     }
 
     /**
@@ -107,13 +100,6 @@ public final class QueueCapacity {
                 return true;
             }
         }
-    }
-
-    /**
-     * Counts a BATCH request entering an endpoint queue without a shared limit.
-     */
-    public void increaseEngineSubQueueCount(RoleType role) {
-        engineSubQueueCount(role).incrementAndGet();
     }
 
     public void releaseEngineSubQueueSlot(RoleType role) {

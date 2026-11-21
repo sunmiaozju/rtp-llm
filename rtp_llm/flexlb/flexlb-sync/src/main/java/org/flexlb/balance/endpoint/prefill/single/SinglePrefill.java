@@ -2,7 +2,6 @@ package org.flexlb.balance.endpoint.prefill.single;
 
 import org.flexlb.balance.endpoint.EndpointGenerationLifecycle;
 import org.flexlb.balance.endpoint.prefill.CommitResult;
-import org.flexlb.balance.endpoint.prefill.FinishReport;
 import org.flexlb.balance.endpoint.prefill.LeaseState;
 import org.flexlb.balance.endpoint.prefill.PrefillState;
 import org.flexlb.balance.endpoint.prefill.RequestEntry;
@@ -158,15 +157,14 @@ public final class SinglePrefill {
             long nowMs = prefillState.clock.getAsLong();
             List<RequestEntry> candidates = new ArrayList<>();
             for (RequestEntry entry : prefillState.requests.values()) {
-                if (entry.batchProgress == null && !entry.isActive()
+                if (!entry.isActive()
                         && nowMs - entry.singleRequestProgress.lastObservedAtMs() >= Math.max(0L, ttlMs)
                         && !retainForSchedulerCleanup.test(entry.requestId)) {
                     candidates.add(entry);
                 }
             }
             for (RequestEntry entry : candidates) {
-                capacityReleased |= prefillState.removeCommittedEntry(entry, FinishReport.local(entry.requestId), null,
-                        new ArrayList<>(0));
+                capacityReleased |= prefillState.removeCommittedEntry(entry);
             }
             evicted = candidates.size();
         } finally {

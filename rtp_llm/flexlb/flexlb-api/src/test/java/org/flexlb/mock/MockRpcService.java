@@ -11,7 +11,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 
 /**
  * Mock implementation of {@link RpcServiceGrpc.RpcServiceImplBase}.
@@ -36,31 +35,14 @@ public class MockRpcService extends RpcServiceGrpc.RpcServiceImplBase {
     private record FinishedTask(long version, EngineRpcService.TaskInfoPB task) { }
 
     private final List<FinishedTask> finishedTasks = new ArrayList<>();
-    private volatile Consumer<EngineRpcService.EnqueueBatchRequestPB> acceptedBatchListener;
 
-    /** Optional execution bridge for tests that exercise repeated delivery and status polling. */
-    public void onAcceptedBatch(Consumer<EngineRpcService.EnqueueBatchRequestPB> listener) {
-        acceptedBatchListener = listener;
-    }
-
-    /** Publish authoritative, versioned completion facts through GetWorkerStatus. */
-    public void completeBatch(EngineRpcService.EnqueueBatchRequestPB batch) {
+    public void completeRequest(String requestId) {
+        var task = EngineRpcService.TaskInfoPB.newBuilder()
+                .setRequestIdStr(requestId).setBatchId(-1L)
+                .setPhase(EngineRpcService.TaskPhase.TASK_PHASE_RUNNING)
+                .setEndTimeMs(System.currentTimeMillis()).setExecutionTimeMs(1).build();
         synchronized (finishedTasks) {
-            for (var slot : batch.getDpSlotsList()) {
-                for (var external : slot.getRequestsList()) {
-                    var input = external.getInput();
-                    var task = EngineRpcService.TaskInfoPB.newBuilder()
-                            .setRequestId(input.getRequestId())
-                            .setInputLength(input.getTokenIdsCount())
-                            .setBatchId(batch.getBatchId())
-                            .setPhase(EngineRpcService.TaskPhase.TASK_PHASE_RUNNING)
-                            .setEndTimeMs(System.currentTimeMillis())
-                            .setExecutionTimeMs(1)
-                            .setIterateCount(1)
-                            .build();
-                    finishedTasks.add(new FinishedTask(finishedTasks.size() + 1L, task));
-                }
-            }
+            finishedTasks.add(new FinishedTask(finishedTasks.size() + 1L, task));
         }
     }
 
@@ -169,10 +151,6 @@ public class MockRpcService extends RpcServiceGrpc.RpcServiceImplBase {
 
         responseObserver.onNext(responseBuilder.build());
         responseObserver.onCompleted();
-        Consumer<EngineRpcService.EnqueueBatchRequestPB> listener = acceptedBatchListener;
-        if (!beh.isFailOnEnqueue() && listener != null) {
-            listener.accept(request);
-        }
     }
 
     @Override

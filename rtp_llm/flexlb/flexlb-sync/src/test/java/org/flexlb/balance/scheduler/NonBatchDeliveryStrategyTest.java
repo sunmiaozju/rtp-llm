@@ -42,7 +42,6 @@ class NonBatchDeliveryStrategyTest {
         BalanceContext request = org.mockito.Mockito.mock(BalanceContext.class);
         when(request.getConfig()).thenReturn(config);
         when(head.ctx()).thenReturn(request);
-        when(fixture.capabilities.prefill().isEngineSubQueueMode()).thenReturn(true);
         when(fixture.capabilities.prefill().canDeliver(1L, 1)).thenReturn(false);
         DeliveryBlockReason.Availability availability = org.mockito.Mockito.mock(DeliveryBlockReason.Availability.class);
         when(fixture.capabilities.prefill().routeAdmissionAvailability(1L)).thenReturn(availability);
@@ -63,7 +62,7 @@ class NonBatchDeliveryStrategyTest {
         ScheduledRequest first = fixture.item(1L);
         ScheduledRequest cancelled = fixture.item(2L);
         ScheduledRequest last = fixture.item(3L);
-        fixture.capabilities.precedingWork(new WorkView(1_000L, List.of(new WorkView.RequestWork("99", WorkView.Phase.COMMITTED, 25L)), List.of(), 0L));
+        fixture.capabilities.precedingWork(new WorkView(1_000L, List.of(new WorkView.RequestWork("99", WorkView.Phase.COMMITTED, 25L)), 0L));
         fixture.slots.commitLostFor(cancelled);
 
         fixture.context.deliver(fixture.strategy, List.of(first, cancelled, last),
@@ -95,7 +94,7 @@ class NonBatchDeliveryStrategyTest {
         Fixture fixture = new Fixture();
         ScheduledRequest first = fixture.item(1L);
         ScheduledRequest second = fixture.item(2L);
-        fixture.capabilities.precedingWork(new WorkView(2_000L, List.of(), List.of(), 1L));
+        fixture.capabilities.precedingWork(new WorkView(2_000L, List.of(), 1L));
 
         fixture.context.deliver(fixture.strategy, List.of(first, second),
                 "unknown", 0, OptionalLong.empty());
@@ -114,7 +113,7 @@ class NonBatchDeliveryStrategyTest {
         ScheduledRequest second = fixture.item(2L);
         fixture.capabilities.precedingWork(new WorkView(1_000L, List.of(
                         new WorkView.RequestWork("3", WorkView.Phase.ENGINE_RUNNING, 1_000L),
-                        new WorkView.RequestWork("4", WorkView.Phase.ENGINE_QUEUED, 300L)), List.of(), 0L));
+                        new WorkView.RequestWork("4", WorkView.Phase.ENGINE_QUEUED, 300L)), 0L));
         AtomicInteger published = new AtomicInteger();
         AtomicLong deliveryClock = new AtomicLong(1_000L);
         fixture.slots.beforeCompletion(() -> {

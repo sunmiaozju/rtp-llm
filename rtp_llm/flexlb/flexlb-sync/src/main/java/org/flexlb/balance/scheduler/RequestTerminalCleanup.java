@@ -78,19 +78,14 @@ final class RequestTerminalCleanup {
             failure = runStep(failure,
                     exact.prefillEp() == null ? null : () -> exact.prefillEp().expireCommittedItem(exact));
         } else {
-            // Event handling may lag endpoint ownership. Never roll back an Engine/protocol owner.
+            // A Prefill completion event is emitted after that endpoint has removed the request.
             failure = runStep(failure,
                     exact.decodeEp() == null ? null
                             : () -> exact.decodeEp().release(
                                     exact.decodeReservation(),
                                     DecodeEndpoint.ReleaseReason.COUNTERPART_FINISHED));
-            boolean releasePrefill = event != null && switch (event.kind()) {
-                case DECODE_GENERATION_RETIRED, PRIORITY -> true;
-                case WORKER -> event.workerSource() != WorkerTerminalSource.PREFILL_ENDPOINT
-                        && delivery != DeliveryClaimKind.BATCH_ENQUEUE;
-                default -> delivery != DeliveryClaimKind.BATCH_ENQUEUE;
-            };
-            if (event == null) { releasePrefill = delivery != DeliveryClaimKind.BATCH_ENQUEUE; }
+            boolean releasePrefill = event == null || event.kind() != DeferredTerminal.Kind.WORKER
+                    || event.workerSource() != WorkerTerminalSource.PREFILL_ENDPOINT;
             if (releasePrefill && exact.prefillEp() != null) {
                 failure = runStep(failure,
                         () -> exact.prefillEp().releaseCommittedItem(exact));

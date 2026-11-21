@@ -1,14 +1,10 @@
 package org.flexlb.balance.scheduler;
 
-import org.flexlb.balance.delivery.BatchDeliveryStrategy;
-import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.delivery.DeliveryMetrics;
-import org.flexlb.balance.delivery.DeliveryResult;
 import org.flexlb.balance.delivery.DeliveryStrategy;
 import org.flexlb.balance.delivery.NonBatchDeliveryStrategy;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.PrefillEndpoint;
-import org.flexlb.balance.estimate.BatchTtftEstimator;
 import org.flexlb.balance.estimate.NonBatchTtftEstimator;
 import org.flexlb.balance.eviction.EvictionManager;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
@@ -42,7 +38,6 @@ import org.junit.jupiter.params.provider.CsvSource;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -52,11 +47,10 @@ import static org.mockito.Mockito.when;
 
 class PdfusionSchedulingTest {
     @ParameterizedTest
-    @CsvSource({"false,false,false", "false,false,true", "false,true,false", "false,true,true", "true,false,false",
-            "true,false,true", "true,true,false", "true,true,true"})
-    void fusionNeedsOnlyItsOwnRole(boolean priority, boolean window, boolean batch) throws Exception {
+    @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+    void fusionNeedsOnlyItsOwnRole(boolean priority, boolean window) throws Exception {
         EndpointRegistry.getEndpointsByRole(RoleType.PDFUSION).clear();
-        FlexlbConfig config = SchedulingTestConfig.batchConfig();
+        FlexlbConfig config = SchedulingTestConfig.routeConfig();
         SchedulingTestConfig.useNonBatchDispatcher(config);
         if (priority) {
             SchedulingTestConfig.usePriorityQueue(config);
@@ -69,9 +63,6 @@ class PdfusionSchedulingTest {
         } else {
             SchedulingTestConfig.useSingleDecision(config);
         }
-        if (batch) {
-            SchedulingTestConfig.useBatchDispatcher(config);
-        }
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
@@ -81,22 +72,12 @@ class PdfusionSchedulingTest {
         when(model.requiredRoles()).thenReturn(List.of(RoleType.PDFUSION));
         PlacementAvailability availability = new PlacementAvailability();
         QueueCapacity queueCapacity = new QueueCapacity();
-        DeliveryStrategy delivery = batch
-                ? new BatchDeliveryStrategy(() -> DeliveryBlockReason.Attempt.accepted(
-                        new BatchDeliveryStrategy.PreparedSubmission() {
-                            public void submit(BatchDeliveryStrategy.Delivery delivery) {
-                                delivery.run((items, id, predicted, reason, observer) ->
-                                        items.forEach(item -> observer.accept(item, DeliveryResult.delivered())));
-                            }
-                            public void close() { }
-                        }), new AtomicLong()::incrementAndGet,
-                        lifecycle, new DeliveryMetrics(reporter))
-                : new NonBatchDeliveryStrategy(lifecycle, new DeliveryMetrics(reporter));
+        DeliveryStrategy delivery = new NonBatchDeliveryStrategy(lifecycle, new DeliveryMetrics(reporter));
         EndpointRegistry endpoints = new EndpointRegistry(service,
                 new EndpointEventHandler(lifecycle, org.mockito.Mockito.mock(PrefillQueueRegistry.class), service,
                         new org.flexlb.balance.schedulev2.decode.DecodeReservations(),
                         org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class)),
-                reporter, delivery, batch ? new BatchTtftEstimator() : new NonBatchTtftEstimator(), availability,
+                reporter, delivery, new NonBatchTtftEstimator(), availability,
                 queueCapacity, new PrefillQueueRegistry(),
                 mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
         WorkerStatus worker = WorkerStatus.createDiscovered(RoleType.PDFUSION, "g1", "127.0.0.1", 8080, 8081, "test");
@@ -157,7 +138,6 @@ class PdfusionSchedulingTest {
             }
             statusNotifier.run();
             assertEquals(0, endpoint.observedRequestCount());
-            assertEquals(0, endpoint.getInflightBatchCount());
             assertTrue(committedWork.containsRequest(Long.toString(requestId)),
                     "published snapshots stay immutable");
             assertTrue(!endpoint.captureLoadView().work()

@@ -1,6 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.endpoint.prefill.CommitResult;
 import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
@@ -17,7 +16,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -58,129 +56,6 @@ class WorkerEndpointTest {
     @AfterEach
     void tearDown() {
         endpoint.close();
-    }
-
-    @Test
-    void commitBatch_increasesCommittedWork() {
-        registerBatch(1L, 500,
-                item(100L, 1000));
-        assertCommittedWorkNear(500);
-
-        registerBatch(2L, 300,
-                item(101L, 500));
-        assertCommittedWorkNear(800);
-    }
-
-    @Test
-    void releaseBatch_decreasesCommittedWork() {
-        ScheduledRequest first = item(100L, 1000);
-        ScheduledRequest second = item(101L, 500);
-        registerBatch(1L, 500, first);
-        registerBatch(2L, 300, second);
-
-        assertTrue(endpoint.releaseCommittedItem(first));
-        assertCommittedWorkNear(300);
-    }
-
-    @Test
-    void releaseBatch_unknownBatchId_noEffect() {
-        ScheduledRequest committed = item(100L, 1000);
-        registerBatch(1L, 500, committed);
-        ScheduledRequest unknown = item(999L, 1000);
-        assertTrue(!endpoint.releaseCommittedItem(unknown));
-        assertCommittedWorkNear(500);
-    }
-
-    @Test
-    void releaseBatch_neverGoesNegative() {
-        ScheduledRequest item = item(100L, 1000);
-        registerBatch(1L, 100, item);
-        assertTrue(endpoint.releaseCommittedItem(item));
-        assertTrue(!endpoint.releaseCommittedItem(item));
-        assertEquals(0, endpoint.getLoadMetric().orElseThrow());
-    }
-
-    private void assertCommittedWorkNear(long expectedMs) {
-        long actualMs = endpoint.getLoadMetric().orElseThrow();
-        assertTrue(actualMs <= expectedMs && actualMs >= expectedMs - 50,
-                "Expected committed work near " + expectedMs + "ms but got " + actualMs + "ms");
-    }
-
-    @Test
-    void calibrate_noInflight_resetsToZero() {
-        registerBatch(1L, 500,
-                item(100L, 1000));
-
-        TaskInfoPB.Builder finished = task("100", 1000, 0, 1L);
-        calibrate(Map.of("100", finished), null);
-
-        assertEquals(0, endpoint.getLoadMetric().orElseThrow());
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void calibrate_finishedBatch_removedFromInflight() {
-        registerBatch(5L, 9999,
-                item(100L, 1000), item(101L, 2000));
-
-        TaskInfoPB.Builder t1 = task("100", 1000, 0, 5L);
-        TaskInfoPB.Builder t2 = task("101", 2000, 0, 5L);
-        calibrate(Map.of("100", t1, "101", t2), null);
-
-        assertEquals(0, endpoint.getLoadMetric().orElseThrow());
-        assertEquals(0, endpoint.getInflightBatchCount());
-    }
-
-    @Test
-    void calibrate_partialBatchFailure_repacks() {
-        registerBatch(5L, 9999,
-                item(100L, 1000), item(101L, 2000));
-
-        TaskInfoPB.Builder failed = task("100", 1000, 0, 5L);
-        failed.getErrorInfoBuilder().setErrorCode(1);
-        failed.getErrorInfoBuilder().setErrorMessage("timeout");
-        TaskInfoPB.Builder success = task("101", 2000, 0, 5L);
-        calibrate(Map.of("100", failed, "101", success), null);
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.getLoadMetric().orElseThrow());
-    }
-
-    @Test
-    void calibrate_inflightUnconfirmedBatchesSurvive() {
-        registerBatch(5L, 1000,
-                item(100L, 500));
-        registerBatch(7L, 2000,
-                item(200L, 1000));
-
-        TaskInfoPB.Builder finished = task("100", 500, 0, 5L);
-        calibrate(Map.of("100", finished), null);
-
-        assertEquals(1, endpoint.getInflightBatchCount());
-        // Remaining work is predicted duration minus elapsed running time.
-        assertTrue(Math.abs(endpoint.getLoadMetric().orElseThrow() - 2000) < 50,
-                "Expected ~2000ms but got " + endpoint.getLoadMetric().orElseThrow());
-    }
-
-    @Test
-    void repackBatch_removesFailedRequests() {
-        ScheduledRequest first = item(100L, 1000);
-        ScheduledRequest failed = item(101L, 2000);
-        ScheduledRequest third = item(102L, 3000);
-        registerBatch(5L, 9999, first, failed, third);
-        assertTrue(endpoint.releaseCommittedItem(failed));
-
-        assertEquals(2, endpoint.observedRequestCount());
-    }
-
-    @Test
-    void repackBatch_allFailed_removesBatch() {
-        ScheduledRequest item = item(100L, 1000);
-        registerBatch(5L, 500, item);
-        assertTrue(endpoint.releaseCommittedItem(item));
-
-        assertEquals(0, endpoint.getInflightBatchCount());
-        assertEquals(0, endpoint.getLoadMetric().orElseThrow());
     }
 
     @Test
@@ -326,19 +201,6 @@ class WorkerEndpointTest {
         WorkerStatusPBs.setFinishedTasks(response, finished);
         WorkerStatusPBs.setRunningTasks(response, running);
         EndpointTestSupport.applyStatus(endpoint, response);
-    }
-
-    private void registerBatch(long batchId, long predictedMs, ScheduledRequest... items) {
-        for (ScheduledRequest item : items) {
-            if (!EndpointTestSupport.offer(endpoint, item)) {
-                throw new IllegalStateException(
-                        "test item could not be offered to endpoint queue");
-            }
-        }
-        try (CommitResult ignored = EndpointTestSupport.commitBatch(endpoint, batchId, predictedMs, List.of(items))) {
-            // Closing transfers only the generation handoff. The ledger keeps
-            // the exact committed item identities until status/terminal facts.
-        }
     }
 
     private ScheduledRequest item(long requestId, long seqLen) {

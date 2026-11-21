@@ -58,11 +58,6 @@ public final class FlexlbConfig {
     }
 
     @JsonIgnore
-    public boolean isBatchDispatch() {
-        return dispatcher.getType() == DispatcherConfig.Type.BATCH;
-    }
-
-    @JsonIgnore
     public boolean allowsPreemption(VictimStage stage) {
         return isPriorityOrdering() && scheduler.getOrdering().getPreemption() != null
                 && scheduler.getOrdering().getPreemption().allows(stage);

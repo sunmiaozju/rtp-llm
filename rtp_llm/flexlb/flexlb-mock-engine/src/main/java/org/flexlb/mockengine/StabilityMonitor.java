@@ -24,8 +24,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Standalone stability monitor that replaces {@code stability_monitor.py}.
  *
- * <p>Polls FlexLB master inflight status and mock engine snapshots at a fixed
- * interval, writing one JSON line per poll to {@code monitor.jsonl}. Detects
+ * <p>Writes the FlexLB scheduler count and per-engine inflight request counts
+ * from mock snapshots to {@code monitor.jsonl}. Detects
  * inflight leaks by tracking per-engine completion progress: if an engine's
  * completed count stays unchanged while its inflight remains positive beyond a
  * grace period, a leak is flagged.
@@ -87,7 +87,7 @@ public final class StabilityMonitor {
                 Instant now = Instant.ofEpochMilli(pollStart);
 
                 // 1. Poll FlexLB inflight status
-                InflightData inflight = pollInflight(httpClient, config);
+                Integer schedulerInflight = pollSchedulerInflight(httpClient, config);
 
                 // 2. Poll mock engine snapshot
                 List<MockEngineData> engines = pollMockSnapshot(httpClient, config);
@@ -106,22 +106,10 @@ public final class StabilityMonitor {
                 ObjectNode record = OBJECT_MAPPER.createObjectNode();
                 record.put("timestamp", ISO_FORMATTER.format(now));
 
-                int schedulerInflight = inflight != null ? inflight.schedulerInflight() : 0;
                 record.put("scheduler_inflight", schedulerInflight);
 
                 ArrayNode prefillArr = record.putArray("prefill_inflight");
-                if (inflight != null) {
-                    for (int v : inflight.prefillInflight()) {
-                        prefillArr.add(v);
-                    }
-                }
-
                 ArrayNode decodeArr = record.putArray("decode_inflight");
-                if (inflight != null) {
-                    for (int v : inflight.decodeInflight()) {
-                        decodeArr.add(v);
-                    }
-                }
 
                 // 4. Mock engines + per-engine leak detection
                 int mockTotalInflight = 0;
@@ -130,7 +118,16 @@ public final class StabilityMonitor {
 
                 if (engines != null) {
                     for (MockEngineData engine : engines) {
-                        int engineInflight = engine.inflight();
+                        Integer reportedInflight = engine.inflightRequests();
+                        int engineInflight = reportedInflight == null
+                                ? (int) Math.max(0, engine.accepted() - engine.completed()) : reportedInflight;
+                        if (reportedInflight != null) {
+                            if ("prefill".equals(engine.role())) {
+                                prefillArr.add(reportedInflight);
+                            } else if ("decode".equals(engine.role())) {
+                                decodeArr.add(reportedInflight);
+                            }
+                        }
                         mockTotalInflight += engineInflight;
 
                         // Per-engine leak detection: completed unchanged while inflight > 0
@@ -166,10 +163,7 @@ public final class StabilityMonitor {
                 }
 
                 // total_inflight: prefer scheduler view, fall back to mock sum if master is down
-                int totalInflight = schedulerInflight;
-                if (inflight == null) {
-                    totalInflight = mockTotalInflight;
-                }
+                int totalInflight = schedulerInflight == null ? mockTotalInflight : schedulerInflight;
                 record.put("total_inflight", totalInflight);
                 record.put("leak_detected", globalLeak);
                 if (globalLeak) {
@@ -198,27 +192,14 @@ public final class StabilityMonitor {
 
     // ---- HTTP polling ----
 
-    private static InflightData pollInflight(HttpClient client, Config config) {
+    private static Integer pollSchedulerInflight(HttpClient client, Config config) {
         String url = "http://" + config.flexlbHttpAddr + "/rtp_llm/inflight_status";
         String body = httpGet(client, url);
         if (body == null) {
             return null;
         }
         try {
-            JsonNode root = OBJECT_MAPPER.readTree(body);
-            int schedulerInflight = root.path("scheduler_inflight").asInt(0);
-
-            List<Integer> prefill = new ArrayList<>();
-            for (JsonNode ep : root.path("prefill_endpoints")) {
-                prefill.add(ep.path("inflight_batches").asInt(0));
-            }
-
-            List<Integer> decode = new ArrayList<>();
-            for (JsonNode ep : root.path("decode_endpoints")) {
-                decode.add(ep.path("inflight_requests").asInt(0));
-            }
-
-            return new InflightData(schedulerInflight, prefill, decode);
+            return readRequestCount(OBJECT_MAPPER.readTree(body).path("scheduler_inflight"));
         } catch (Exception e) {
             System.err.printf("[monitor] failed to parse inflight_status: %s%n", e.getMessage());
             return null;
@@ -251,15 +232,18 @@ public final class StabilityMonitor {
                 int running = e.path("running").asInt(0);
                 long accepted = e.path("accepted").asLong(0);
                 long completed = e.path("completed").asLong(0);
-                int inflight = e.has("inflight") ? e.get("inflight").asInt()
-                        : (int) Math.max(0, accepted - completed);
-                engines.add(new MockEngineData(port, running, accepted, completed, inflight));
+                engines.add(new MockEngineData(port, e.path("role").asText(), running, accepted, completed,
+                        readRequestCount(e.path("inflight"))));
             }
             return engines;
         } catch (Exception e) {
             System.err.printf("[monitor] failed to parse mock snapshot: %s%n", e.getMessage());
             return null;
         }
+    }
+
+    private static Integer readRequestCount(JsonNode count) {
+        return count.isIntegralNumber() && count.canConvertToInt() && count.intValue() >= 0 ? count.intValue() : null;
     }
 
     private static String httpGet(HttpClient client, String url) {
@@ -284,12 +268,8 @@ public final class StabilityMonitor {
 
     // ---- Inner types ----
 
-    private record InflightData(int schedulerInflight, List<Integer> prefillInflight,
-                                List<Integer> decodeInflight) {
-    }
-
-    private record MockEngineData(int port, int running, long accepted, long completed,
-                                  int inflight) {
+    private record MockEngineData(int port, String role, int running, long accepted, long completed,
+                                  Integer inflightRequests) {
     }
 
     private static final class Config {

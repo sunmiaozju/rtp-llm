@@ -19,8 +19,8 @@ import static org.mockito.Mockito.when;
 class DeliveryMetricsTest {
 
     @ParameterizedTest
-    @CsvSource({"true,true", "true,false", "false,true", "false,false"})
-    void missingWorkerRoleDoesNotDiscardDeliveryMetrics(boolean routeDelivery, boolean hasStatus) {
+    @CsvSource({"true", "false"})
+    void missingWorkerRoleDoesNotDiscardDeliveryMetrics(boolean hasStatus) {
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
         PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
         if (hasStatus) {
@@ -31,16 +31,10 @@ class DeliveryMetricsTest {
         ScheduledRequest item = mock(ScheduledRequest.class);
         when(item.prefillEp()).thenReturn(endpoint);
         when(item.priority()).thenReturn(50);
-        if (routeDelivery) {
-            when(item.ctx()).thenReturn(mock(BalanceContext.class));
-        }
+        when(item.ctx()).thenReturn(mock(BalanceContext.class));
         DeliveryMetrics metrics = new DeliveryMetrics(reporter);
 
-        if (routeDelivery) {
-            metrics.routesDelivered(3, List.of(item));
-        } else {
-            metrics.batchDispatched(1L, "deadline", 3, List.of(item), 100L);
-        }
+        metrics.routesDelivered(3, List.of(item));
 
         String engineIp = hasStatus ? "10.0.0.1:8080" : "";
         verify(reporter).reportBatcherQueueSize("PREFILL", engineIp, 3);

@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>FlexLB has three layers of inflight tracking:
  * <ol>
  *   <li>scheduler-level request lifecycle tracking</li>
- *   <li>{@link PrefillEndpoint#getInflightBatchCount()} — per-worker batch tracking</li>
+ *   <li>{@link PrefillEndpoint#getCommittedRequestCount()} — per-worker batch tracking</li>
  *   <li>{@link DecodeEndpoint#getInflightCount()} — per-worker decode reservation</li>
  * </ol>
  */
@@ -25,7 +25,7 @@ public final class InflightAssertions {
      * Assert that the PrefillEndpoint for the given ip:port has no inflight batches.
      */
     public static void assertPrefillInflightEmpty(PrefillEndpoint prefillEp) {
-        int batchCount = prefillEp.getInflightBatchCount();
+        int batchCount = prefillEp.getCommittedRequestCount();
         assertEquals(0, batchCount,
                 "PrefillEndpoint inflightBatches should be empty but has " + batchCount + " batches");
     }
@@ -61,7 +61,7 @@ public final class InflightAssertions {
                                                     long timeoutMs, long pollMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
         while (System.currentTimeMillis() < deadline) {
-            boolean prefillOk = prefillEp == null || prefillEp.getInflightBatchCount() == 0;
+            boolean prefillOk = prefillEp == null || prefillEp.getCommittedRequestCount() == 0;
             boolean decodeOk = decodeEp == null || decodeEp.getInflightCount() == 0;
             if (prefillOk && decodeOk) {
                 return true;
@@ -84,7 +84,7 @@ public final class InflightAssertions {
                                                      long timeoutMs) {
         assertTrue(waitForResourcesReleased(prefillEp, decodeEp, timeoutMs, 50),
                 "Inflight resources not released within " + timeoutMs + "ms"
-                        + " (prefill batches=" + (prefillEp != null ? prefillEp.getInflightBatchCount() : "null")
+                        + " (prefill batches=" + (prefillEp != null ? prefillEp.getCommittedRequestCount() : "null")
                         + ", decode inflight=" + (decodeEp != null ? decodeEp.getInflightCount() : "null") + ")");
     }
 }

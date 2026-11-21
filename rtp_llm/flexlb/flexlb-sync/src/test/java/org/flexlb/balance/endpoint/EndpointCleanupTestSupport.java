@@ -3,7 +3,6 @@ package org.flexlb.balance.endpoint;
 import org.flexlb.balance.endpoint.prefill.PrefillActiveIndex;
 import org.flexlb.balance.endpoint.prefill.PrefillState;
 import org.flexlb.balance.endpoint.prefill.Reservation;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
 import org.flexlb.balance.scheduler.ScheduledRequest;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
@@ -35,7 +34,6 @@ public final class EndpointCleanupTestSupport {
     }
 
     public static final class PrefillLedger {
-        private final boolean batch;
         private final AtomicLong clock = new AtomicLong(100);
         private final ReentrantLock lock = new ReentrantLock();
         private final PrefillState state = new PrefillState(lock,
@@ -43,32 +41,12 @@ public final class EndpointCleanupTestSupport {
                 clock::get, () -> { });
         private final EndpointGenerationLifecycle generation = new EndpointGenerationLifecycle(() -> { });
 
-        public PrefillLedger(boolean batch) {
-            this.batch = batch;
-        }
-
         public record Owner(ScheduledRequest item, Reservation reservation) {}
 
-        public Owner commit(String requestId, long batchId, long predictedMs) {
+        public Owner commit(String requestId, long predictedMs) {
             ScheduledRequest item = mock(ScheduledRequest.class);
             when(item.requestId()).thenReturn(requestId);
             when(item.seqLen()).thenReturn(100L);
-            if (batch) {
-                lock.lock();
-                try {
-                    assertTrue(state.enqueueActive(item, Long.MAX_VALUE));
-                } finally {
-                    lock.unlock();
-                }
-                try (var reservation = state.reserveBatch(item, batchId, 1,
-                        generation.tryAcquireHandoff()).reservation()) {
-                    assertNotNull(reservation, "the expired batch must release its sole capacity slot");
-                    try (var handoff = reservation.commit(List.of(item), predictedMs)) {
-                        assertNotNull(handoff);
-                    }
-                    return new Owner(item, reservation);
-                }
-            }
             lock.lock();
             try {
                 assertTrue(state.enqueueActive(item, 1L), "the expired individual must release its sole capacity slot");
@@ -90,31 +68,18 @@ public final class EndpointCleanupTestSupport {
         }
 
         public int sweep(Predicate<String> retain) {
-            return batch ? state.evictExpiredBatches(10L, retain)
-                    : state.evictExpiredSingles(10L, retain);
+            return state.evictExpiredSingles(10L, retain);
         }
 
         public void assertOwned(Owner owner, long predictedMs) {
             var stats = state.stats();
             assertEquals(1, stats.committedRequests());
-            assertEquals(batch ? 0 : 1, stats.singleRequests());
-            assertEquals(batch ? 1 : 0, stats.batchCount());
+            assertEquals(1, stats.singleRequests());
             var work = state.committedSnapshot();
             assertEquals(predictedMs, work.totalRemainingWorkMs().orElseThrow());
             assertEquals(0, work.unknownRequestCount());
-            if (batch) {
-                assertTrue(work.requests().isEmpty());
-                assertEquals(1, work.batches().size());
-                assertEquals(List.of(owner.item().requestId()), work.batches().getFirst().requestIds());
-                assertEquals(((BatchReservation) owner.reservation()).batchId(), work.batches().getFirst().batchId());
-                // Check the actual admission gate, not just the derived batch count.
-                assertFalse(state.batchAvailability(1).isAvailable());
-                assertTrue(state.batchAvailability(2).isAvailable());
-            } else {
-                assertTrue(work.batches().isEmpty());
-                assertEquals(List.of(owner.item().requestId()), work.requests().stream()
-                        .map(request -> request.requestId()).toList());
-            }
+            assertEquals(List.of(owner.item().requestId()), work.requests().stream()
+                    .map(request -> request.requestId()).toList());
         }
 
         public void assertStaleReleaseIsIgnored(Owner old) {
@@ -125,11 +90,8 @@ public final class EndpointCleanupTestSupport {
         public void assertEmpty() {
             assertEquals(0, state.stats().committedRequests());
             assertEquals(0, state.stats().singleRequests());
-            assertEquals(0, state.stats().batchCount());
             assertTrue(state.committedSnapshot().requests().isEmpty());
-            assertTrue(state.committedSnapshot().batches().isEmpty());
             assertEquals(0L, state.committedSnapshot().totalRemainingWorkMs().orElseThrow());
-            assertTrue(state.batchAvailability(1).isAvailable());
         }
     }
 }

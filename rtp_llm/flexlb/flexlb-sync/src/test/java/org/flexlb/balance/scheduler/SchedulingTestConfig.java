@@ -16,9 +16,9 @@ public final class SchedulingTestConfig {
     private SchedulingTestConfig() {
     }
 
-    public static FlexlbConfig batchConfig() {
+    public static FlexlbConfig routeConfig() {
         FlexlbConfig config = newConfig();
-        useBatchDispatcher(config);
+        config.setDispatcher(DispatcherConfig.nonBatch());
         return config;
     }
 
@@ -55,17 +55,6 @@ public final class SchedulingTestConfig {
         queue.setDecision(fixedWindow);
         config.setScheduler(queue);
         return fixedWindow;
-    }
-
-    public static DispatcherConfig useBatchDispatcher(FlexlbConfig config) {
-        configureRequiredValues(config);
-        if (config.getDispatcher().getType() == DispatcherConfig.Type.BATCH) {
-            return config.getDispatcher();
-        }
-        DispatcherConfig batch = new DispatcherConfig();
-        batch.setMaxInflightPerPrefillWorker(2);
-        config.setDispatcher(batch);
-        return batch;
     }
 
     public static DispatcherConfig useNonBatchDispatcher(FlexlbConfig config) {

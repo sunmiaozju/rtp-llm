@@ -47,49 +47,6 @@ public final class DeliveryMetrics {
         }
     }
 
-    public void batchDispatched(
-            long batchId,
-            String decisionReason,
-            int remainingQueueDepth,
-            List<ScheduledRequest> dispatched,
-            long predictedMs) {
-        try {
-            if (dispatched.isEmpty()) {
-                return;
-            }
-            ScheduledRequest head = dispatched.get(0);
-            String engineIp = prefillIp(head);
-            String role = prefillRole(head);
-            reporter.reportDispatchReason(
-                    role, engineIp, decisionReason);
-            reporter.reportBatcherQueueSize(
-                    role, engineIp,
-                    remainingQueueDepth);
-            long nowMs = System.currentTimeMillis();
-            long hitTokens = 0L;
-            long totalTokens = 0L;
-            for (ScheduledRequest item : dispatched) {
-                reporter.reportBatchWaitTimeMs(
-                        role,
-                        engineIp,
-                        Math.max(0L, nowMs - item.enqueuedAtMs()),
-                        item.priority());
-                hitTokens = saturatedAdd(hitTokens, item.hitCache());
-                totalTokens = saturatedAdd(totalTokens, item.seqLen());
-            }
-            reporter.reportBatchCacheHitMetrics(
-                    role, engineIp, hitTokens, totalTokens);
-            reporter.reportBatchSize(
-                    role, engineIp, decisionReason, dispatched.size());
-            reporter.reportBatchTotalTokens(
-                    role, engineIp, decisionReason, totalTokens);
-            reporter.reportBatchPredictedTimeMs(
-                    role, engineIp, Math.max(0L, predictedMs));
-        } catch (Throwable failure) {
-            Logger.warn("Batch dispatch telemetry isolated", failure);
-        }
-    }
-
     private static String prefillRole(ScheduledRequest item) {
         var status = item.prefillEp().getStatus();
         RoleType role = status == null ? null : status.getRole();
@@ -101,9 +58,4 @@ public final class DeliveryMetrics {
         return status == null ? "" : status.getMetricIpPort();
     }
 
-    private static long saturatedAdd(long left, long right) {
-        long nonNegative = Math.max(0L, right);
-        return left > Long.MAX_VALUE - nonNegative
-                ? Long.MAX_VALUE : left + nonNegative;
-    }
 }

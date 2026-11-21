@@ -146,7 +146,7 @@ class RouteAdmissionPolicyTest {
     void ignoredUnknownWorkPreservesTheAfterProbeCapacityCheck() {
         GroupPlanner.Item head = item(1L, 50, 1L, 100L);
         WorkView unknownWork = RouteTtftEstimateTestSupport.work(
-                List.of(), List.of(), 1L);
+                List.of(), 1L);
         PrefillTtftEstimate.Candidate result = estimate(
                 blockedQueue(true, head, semantics(
                         PrefillTtftEstimate.AfterProbeAdmission

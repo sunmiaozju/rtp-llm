@@ -203,9 +203,7 @@ KV 前缀缓存生命周期契约：per-engine 账本隔离、全局共享块的
 | `engine_fault_enqueue_error` | 所有 prefill 每次入队都报错 | 失败请求表面化；账目收敛；恢复 |
 | `engine_fault_enqueue_delay` | enqueue ack 延迟 ≥1.2s（仅 BATCH 投递） | 体现为调度延迟而非失败；请求仍成功 |
 | `engine_fault_generate_delay` | prefill 执行时间膨胀 ≥1.2s | TTFT 增量如实反映；请求成功（全 profile 生效） |
-| `engine_fault_recovery_generation_bump` | 引擎崩溃后恢复 | 发布新端点代际；旧账目不泄漏进新代 |
 | `engine_fault_recovery_kv_resync` | 崩溃引擎带 / 不带 KV 内存恢复 | 缓存视图从全量快照重建：存活族粘回原引擎、空集摊开 |
-| `engine_fault_recovery_no_resurrect` | 崩溃时有 inflight 请求 | 恢复引擎内存为空；崩溃前请求不复活、不假完成 |
 | `engine_fault_status_gap_no_bump` | 2 个 tick 的短状态空窗 | 不误退役代际（抖动容忍） |
 | `engine_fault_status_gap_long_retire` | 长状态空窗 | 代际退役；其账目 / inflight 被栅栏 |
 | `engine_fault_recovery_kv_usage_reset` | 引擎全量重启后 | KV 用量从零起步（构造 gate）；master 腿：恢复后首批请求 typed 成功无 lack_mem 拒绝（容量视图从零重建）；不被误拉黑 |
@@ -226,7 +224,7 @@ master 自身进程级故障与冷启动行为，以及双实例 HA 链路（冻
 | `failback_wraparound` | 重建 sticky B 端态后重启 A、再杀 B | A 60s 内重新收敛并接恢复流量；对称切换绕回 A；inflight 干净、无 8511 风暴 |
 | `direct_generate_error` | 直连引擎入口 GenerateStreamCall 注入 generate_error | 立即失败；不注册 inflight；注入清除后恢复 |
 
-### admission（15 例 · 14 例固定 batch-window、1 例仅 BATCH 投递）
+### admission
 
 准入测试覆盖 Engine 的并发、KV、等待队列门槛，以及 Master 的单机 uncached-token 容量、Decode 准入、batch credits 与排队 TTL。Engine 的队列容量是独立控制。
 
@@ -243,10 +241,6 @@ master 自身进程级故障与冷启动行为，以及双实例 HA 链路（冻
 | `admission_nonbatch_request_capacity_wait` | NON_BATCH 显式上限1，仅容纳1请求 | 请求留在全局队列，释放后继续投递，全部完成 |
 | `admission_engine_waiting_batch_cap_reject` | 引擎等待批上限=1（运行时注入）打满后探测批到达 | 非等待门：快速整批 backpressure 拒绝；占用者不受扰；同压力下放开 cap 可 park；账目干净并恢复 |
 | `admission_engine_kv_lack_mem_fast_reject` | 17 块引擎 KV 池被两个 8 块租 约占满后第 3 个 8 块请求入队 | 非等待门：快速 602 LACK_MEM 拒绝（引擎侧码非 8431）；租约完成后归还；恢复后新请求成功、账目干净 |
-| `engine_prefill_token_budget_split` | 引擎内双预算重组（#8）：token 预算 1024，4×512 请求合一 master 批（Σ2048 超预算 2x） | 拆散前缀+尾段 park：全部完成；执行批计数 2 批/4 请求/最大 2（构造 gate）；master 账目联动：inflight_batches 峰值恒 1、requests 事件驱动台阶下降、scheduler_inflight 不回升；成员 batch_id 归属同一 master 批；账目干净并恢复 |
-| `engine_prefill_token_budget_split_fifo` | 同拆散场景钉执行序（并发消费取真实完成时刻） | client FIFO：前缀成员完成时间戳严格早于尾段（到达序贯穿重组到客户端）；引擎 end_ms 序降构造 gate；master 账目联动（峰值 1 批/4 请求、台阶下降）；账目干净并恢复 |
-| `engine_prefill_token_budget_boundary` | 预算 2048 == 4×512（恰好等于） | 不拆：1 批/4 请求/最大 4 verbatim（构造 gate）；master 原子结算（inflight_batches=1、requests 4→0 无中间台阶）；TTFT 批形状中性（对单请求基线劣化 ≤50%）；执行窗口内无 park；账目干净并恢复 |
-| `engine_prefill_regroup_disabled_verbatim` | 双 0 关闭重组（复现旧行为） | master 批原样执行：1 批/4 请求/最大 4（构造 gate）；master 原子结算（1 批/4 请求、无中间台阶、scheduler 不回升）；无 park；成员同批归属；账目干净并恢复 |
 
 ### priority（19 例 · 15 例固定 single-nonbatch + PRIORITY 轴 case 层注入、3 例固定 single-batch、1 例全 profile）
 

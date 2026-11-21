@@ -5,7 +5,6 @@ import org.flexlb.balance.prediction.PrefillTimePredictor;
 import org.flexlb.dao.route.RoleType;
 
 import java.util.List;
-import java.util.OptionalDouble;
 import java.util.OptionalLong;
 
 /**
@@ -38,11 +37,6 @@ public final class PrefillTtftEstimate {
                 GroupPlanner.Plan<GroupPlanner.Item> plan,
                 Predictions predictions);
 
-        /** Service for the result of this exact planning cursor, with the same frozen model and inputs. */
-        default GroupService service(GroupPlanner.Plan<GroupPlanner.Item> plan,
-                                     Predictions predictions, GroupPlanning planning) {
-            return service(plan, predictions);
-        }
     }
 
     /**
@@ -56,10 +50,6 @@ public final class PrefillTtftEstimate {
                 List<GroupPlanner.Item> candidatePrefix,
                 int requiredThroughIndex);
 
-        /** Only predictions actually evaluated for this cursor's exact prefixes may be reused. */
-        default OptionalDouble predictedPrefixMs(int size) {
-            return OptionalDouble.empty();
-        }
     }
 
     /** Prediction primitives evaluated against one frozen predictor snapshot. */
@@ -73,21 +63,6 @@ public final class PrefillTtftEstimate {
                     seqLen, hitCache));
         }
 
-        double batchPlanningDurationMs(List<GroupPlanner.Item> items);
-
-        /** Optional append-only implementation, scoped to one GroupPlanner invocation. */
-        default PrefillTimePredictor.BatchPrediction newBatchPrediction() {
-            return null;
-        }
-
-        long batchDurationMs(List<GroupPlanner.Item> items);
-
-        default long singletonBatchDurationMs(
-                long seqLen, long hitCache) {
-            return batchDurationMs(List.of(new GroupPlanner.Item(
-                    "", 0, 0L, 0L, Long.MAX_VALUE,
-                    seqLen, hitCache)));
-        }
     }
 
     /** Invocation-local lazy service cursor for one exact planned group. */

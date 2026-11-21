@@ -2,11 +2,6 @@ package org.flexlb.balance.endpoint.prefill;
 
 import org.flexlb.balance.delivery.DeliveryBlockReason;
 import org.flexlb.balance.endpoint.EndpointGenerationLifecycle;
-import org.flexlb.balance.endpoint.prefill.batch.BatchPrefill;
-import org.flexlb.balance.endpoint.prefill.batch.BatchProgress;
-import org.flexlb.balance.endpoint.prefill.batch.BatchReservation;
-import org.flexlb.balance.endpoint.prefill.batch.FinishedBatch;
-import org.flexlb.balance.endpoint.prefill.batch.LiveBatchMembers;
 import org.flexlb.balance.endpoint.prefill.single.QueuedPreemption;
 import org.flexlb.balance.endpoint.prefill.single.SinglePrefill;
 import org.flexlb.balance.endpoint.prefill.single.SingleReservation;
@@ -27,7 +22,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
-import java.util.function.ToLongFunction;
 
 /**
  * 一个 Prefill worker（当前这一代）上所有请求的状态。
@@ -38,7 +32,7 @@ import java.util.function.ToLongFunction;
  *
  * <p>Prefill 的请求表、等待队列索引和容量计数只用 worker 的 queue lock 这一把锁保护。
  * 自己加锁的公开方法会在方法里拿锁；其余方法要求调用方已经持有这把锁，方法开头用
- * {@link #requireLock()} 检查。BatchPrefill、SinglePrefill、QueuedPreemption、
+ * {@link #requireLock()} 检查。SinglePrefill、QueuedPreemption、
  * WorkerStatusUpdater 用的也是同一把锁。</p>
  */
 public final class PrefillState {
@@ -73,7 +67,6 @@ public final class PrefillState {
      */
     public RawWorkView cachedCommittedWork;
     public long unknownEngineRequestCount;
-    public final BatchPrefill batchPrefill = new BatchPrefill(this);
     public final SinglePrefill singlePrefill = new SinglePrefill(this);
     public final QueuedPreemption queuedPreemption = new QueuedPreemption(this);
     public final WorkerStatusUpdater workerStatusUpdater = new WorkerStatusUpdater(this);
@@ -290,25 +283,6 @@ public final class PrefillState {
         return singlePrefill.commitSingleGroup(items, exactReservations, workerKeepAlive);
     }
 
-    public ReservationResult<BatchReservation> reserveBatch(ScheduledRequest exactHead,
-                                                            long batchId,
-                                                            int maximum,
-                                                            EndpointGenerationLifecycle.HandoffPermit workerKeepAlive) {
-        return batchPrefill.reserveBatch(exactHead, batchId, maximum, workerKeepAlive);
-    }
-
-    public int batchLeasesInUse() {
-        return batchPrefill.batchLeasesInUse();
-    }
-
-    public DeliveryBlockReason.Availability batchAvailability(int maximum) {
-        return batchPrefill.batchAvailability(maximum);
-    }
-
-    public int evictExpiredBatches(long ttlMs, java.util.function.Predicate<String> retainForSchedulerCleanup) {
-        return batchPrefill.evictExpiredBatches(ttlMs, retainForSchedulerCleanup);
-    }
-
     public boolean canDeliver(long maxDispatchLimit, int newReqNum) {
         return dispatchedRequestCount < maxDispatchLimit
                 && newReqNum <= maxDispatchLimit - dispatchedRequestCount;
@@ -372,10 +346,8 @@ public final class PrefillState {
                     || entry.committedItem != exactItem) {
                 return false;
             }
-            LiveBatchMembers liveMembers =
-                    entry.batchProgress == null ? null : batchPrefill.liveBatchMembers(entry.batchProgress);
             // 这是本地清理，不代表引擎那边已经不做这个请求了。
-            capacityReleased = removeCommittedEntry(entry, FinishReport.local(entry.requestId), liveMembers, null);
+            capacityReleased = removeCommittedEntry(entry);
             return true;
         } finally {
             lock.unlock();
@@ -384,11 +356,9 @@ public final class PrefillState {
     }
 
     public WorkerStatusResult updateFromWorkerStatus(WorkerStatus.StatusObservation observation,
-                                                     ToLongFunction<List<ScheduledRequest>> predictBatchTime,
                                                      Runnable publishStatus,
                                                      Runnable onPublishFailure) {
-        return workerStatusUpdater.updateFromWorkerStatus(observation, predictBatchTime, publishStatus,
-                onPublishFailure);
+        return workerStatusUpdater.updateFromWorkerStatus(observation, publishStatus, onPublishFailure);
     }
 
     public HeartbeatResult updateFromHeartbeat(WorkerStatus.StatusObservation observation) {
@@ -405,12 +375,8 @@ public final class PrefillState {
      */
     public ShutdownResult shutdown() {
         List<ScheduledRequest> removedItems = new ArrayList<>();
-        List<FinishedBatch> finishedBatches = new ArrayList<>();
-        List<EndpointGenerationLifecycle.HandoffPermit> orphanedHandoffs =
-                new ArrayList<>();
         Set<Reservation> leases = java.util.Collections.newSetFromMap(
                 new IdentityHashMap<>());
-        Set<BatchProgress> batches = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         Throwable checkFailure = null;
         ShutdownResult result;
         lock.lock();
@@ -440,10 +406,6 @@ public final class PrefillState {
                 if (entry.reservation != null) {
                     leases.add(entry.reservation);
                 }
-                if (entry.batchProgress != null) {
-                    batches.add(entry.batchProgress);
-                    leases.add(entry.batchProgress.lease());
-                }
             }
 
             if (activeIndex.size() != canonicalActive.size()) {
@@ -457,52 +419,29 @@ public final class PrefillState {
                 }
             }
 
-            int observedBatchLeases = 0;
             for (Reservation lease : leases) {
-                if (lease instanceof SingleReservation) {
-                    if (lease.state != LeaseState.OPEN && lease.state != LeaseState.OWNED) {
-                        checkFailure = appendRetirementInvariant(checkFailure,
-                                "canonical retirement owner has an invalid single-reservation state");
-                    }
-                } else if (lease instanceof BatchReservation batch) {
-                    observedBatchLeases++;
-                    checkFailure = BatchPrefill.checkRetiringBatchLease(batch, orphanedHandoffs, checkFailure);
-                } else {
-                    checkFailure =
-                            appendRetirementInvariant(checkFailure, "retirement found an unknown Prefill lease type");
+                if (lease.state != LeaseState.OPEN && lease.state != LeaseState.OWNED) {
+                    checkFailure = appendRetirementInvariant(checkFailure,
+                            "canonical retirement owner has an invalid reservation state");
                 }
-            }
-            if (batchPrefill.batchLeasesInUse() != observedBatchLeases) {
-                checkFailure = appendRetirementInvariant(checkFailure,
-                        "batch capacity does not match canonical retirement leases");
-            }
-
-            for (BatchProgress batch : batches) {
-                finishedBatches.add(batch.finishedBatchOnRetirement());
             }
             removedItems.sort(
                     Comparator.comparingLong(ScheduledRequest::enqueueSeq).thenComparing(ScheduledRequest::requestId));
-            finishedBatches.sort(Comparator.comparingLong(FinishedBatch::batchId));
-            result = new ShutdownResult(removedItems, finishedBatches, checkFailure);
+            result = new ShutdownResult(removedItems, checkFailure);
 
             // 从这里开始真正清空。会分配内存或做检查的步骤都已经在上面做完了。
             for (RequestEntry entry : requests.values()) {
                 entry.activeItem = null;
                 entry.committedItem = null;
                 entry.reservation = null;
-                entry.batchProgress = null;
                 entry.singleRequestProgress = null;
                 entry.queueMembership = QueueMembership.UNINDEXED;
             }
             for (Reservation lease : leases) {
-                if (lease instanceof BatchReservation batch) {
-                    batch.workerKeepAlive = null;
-                }
                 lease.state = LeaseState.CLOSED;
             }
             requests.clear();
             activeIndex.clear();
-            batchPrefill.resetBatchLeasesInUse();
             unknownEngineRequestCount = 0L;
             cachedCommittedWork = null;
             recordMutation();
@@ -510,15 +449,6 @@ public final class PrefillState {
             lock.unlock();
         }
 
-        for (EndpointGenerationLifecycle.HandoffPermit handoff
-                : orphanedHandoffs) {
-            try {
-                handoff.close();
-            } catch (Throwable ignoredHandoffFailure) {
-                // 主要错误已经在上面的 OPEN 状态检查里记下了。清空已经完成，
-                // 这里不再收集错误，也不能影响后面的 handoff 继续关闭。
-            }
-        }
         notifyCapacityAvailable(!leases.isEmpty());
         return result;
     }
@@ -541,31 +471,21 @@ public final class PrefillState {
         try {
             int committed = 0;
             int waitingForWorkerStatus = 0;
-            int single = 0;
             long maxAgeMs = 0L;
-            Set<BatchProgress> batches = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
             long nowMs = clock.getAsLong();
             for (RequestEntry entry : requests.values()) {
                 if (entry.isActive()) {
                     continue;
                 }
                 committed++;
-                Phase phase =
-                        entry.batchProgress == null ? entry.singleRequestProgress.phase() : entry.batchProgress.phase();
-                if (phase == Phase.COMMITTED && (entry.batchProgress != null
-                        || entry.reservation != null && entry.reservation.state == LeaseState.OWNED)) {
+                if (entry.singleRequestProgress.phase() == Phase.COMMITTED
+                        && entry.reservation != null && entry.reservation.state == LeaseState.OWNED) {
                     waitingForWorkerStatus++;
                 }
-                if (entry.batchProgress == null) {
-                    single++;
-                    maxAgeMs = Math.max(maxAgeMs, Math.max(0L, nowMs - entry.singleRequestProgress.lastObservedAtMs()));
-                } else {
-                    batches.add(entry.batchProgress);
-                }
+                maxAgeMs = Math.max(maxAgeMs, Math.max(0L, nowMs - entry.singleRequestProgress.lastObservedAtMs()));
             }
-            maxAgeMs = Math.max(maxAgeMs, BatchPrefill.maxBatchAgeMs(batches, nowMs));
             return new PrefillStats(saturatedAdd(requests.size(), unknownEngineRequestCount), committed,
-                    waitingForWorkerStatus, single, batches.size(), maxAgeMs);
+                    waitingForWorkerStatus, committed, maxAgeMs);
         } finally {
             lock.unlock();
         }
@@ -636,7 +556,6 @@ public final class PrefillState {
     private RawWorkView copyCommittedWork(long nowMs, Set<RequestEntry> excluded) {
         requireLock();
         List<WorkView.RequestWork> single = new ArrayList<>();
-        IdentityHashMap<BatchProgress, List<String>> batchMembers = new IdentityHashMap<>();
         for (RequestEntry entry : requests.values()) {
             if (excluded.contains(entry)) {
                 continue;
@@ -644,46 +563,19 @@ public final class PrefillState {
             if (entry.isActive()) {
                 continue;
             }
-            if (entry.batchProgress == null) {
-                single.add(new WorkView.RequestWork(entry.requestId, entry.singleRequestProgress.phase(),
-                        entry.singleRequestProgress.remainingWorkMsAt(nowMs)));
-            } else {
-                batchMembers.computeIfAbsent(entry.batchProgress, ignored -> new ArrayList<>()).add(entry.requestId);
-            }
+            single.add(new WorkView.RequestWork(entry.requestId, entry.singleRequestProgress.phase(),
+                    entry.singleRequestProgress.remainingWorkMsAt(nowMs)));
         }
-        return new RawWorkView(nowMs, single, BatchPrefill.buildBatchWork(batchMembers, nowMs),
-                unknownEngineRequestCount);
+        return new RawWorkView(nowMs, single, unknownEngineRequestCount);
     }
 
-    public boolean removeCommittedEntry(RequestEntry entry,
-                                        FinishReport finishReport,
-                                        LiveBatchMembers liveMembers,
-                                        List<FinishedBatch> finishedBatches) {
-        return removeCommittedEntry(entry, finishReport, liveMembers, finishedBatches, clock.getAsLong());
-    }
-
-    public boolean removeCommittedEntry(RequestEntry entry,
-                                        FinishReport finishReport,
-                                        LiveBatchMembers liveMembers,
-                                        List<FinishedBatch> finishedBatches,
-                                        long nowMs) {
+    public boolean removeCommittedEntry(RequestEntry entry) {
         requireLock();
-        BatchProgress batch = entry.batchProgress;
-        boolean lastBatchMember = false;
-        Reservation lease;
-        if (batch != null) {
-            lastBatchMember = BatchPrefill.isLastLiveMember(entry, liveMembers);
-            lease = lastBatchMember ? batch.lease() : null;
-        } else {
-            lease = entry.reservation;
-        }
+        Reservation lease = entry.reservation;
         if (lease != null && lease.state != LeaseState.OWNED) {
             throw new IllegalStateException(
                     "terminal request owns a non-committed Prefill lease"
                             + " request_id=" + entry.requestId);
-        }
-        if (batch != null) {
-            BatchPrefill.removeFinishedMember(entry, liveMembers, finishReport, nowMs);
         }
         if (!removeRequest(entry.requestId, entry)) {
             throw new IllegalStateException(
@@ -693,10 +585,7 @@ public final class PrefillState {
         cachedCommittedWork = null;
         recordMutation();
         if (lease != null) {
-            closeOwnedLease(lease);
-        }
-        if (lastBatchMember && finishedBatches != null) {
-            finishedBatches.add(batch.finishedBatch());
+            lease.state = LeaseState.CLOSED;
         }
         return true;
     }
@@ -709,31 +598,17 @@ public final class PrefillState {
             throw new IllegalStateException(
                     "Prefill lease rollback cannot run under queueLock");
         }
-        EndpointGenerationLifecycle.HandoffPermit workerKeepAlive = null;
         boolean capacityReleased = false;
         lock.lock();
         try {
             if (lease.state == LeaseState.OPEN) {
-                workerKeepAlive = closeOpenLease(lease);
+                closeOpenLease(lease);
                 capacityReleased = true;
             }
         } finally {
             lock.unlock();
         }
-        if (!capacityReleased) {
-            return;
-        }
-        Throwable failure = null;
-        try {
-            if (workerKeepAlive != null) {
-                workerKeepAlive.close();
-            }
-        } catch (Throwable handoffFailure) {
-            failure = handoffFailure;
-        } finally {
-            notifyCapacityAvailable(true);
-        }
-        rethrowCleanupFailure(failure);
+        notifyCapacityAvailable(capacityReleased);
     }
 
     public void notifyCapacityAvailable(boolean capacityReleased) {
@@ -754,9 +629,9 @@ public final class PrefillState {
     }
 
     /**
-     * 回滚 OPEN 状态的预占：关闭预占，归还批次名额，批次预占还要交出它持有的 generation handoff。
+     * 回滚 OPEN 状态的请求预占。
      */
-    public EndpointGenerationLifecycle.HandoffPermit closeOpenLease(Reservation lease) {
+    public void closeOpenLease(Reservation lease) {
         requireLock();
         if (lease.state != LeaseState.OPEN) {
             throw new IllegalStateException(
@@ -769,58 +644,11 @@ public final class PrefillState {
             throw new IllegalStateException(
                     "OPEN Prefill lease has a non-ACTIVE canonical owner");
         }
-        EndpointGenerationLifecycle.HandoffPermit workerKeepAlive = null;
-        if (lease instanceof BatchReservation batch) {
-            workerKeepAlive = batch.workerKeepAlive;
-            if (workerKeepAlive == null) {
-                throw new IllegalStateException(
-                        "Prefill batch rollback lost its generation handoff");
-            }
-            batch.workerKeepAlive = null;
-        }
         lease.state = LeaseState.CLOSED;
-        releaseBatchSlot(lease);
         if (owner != null) {
             owner.reservation = null;
         }
         recordMutation();
-        return workerKeepAlive;
-    }
-
-    /**
-     * 关闭已提交的预占；如果是批次里最后一个成员，归还批次名额。
-     */
-    private void closeOwnedLease(Reservation lease) {
-        requireLock();
-        if (lease.state != LeaseState.OWNED
-                || lease instanceof BatchReservation batch && batch.workerKeepAlive != null) {
-            throw new IllegalStateException(
-                    "Prefill OWNED terminal still owns an admission handoff");
-        }
-        lease.state = LeaseState.CLOSED;
-        releaseBatchSlot(lease);
-    }
-
-    private void releaseBatchSlot(Reservation lease) {
-        requireLock();
-        if (lease instanceof BatchReservation) {
-            batchPrefill.releaseBatchSlot();
-        } else if (!(lease instanceof SingleReservation)) {
-            throw new IllegalStateException("unknown Prefill reservation type");
-        }
-    }
-
-    private static void rethrowCleanupFailure(Throwable failure) {
-        if (failure instanceof RuntimeException runtimeFailure) {
-            throw runtimeFailure;
-        }
-        if (failure instanceof Error error) {
-            throw error;
-        }
-        if (failure != null) {
-            throw new IllegalStateException(
-                    "Prefill exact capacity cleanup failed", failure);
-        }
     }
 
     private RequestEntry openLeaseOwner(Reservation lease) {

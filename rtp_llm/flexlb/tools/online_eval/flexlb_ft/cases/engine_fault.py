@@ -27,17 +27,10 @@ Case map:
     engine_fault_generate_delay   inflated prefill execution inflates TTFT
                                    under every profile
 
-    Recovery family (E1-E6, expected-behavior assertions):
-    engine_fault_recovery_generation_bump   E1 — recovery must publish a
-                                   fresh endpoint generation; old ledger
-                                   must not leak into it
+    Recovery cases:
     engine_fault_recovery_kv_resync         E2 — recovery must rebuild the
                                    engine's cache view from a FULL snapshot
                                    (with and without surviving KV memory)
-    engine_fault_recovery_no_resurrect      E3 — inflight requests from
-                                   before a true crash must not resurrect
-                                   on the recovered engine (which must
-                                   come back memory-empty)
     engine_fault_status_gap_no_bump          E4 — a short (2-tick) status
                                    gap must NOT retire the generation
     engine_fault_status_gap_long_retire      E5 — a long status gap must
@@ -314,8 +307,7 @@ def engine_down_http_stop_prefill(ctx: CaseContext):
         time.sleep(3.0)
 
         # Phase 5 — recovery: 20 requests ≥95%, and TTFT must fall back to
-        # within 1.5x of the baseline p50 (master_recovery_ttft_test.sh
-        # semantics: once the fault heals, TTFT returns to baseline — the
+        # within 1.5x of the baseline p50. Once the fault heals, the
         # legacy analyzer tolerates an early 1.5x spike and only degrades
         # the verdict when the *stable* window stays above 1.2x; this batch
         # sits past the 3s channel-settle window, so the 1.5x gate is the
@@ -783,7 +775,6 @@ RECOVERY_SETTLE_S = 3.0
 # triggers at a live/already-crashed peer before one lands on each armed
 # target (post-crash dispatch failures also re-route), so the window
 # covers a handful of 0.2s trigger rounds.
-CRASH_TRIGGER_WINDOW_S = 15.0
 # Status-gap shapes: E4 is a 2-tick (2 x 20ms poll) transient gap; E5 must
 # exceed the 3-consecutive-failure retire threshold with no_respond's
 # per-RPC 1s deadline (fault_env_config statusRpcTimeoutMs=1000) — 5s gives
@@ -906,17 +897,6 @@ def _retire_count(env, ip_port: str, offset: int = 0) -> int:
     return _master_log_count(env, f"worker {ip_port} marked dead", offset)
 
 
-def _prefill_endpoint_ledger(ops, ip_port: str) -> Optional[dict]:
-    """The /rtp_llm/inflight_status prefill entry for *ip_port*, or None."""
-    data = ops.master_inflight()
-    if not data:
-        return None
-    for ep in data.get("prefill_endpoints", []):
-        if ep.get("ip_port") == ip_port:
-            return ep
-    return None
-
-
 def _recovery_cache_keys(ops, engine_name: str) -> set:
     """Per-engine LRU key set from mock /snapshot (same shape as kv.py's
     _engine_cache_keys — kept local so category modules stay independent)."""
@@ -988,97 +968,6 @@ def _ensure_started(ops, names) -> None:
                 ops.start_engine(n)
     except Exception:
         pass
-
-
-@case(
-    "engine_fault_recovery_generation_bump",
-    profiles=["batch-window"],  # _recovery_spec pins the fault axes
-    source="E1: engine recovery must publish a fresh endpoint generation",
-)
-def recovery_generation_bump(ctx: CaseContext):
-    """E1 — expected behaviour: an engine that goes unavailable (gRPC
-    refusal for a bounded window) and then recovers must come back under a
-    NEW WorkerStatus generation (or an equivalent full resync signal), and
-    the old generation's queue/ledger must not leak into the new one.
-
-    Mechanism under test: the transport retire path — 3 consecutive status
-    RPC failures (GrpcWorkerStatusRunner.recordStatusCheckFailure) retire
-    the generation; the discovery loop then re-creates a fresh one.
-
-    Assertions (contract, not implementation):
-      * the retire landed ("marked dead after 3 consecutive gRPC failures");
-      * the master created at least one NEW generation for the endpoint
-        after the outage began (created-count strictly grows);
-      * the recovered endpoint's ledger starts from zero (inflight_requests
-        == 0 and inflight_batches == 0 before any new traffic);
-      * a fresh request completes after recovery.
-
-    FINDING if it fails: recovery without a generation bump — the old
-    generation's stale KV baseline / ledger silently survives the outage.
-    """
-    env, ops = _recovery_env(ctx)
-    base = rid_base(ctx, "engine_fault")
-    try:
-        _cleanup_dynamic(ops, env)
-        # Cascade hygiene (task #87): drain earlier residue on this env.
-        AssertUtils.inflight_clean(_master_http(ops), REQUEST_CLEANUP_TIMEOUT_S)
-
-        ip = _engine_ip_port(ops, "prefill-0")
-        log_offset = _master_log_offset(env)
-        created_before = _created_generation_count(env, ip, log_offset)
-
-        # Baseline traffic: 6 requests must all succeed.
-        ok0, err0, _ = _run_batch(ops, base, 6)
-        if err0:
-            return False, f"baseline batch had {err0} errors"
-
-        # Outage: stop prefill-0; the refused connections accumulate the 3
-        # consecutive transport failures that must retire the generation.
-        ops.stop_engine("prefill-0")
-        retired = wait_for(
-            lambda: _retire_count(env, ip, log_offset) > 0, RECOVERY_EVICT_S, 0.2
-        )
-
-        # Recovery: restart and wait for the endpoint to serve again.
-        ops.start_engine("prefill-0")
-        alive_back = _wait_master_alive(
-            ops, "PREFILL", env.spec.n_prefill, RECOVERY_EVICT_S
-        )
-        time.sleep(RECOVERY_SETTLE_S)
-
-        created_after = _created_generation_count(env, ip, log_offset)
-        generation_bumped = created_after > created_before
-
-        # The recovered generation's ledger must start from zero BEFORE any
-        # new traffic is scheduled against it.
-        ledger = _prefill_endpoint_ledger(ops, ip)
-        ledger_clean = bool(
-            ledger
-            and int(ledger.get("inflight_requests", -1)) == 0
-            and int(ledger.get("inflight_batches", -1)) == 0
-        )
-
-        recovery_ok, recovery_msg = ops.verify_recovery()
-
-        # 修复（eval batch A）：docstring 四条承诺之一"recovered ledger
-        # starts from zero"进 passed——E3 同项已断，族内对齐。
-        passed = (
-            retired
-            and alive_back
-            and generation_bumped
-            and ledger_clean
-            and recovery_ok
-        )
-        return passed, (
-            f"ip={ip}, created_generations={created_before}->{created_after}, "
-            f"transport_retired={retired}, alive_restored={alive_back}, "
-            f"recovered_ledger_zero={ledger_clean}"
-            f"(ledger={ledger}), recovery={recovery_msg}"
-        )
-    except Exception as exc:
-        return False, f"exception: {exc!r}"
-    finally:
-        _ensure_started(ops, ["prefill-0", "prefill-1"])
 
 
 @case(
@@ -1236,209 +1125,6 @@ def recovery_kv_resync(ctx: CaseContext):
         return False, f"exception: {exc!r}"
     finally:
         _ensure_started(ops, ["prefill-0", "prefill-1"])
-
-
-@case(
-    "engine_fault_recovery_no_resurrect",
-    profiles=["batch-window"],  # _recovery_spec pins the fault axes
-    source="E3: pre-outage inflight requests must not resurrect after recovery",
-)
-def recovery_no_resurrect(ctx: CaseContext):
-    """E3 — expected behaviour: requests that were in flight on an engine
-    when it CRASHED must not leak into the recovered generation's
-    bookkeeping:
-
-      * the master's per-endpoint ledger for the recovered engines must
-        read zero inflight (old entries settled by cancellation or retirement), and the
-        global inflight must drain to zero within the cleanup window;
-      * the engine side must come back EMPTY — a true crash wipes the
-        process memory, so after /start_engine the engine has no running
-        tasks, no held blocks and an empty KV cache (recovery == a reboot
-        from zero, not an in-place resume);
-      * the pre-outage rids must never complete — their engine-side state
-        is gone (no resurrection); they settle through the master's
-        cancellation/retirement paths, and fresh traffic must schedule normally on the
-        recovered engines.
-
-    Mechanism: crash_after with TRUE-CRASH semantics — each target engine
-    is armed to die on its NEXT EnqueueBatch (every queue, running task,
-    KV lease and LRU entry is wiped, the gRPC port is killed), then
-    trigger requests are fired until every target reports stopped.  The
-    master observes the dead port (3 consecutive gRPC failures) and
-    retires the endpoint; /start_engine rebuilds the gRPC server on clean
-    state (the mock control-plane HTTP server survives the crash, which
-    is what makes the restart path reachable).
-
-    FINDING if the asserted master-side bars fail: F1 permanent-ledger-leak
-    elastic variant — old generation requests surviving into the new one's
-    ledger.
-    """
-    env, ops = _recovery_env(ctx)
-    base = rid_base(ctx, "engine_fault")
-    names = ["prefill-0", "prefill-1"]
-    try:
-        _cleanup_dynamic(ops, env)
-        AssertUtils.inflight_clean(_master_http(ops), REQUEST_CLEANUP_TIMEOUT_S)
-
-        # Widen the in-flight window so the outage lands mid-execution:
-        # slow prefills keep requests waiting/running on the engines while
-        # we take them down.
-        for n in names:
-            ops.set_perf(n, prefill_fixed_ms=2000.0)
-        time.sleep(1.5)  # master perf sync
-
-        fired = _fire_inflight(ops, base, 8, input_len=512, output_len=2)
-        if len(fired) < 4:
-            for n in names:
-                ops.set_perf(n, prefill_fixed_ms=100.0)
-            return False, f"only {len(fired)}/8 requests fired successfully"
-        time.sleep(0.5)  # let the batcher dispatch them onto the engines
-
-        targets = sorted({name for _rid, _resp, name in fired})
-        target_ips = {n: _engine_ip_port(ops, n) for n in targets}
-        log_offset = _master_log_offset(env)
-
-        # Crash: arm crash_after at each target's NEXT EnqueueBatch (the
-        # counter already includes the fired requests' batches), then fire
-        # trigger requests until every target reports stopped — the crash
-        # only fires when a fresh EnqueueBatch lands on the armed engine.
-        # The trigger requests are small and unconsumed; ones that land on
-        # an armed target become the crash-triggering empty ack (uncertain
-        # fence, TTL-settled by the inflight bar below).
-        for n in targets:
-            snap = ops.snapshot_by_name().get(n, {})
-            n_batches = int(snap.get("rpc_counts", {}).get("enqueue_batch", 0))
-            inject_type(ops, n, "crash_after", n=n_batches + 1)
-        crashed_all = False
-        deadline = time.monotonic() + CRASH_TRIGGER_WINDOW_S
-        while time.monotonic() < deadline:
-            snaps = ops.snapshot_by_name()
-            if all(snaps.get(n, {}).get("stopped") for n in targets):
-                crashed_all = True
-                break
-            try:
-                ops.schedule(ops.next_request_id(base), input_len=64, output_len=2)
-            except Exception:
-                pass  # a trigger may hit an engine mid-crash; keep firing
-            time.sleep(0.2)
-
-        # The master observes the dead ports and retires the endpoints
-        # (same 3-strike transport path as stop_engine).
-        retired_all = True
-        for n, ip in target_ips.items():
-            if not wait_for(
-                lambda ip=ip: _retire_count(env, ip, log_offset) > 0,
-                RECOVERY_EVICT_S,
-                0.2,
-            ):
-                retired_all = False
-
-        # Recovery: /start_engine rebuilds the gRPC server on CLEAN state
-        # (it also disarms the fault config and resets the enqueue count).
-        for n in targets:
-            ops.start_engine(n)
-        alive_back = _wait_master_alive(
-            ops, "PREFILL", env.spec.n_prefill, RECOVERY_EVICT_S
-        )
-        time.sleep(RECOVERY_SETTLE_S)
-
-        # The recovered generation's ledger must start from zero.
-        ledger_clean = True
-        ledger_detail = {}
-        for n, ip in target_ips.items():
-            ledger = _prefill_endpoint_ledger(ops, ip)
-            zero = bool(
-                ledger
-                and int(ledger.get("inflight_requests", -1)) == 0
-                and int(ledger.get("inflight_batches", -1)) == 0
-            )
-            ledger_clean = ledger_clean and zero
-            ledger_detail[n] = ledger
-
-        # True-crash wipe: the recovered engine must have NO memory of the
-        # pre-crash world — no running tasks, no held blocks, an empty LRU,
-        # zero inflight and a zeroed accept counter (a fresh process).
-        wipe_ok = True
-        wipe_detail = {}
-        for n in targets:
-            snap = ops.snapshot_by_name().get(n, {})
-            clean = (
-                int(snap.get("running", -1)) == 0
-                and int(snap.get("inflight", -1)) == 0
-                and list(snap.get("cache_key_set") or []) == []
-                and int(snap.get("held_blocks", -1)) == 0
-                and int(snap.get("accepted", -1)) == 0
-            )
-            wipe_ok = wipe_ok and clean
-            wipe_detail[n] = {
-                "running": snap.get("running"),
-                "inflight": snap.get("inflight"),
-                "cache_keys": len(snap.get("cache_key_set") or []),
-                "held_blocks": snap.get("held_blocks"),
-                "accepted": snap.get("accepted"),
-            }
-
-        # Consume the fired requests to terminal states: with the true
-        # crash their engine-side state is GONE, so NONE may complete — a
-        # completion would be a resurrection (asserted, no longer just an
-        # observation).  Their client streams fail against the wiped
-        # engine and settle through the master's cancellation/retirement.
-        outcomes = _consume_fired(ops, fired, wait_s=2.0)
-        resurrected = [
-            (rid, name)
-            for rid, name, completed in outcomes
-            if completed and name in targets
-        ]
-
-        # Engine side must not keep the old rids registered.
-        engine_clean, engine_detail = engine_inflight_clean(ops, targets)
-
-        # Master global ledger drains within the cleanup window (fence or TTL).
-        inflight_ok, inflight_detail = AssertUtils.inflight_clean(
-            _master_http(ops), REQUEST_CLEANUP_TIMEOUT_S
-        )
-
-        recovery_ok, recovery_msg = ops.verify_recovery()
-
-        passed = (
-            crashed_all
-            and retired_all
-            and alive_back
-            and ledger_clean
-            and wipe_ok
-            and not resurrected
-            and engine_clean
-            and inflight_ok
-            and recovery_ok
-        )
-        return passed, (
-            f"fired={len(fired)} onto {targets}, "
-            f"crashed_all={crashed_all}, retired_all={retired_all}, "
-            f"alive_restored={alive_back}, "
-            f"recovered_ledger_zero={ledger_clean}({ledger_detail}), "
-            f"engine_wipe_clean={wipe_ok}({wipe_detail}), "
-            f"resurrected={len(resurrected)}/{len(fired)} (bar: 0), "
-            f"engine_inflight_clean={engine_clean}({engine_detail}), "
-            f"inflight_clean={inflight_ok}({inflight_detail}), "
-            f"recovery={recovery_msg}"
-        )
-    except Exception as exc:
-        return False, f"exception: {exc!r}"
-    finally:
-        # Disarm any undelivered crash_after before the hygiene restart
-        # (start_engine would clear it too, but the arm must not survive
-        # an early-exit path that skips the restart).
-        for n in names:
-            try:
-                inject_type(ops, n, "crash_after", enabled=False)
-            except Exception:
-                pass
-        _ensure_started(ops, names)
-        for n in names:
-            try:
-                ops.set_perf(n, prefill_fixed_ms=100.0)
-            except Exception:
-                pass
 
 
 @case(

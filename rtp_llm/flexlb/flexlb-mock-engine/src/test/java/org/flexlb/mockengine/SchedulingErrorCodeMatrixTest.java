@@ -1,6 +1,5 @@
 package org.flexlb.mockengine;
 
-import com.google.protobuf.ByteString;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.config.DecisionPolicyConfig;
 import org.flexlb.config.DispatcherConfig;
@@ -43,11 +42,10 @@ class SchedulingErrorCodeMatrixTest {
 
     static Stream<String> queuedModes() {
         return Stream.of("FIFO", "PRIORITY").flatMap(order -> Stream.of("SINGLE", "FIXED_WINDOW")
-                .flatMap(decision -> Stream.of("NON_BATCH", "BATCH").map(dispatch -> order + "/" + decision + "/" + dispatch)));
+                .flatMap(decision -> Stream.of(order + "/" + decision + "/NON_BATCH")));
     }
 
     static Stream<String> modes() { return queuedModes(); }
-    static Stream<String> batchModes() { return queuedModes().filter(mode -> mode.endsWith("/BATCH")); }
 
     @ParameterizedTest(name = "{0}: healthy -> 200")
     @MethodSource("modes")
@@ -57,7 +55,7 @@ class SchedulingErrorCodeMatrixTest {
             assertTrue(result.isSuccess(), result.getErrorMessage());
             assertEquals(200, result.getCode());
             assertEquals(UNSPECIFIED, result.getAdmissionRejectReason());
-            assertEquals(fixture.harness.config.getDispatcher().requiresGenerateInput() ? List.of(REQUEST_ID) : List.of(),
+            assertEquals(List.of(),
                     fixture.harness.engineArrivalOrder);
         }
     }
@@ -125,26 +123,6 @@ class SchedulingErrorCodeMatrixTest {
         }
     }
 
-    @ParameterizedTest(name = "{0}: Engine admission rejects -> 8510")
-    @MethodSource("batchModes")
-    void engineRejectionRetainsItsDiagnostic(String mode) throws Exception {
-        try (Fixture fixture = new Fixture(mode)) {
-            fixture.harness.config.getRequestLifecycle().getRequest().setTimeoutMs(500L);
-            fixture.harness.config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(500L);
-            fixture.harness.prefillEngines.getFirst().setFaultConfig(FaultInjectionConfig.builder()
-                    .failOnEnqueue(true).enqueueErrorMessage("injected admission rejection").build());
-            var future = fixture.service.route(fixture.context());
-            assertFailure(future.get(5, TimeUnit.SECONDS), 8510, UNSPECIFIED, "injected admission rejection");
-            assertEquals(List.of(REQUEST_ID), fixture.harness.engineArrivalOrder);
-            assertEquals(0, fixture.harness.prefillEngines.getFirst().getAcceptedCount());
-            // A Prefill rejection does not prove Decode has not observed the request.
-            // Preserve that ownership until the existing inactivity reducer settles it.
-            AutoTpmE2EHarness.await(() -> fixture.harness.decodeEndpoint(0).getInflightCount() == 0,
-                    2_000L, "Decode reservation must settle after inactivity");
-            assertFailure(future.join(), 8510, UNSPECIFIED, "injected admission rejection");
-        }
-    }
-
     @ParameterizedTest(name = "{0}: duplicate -> 8406; client cancel -> 8504")
     @MethodSource("queuedModes")
     void duplicateAndClientCancellationPreserveOriginalOwnership(String mode) throws Exception {
@@ -156,20 +134,6 @@ class SchedulingErrorCodeMatrixTest {
             fixture.service.cancelRequest(Long.toString(REQUEST_ID), 0L, CancelReason.CLIENT_CANCELLED);
             assertFailure(original.get(5, TimeUnit.SECONDS), 8504, UNSPECIFIED, "cancel");
             assertEquals(1, fixture.harness.decodeEndpoint(0).getInflightCount());
-            assertTrue(fixture.harness.engineArrivalOrder.isEmpty());
-        }
-    }
-
-    @ParameterizedTest(name = "{0}: missing input -> 8406; malformed protobuf -> 8510")
-    @MethodSource("batchModes")
-    void invalidBatchInputNeverReachesEngine(String mode) throws Exception {
-        try (Fixture fixture = new Fixture(mode)) {
-            BalanceContext missing = fixture.context();
-            missing.setGenerateInputPb(ByteString.EMPTY);
-            assertFailure(fixture.route(missing), 8406, UNSPECIFIED, "missing serialized generate_input");
-            BalanceContext malformed = fixture.context();
-            malformed.setGenerateInputPb(ByteString.copyFrom(new byte[]{(byte) 0xff}));
-            assertFailure(fixture.route(malformed), 8510, UNSPECIFIED, "build");
             assertTrue(fixture.harness.engineArrivalOrder.isEmpty());
         }
     }

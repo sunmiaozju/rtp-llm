@@ -22,9 +22,9 @@ class RouteTtftEstimateTest {
     @Test
     void unchangedRunningWorkCanReuseItsEarlierClockBase() {
         WorkView cached = new WorkView(13L, List.of(new WorkView.RequestWork(
-                "1", WorkView.Phase.ENGINE_RUNNING, 1_000L)), List.of(), 0L);
+                "1", WorkView.Phase.ENGINE_RUNNING, 1_000L)), 0L);
         WorkView current = new WorkView(20L, List.of(new WorkView.RequestWork(
-                "1", WorkView.Phase.ENGINE_RUNNING, 993L)), List.of(), 0L);
+                "1", WorkView.Phase.ENGINE_RUNNING, 993L)), 0L);
         assertEquals(
                 PrefillTtftEstimate.estimate(new PrefillTtftEstimate.LoadView(emptyQueue(20L), current),
                         probe(), new CountingEvaluator(), routeEstimationRule()),
@@ -116,7 +116,7 @@ class RouteTtftEstimateTest {
     }
 
     private static WorkView emptyWork(long createdAtMs) {
-        return new WorkView(createdAtMs, List.of(), List.of(), 0L);
+        return new WorkView(createdAtMs, List.of(), 0L);
     }
 
     private static PrefillTtftEstimate.Probe probe() {

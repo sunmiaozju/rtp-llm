@@ -86,35 +86,22 @@ class MultipleWorkersTest extends FlexLBMockTestBase {
             futures[i] = submitRequest(String.valueOf(requestIds[i]));
         }
 
-        // 4. Wait for all requests to complete (ACK)
+        java.util.Set<Integer> prefillPorts = new java.util.HashSet<>();
+        // Each response carries a Prefill and Decode route.
         for (int i = 0; i < requestIds.length; i++) {
             Response resp = futures[i].get(10, TimeUnit.SECONDS);
             assertTrue(resp.isSuccess(),
                     "Request " + requestIds[i] + " should succeed, got code=" + resp.getCode()
                             + ", error=" + resp.getErrorMessage());
+            assertEquals(false, resp.isEnqueuedByMaster());
+            resp.getServerStatus().stream().filter(status -> status.getRole() == RoleType.PREFILL)
+                    .forEach(status -> prefillPorts.add(status.getGrpcPort()));
         }
 
-        // 5. Verify: worker A received at least 1 EnqueueBatch
-        int countA = mockPrefillWorker.getEnqueueCount();
-        assertTrue(countA >= 1,
-                "Worker A should have received at least 1 EnqueueBatch, got " + countA);
-
-        // 6. Verify: worker B received at least 1 EnqueueBatch
-        int countB = workerB.getEnqueueCount();
-        assertTrue(countB >= 1,
-                "Worker B should have received at least 1 EnqueueBatch, got " + countB);
-
-        // 7. Verify: total EnqueueBatch count matches number of submitted requests
-        int totalCount = countA + countB;
-        assertTrue(totalCount >= requestIds.length,
-                "Total EnqueueBatch count (" + totalCount + ") should be >= "
-                        + requestIds.length + " submitted requests");
-
-        // 8. Verify: decode worker received no enqueue (PD-separated — decode
-        //    only gets requests after prefill completes, which mock doesn't simulate)
-        assertEquals(0, mockDecodeWorker.getEnqueueCount(),
-                "Decode worker should not have received any enqueue request");
-
+        assertEquals(java.util.Set.of(prefillGrpcPort, workerBGrpcPort), prefillPorts);
+        assertEquals(0, mockPrefillWorker.getEnqueueCount());
+        assertEquals(0, workerB.getEnqueueCount());
+        assertEquals(0, mockDecodeWorker.getEnqueueCount());
     }
 
     // ==================== Helper: build routing response ====================

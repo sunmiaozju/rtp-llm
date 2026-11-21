@@ -43,7 +43,7 @@ class EndpointCleanupOwnershipTest {
     private RequestRegistry registry;
 
     @BeforeEach void setup() {
-        config = SchedulingTestConfig.batchConfig();
+        config = SchedulingTestConfig.routeConfig();
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         registry = new RequestRegistry(service, mock(BatchSchedulerReporter.class),
@@ -142,15 +142,14 @@ class EndpointCleanupOwnershipTest {
         assertDecodeLedger(endpoint, 0, 0, 0L, 0L);
     }
 
-    @ParameterizedTest(name = "Prefill batch={0}: absent lookup cannot release the replacement")
-    @ValueSource(booleans = {false, true})
-    void prefillRegistrationAfterAbsentCheckPreservesFreshWork(boolean batch) throws Exception {
+    @Test
+    void prefillRegistrationAfterAbsentCheckPreservesFreshWork() throws Exception {
         String id = "7004";
-        var ledger = new PrefillLedger(batch);
-        var old = ledger.commit(id, 1L, 20L);
+        var ledger = new PrefillLedger();
+        var old = ledger.commit(id, 20L);
         ledger.advanceBeyondTtl();
         var result = raceRegistrationAfterAbsentCheck(id, 0, ledger::sweep,
-                () -> ledger.commit(id, 2L, 70L), () -> ledger.assertOwned(old, 20L));
+                () -> ledger.commit(id, 70L), () -> ledger.assertOwned(old, 20L));
         assertEquals(1, result.evicted());
         var replacement = result.owner();
         assertNotSame(old.item(), replacement.item());
@@ -176,7 +175,7 @@ class EndpointCleanupOwnershipTest {
         // Reacquisition with a limit of one checks that cleanup returned the
         // actual admission capacity, including the batch lease, exactly once.
         registry.register(RequestLifecycleTestSupport.context(config, id));
-        var third = ledger.commit(id, 3L, 90L);
+        var third = ledger.commit(id, 90L);
         ledger.assertOwned(third, 90L);
         ledger.assertStaleReleaseIsIgnored(replacement);
         ledger.assertOwned(third, 90L);
@@ -187,13 +186,12 @@ class EndpointCleanupOwnershipTest {
         ledger.assertEmpty();
     }
 
-    @ParameterizedTest(name = "Prefill batch={0}: replacement directory entry retains old work")
-    @ValueSource(booleans = {false, true})
-    void prefillReplacementDirectoryEntryConservativelyRetainsOldWork(boolean batch) {
+    @Test
+    void prefillReplacementDirectoryEntryConservativelyRetainsOldWork() {
         String id = "7006";
         registry.register(RequestLifecycleTestSupport.context(config, id));
-        var ledger = new PrefillLedger(batch);
-        var old = ledger.commit(id, 1L, 20L);
+        var ledger = new PrefillLedger();
+        var old = ledger.commit(id, 20L);
         ledger.advanceBeyondTtl();
         RequestSlot original = registry.requestSlot(id);
         registry.cancelRequest(id, 0L, CancelReason.CLIENT_CANCELLED);

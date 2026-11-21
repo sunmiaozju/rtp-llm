@@ -76,23 +76,18 @@ class ShellFlexlbConfigTest(unittest.TestCase):
                                  config["dispatcher"])
                 self.assertEqual(132, config["router"]["roles"]["decode"]["availability"]["maxEngineRequests"])
 
-    def test_active_smoke_and_recovery_scripts_use_v3_defaults(self):
-        for filename in ("run_cancel_smoke.sh", "run_batch_smoke_only.sh",
-                         "engine_kill_restart_test.sh", "engine_disconnect_ttft_test.sh",
-                         "master_kill_restart_test.sh", "master_recovery_ttft_test.sh"):
-            with self.subTest(filename=filename):
-                script = (SCRIPT_DIR / filename).read_text()
-                match = re.search(r"(?:DEFAULT_FLEXLB_CONFIG|default_flexlb_config)='(\{.*?\})'",
-                                  script, re.S)
-                self.assertIsNotNone(match)
-                config = json.loads(match.group(1))
-                self.assert_v3(config)
-                self.assertEqual({"type": "BATCH", "maxInflightPerPrefillWorker": 4},
-                                 config["dispatcher"])
-                self.assertFalse('"FLEXLB_EXPECT_FETCH_RESPONSE=' in script,
-                                 "removed fetch-response environment setting")
-                self.assertFalse('"DOMAIN_ADDRESS:' in script,
-                                 "service hosts must be inside MODEL_SERVICE_CONFIG")
+    def test_cancel_smoke_uses_v3_defaults(self):
+        script = (SCRIPT_DIR / "run_cancel_smoke.sh").read_text()
+        match = re.search(r"DEFAULT_FLEXLB_CONFIG='(\{.*?\})'", script, re.S)
+        self.assertIsNotNone(match)
+        config = json.loads(match.group(1))
+        self.assert_v3(config)
+        self.assertEqual({"type": "BATCH", "maxInflightPerPrefillWorker": 4},
+                         config["dispatcher"])
+        self.assertFalse('"FLEXLB_EXPECT_FETCH_RESPONSE=' in script,
+                         "removed fetch-response environment setting")
+        self.assertFalse('"DOMAIN_ADDRESS:' in script,
+                         "service hosts must be inside MODEL_SERVICE_CONFIG")
 
     def test_behavior_profile_keeps_explicit_lifetime_and_worker_health_inputs(self):
         script = (SCRIPT_DIR / "flexlb_behavior_test.sh").read_text()
@@ -113,20 +108,6 @@ class ShellFlexlbConfigTest(unittest.TestCase):
         self.assertEqual(module["PREFILL_EXECUTION_TIME_EXPRESSION"],
                          config["router"]["roles"]["prefill"]["executionTimeEstimator"]["expression"])
         self.assertEqual(220, config["scheduler"]["decision"]["maxCollectionWaitMs"])
-
-    def test_engine_restart_discovery_keeps_all_hosts_inside_model_config(self):
-        script = (SCRIPT_DIR / "engine_kill_restart_test.sh").read_text()
-        match = re.search(r"<<'PY_MODEL'\n(.*?)\nPY_MODEL", script, re.S)
-        self.assertIsNotNone(match)
-        result = subprocess.run([sys.executable, "-c", match.group(1),
-                                 "127.0.0.1:55150,127.0.0.1:55151", "127.0.0.1:55250"],
-                                check=True, capture_output=True, text=True)
-        model = json.loads(result.stdout)
-        endpoints = model["role_endpoints"][0]
-        self.assertEqual(["127.0.0.1:55150", "127.0.0.1:55151"],
-                         model["hosts"][endpoints["prefill_endpoint"]["address"]])
-        self.assertEqual(["127.0.0.1:55250"],
-                         model["hosts"][endpoints["decode_endpoint"]["address"]])
 
     def test_matrix_generates_only_active_mode_parameters(self):
         for ordering in ("fifo", "priority"):

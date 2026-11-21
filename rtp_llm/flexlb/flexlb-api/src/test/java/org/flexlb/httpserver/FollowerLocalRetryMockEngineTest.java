@@ -33,7 +33,7 @@ class FollowerLocalRetryMockEngineTest extends FlexLBMockTestBase {
     @ParameterizedTest
     @ValueSource(strings = {"NOT_MASTER", "SHUTDOWN", "DEAD_BEFORE_CONNECT", "UNRESOLVABLE_HOST"})
     @Timeout(value = 20, unit = TimeUnit.SECONDS)
-    void followerRecoveryDispatchesExactlyOnceToMockEngine(String failure) throws Exception {
+    void followerRecoveryPublishesExactlyOneRoute(String failure) throws Exception {
         RouteService remoteRoutes = mock(RouteService.class);
         RouteService localRoutes =
                 new RouteService(scheduler, mock(TheoryCacheHitReporter.class), mock(AsyncRequestMetrics.class));
@@ -60,11 +60,13 @@ class FollowerLocalRetryMockEngineTest extends FlexLBMockTestBase {
                 var response = FlexlbServiceGrpc.newBlockingStub(frontend)
                         .withDeadlineAfter(8, TimeUnit.SECONDS).schedule(request);
                 assertTrue(response.getSuccess(), response.getErrorMessage());
-                assertTrue(response.getEnqueuedByMaster());
-                assertTrue(response.getLifecycle().getBatchId() > 0);
+                assertEquals(false, response.getEnqueuedByMaster());
+                assertEquals(0L, response.getLifecycle().getBatchId());
+                assertEquals(2, response.getServerStatusCount());
+                assertEquals(1, getPrefillEndpoint().getCommittedRequestCount());
                 assertEquals(requestId, response.getLifecycle().getRequestId());
                 assertEquals(Long.toString(requestId), response.getLifecycle().getRequestIdStr());
-                assertEquals(1, mockPrefillWorker.getEnqueueCount(), "recovery must dispatch exactly once");
+                assertEquals(0, mockPrefillWorker.getEnqueueCount(), "only the frontend sends the request");
                 assertEquals(0, mockDecodeWorker.getEnqueueCount());
                 verify(remoteRoutes, never()).route(any());
             } finally {
