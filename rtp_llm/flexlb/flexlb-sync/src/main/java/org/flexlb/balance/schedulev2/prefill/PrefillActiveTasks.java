@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class PrefillActiveTasks {
 
     private final AtomicReference<PrefillCapacitySnapshot> capacitySnapshot =
-            new AtomicReference<>(new PrefillCapacitySnapshot(null, Map.of(), Set.of()));
+            new AtomicReference<>(new PrefillCapacitySnapshot(Map.of(), Set.of()));
 
     public void updateWorkerCapacity(WorkerStatus.EngineObservation workerStatus) {
         Set<String> workerActiveRequestIds = new HashSet<>();
@@ -27,16 +27,16 @@ public final class PrefillActiveTasks {
             workerActiveRequestIds.add(task.requestId());
         }
         Set<String> immutableWorkerActiveRequestIds = Set.copyOf(workerActiveRequestIds);
-        capacitySnapshot.updateAndGet(old -> new PrefillCapacitySnapshot(workerStatus, old.localPublishReservations(),
-                immutableWorkerActiveRequestIds));
+        capacitySnapshot.updateAndGet(
+                old -> new PrefillCapacitySnapshot(old.localPublishReservations(), immutableWorkerActiveRequestIds));
     }
 
     public long inflightCount() {
         return capacitySnapshot.get().inflightCount();
     }
 
-    public QueueBlockReason blockReason(long kvTokens, int limit) {
-        return capacitySnapshot.get().blockReason(kvTokens, limit);
+    public QueueBlockReason blockReason(int limit) {
+        return capacitySnapshot.get().blockReason(limit);
     }
 
     public QueueBlockReason tryAcquire(DispatchedRequest record, int limit) {
@@ -46,13 +46,13 @@ public final class PrefillActiveTasks {
             if (old.localPublishReservations().containsKey(id)) {
                 return QueueBlockReason.RESERVATION_CHANGED;
             }
-            QueueBlockReason reason = old.blockReason(record.kvTokens(), limit);
+            QueueBlockReason reason = old.blockReason(limit);
             if (reason != null) {
                 return reason;
             }
             Map<String, DispatchedRequest> localPublishReservations = new HashMap<>(old.localPublishReservations());
             localPublishReservations.put(id, record);
-            if (capacitySnapshot.compareAndSet(old, new PrefillCapacitySnapshot(old.workerStatus(),
+            if (capacitySnapshot.compareAndSet(old, new PrefillCapacitySnapshot(
                     Collections.unmodifiableMap(localPublishReservations), old.workerActiveRequestIds()))) {
                 return null;
             }
@@ -75,7 +75,7 @@ public final class PrefillActiveTasks {
             }
             Map<String, DispatchedRequest> localPublishReservations = new HashMap<>(old.localPublishReservations());
             localPublishReservations.remove(requestId);
-            PrefillCapacitySnapshot updated = new PrefillCapacitySnapshot(old.workerStatus(),
+            PrefillCapacitySnapshot updated = new PrefillCapacitySnapshot(
                     Collections.unmodifiableMap(localPublishReservations), old.workerActiveRequestIds());
             if (capacitySnapshot.compareAndSet(old, updated)) {
                 return;

@@ -32,9 +32,7 @@ public final class DispatcherConfig {
     private int prefillSubqueueLimitMultiplier = DEFAULT_PREFILL_SUBQUEUE_LIMIT_MULTIPLIER;
     private int maxInflightPerEncoderWorker = DEFAULT_MAX_INFLIGHT_PER_ENCODER_WORKER;
     /**
-     * NON_BATCH_V2：Prefill 因 KV 不够时，后面放得下的请求可以先走。
-     * 队头从进入机器队列起等到这个时间后改为严格按顺序。
-     * 0 表示一直严格按顺序。支持热更新，Prefill 队列每一轮都读最新值。
+     * 仅用于兼容旧配置，不再影响出队顺序。
      */
     private long dispatchStarvationThresholdMs = DEFAULT_DISPATCH_STARVATION_THRESHOLD_MS;
     /**

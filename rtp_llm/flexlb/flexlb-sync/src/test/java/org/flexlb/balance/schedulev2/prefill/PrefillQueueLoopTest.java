@@ -335,54 +335,19 @@ class PrefillQueueLoopTest {
     }
 
     @Test
-    void smallerRequestGoesFirstOnlyWhileKvBlockedHeadHasNotStarved() {
-        config.getDispatcher().setMaxInflightPerPrefillWorker(4);
-        config.getDispatcher().setDispatchStarvationThresholdMs(60_000L);
-        V2TestSupport.report(endpoint, 1L, 50L, 1_000L, Map.of("engine-request", TaskPhase.RUNNING));
+    void zeroAvailableKvDoesNotBlockHeadButInflightLimitStillApplies() {
+        config.getDispatcher().setMaxInflightPerPrefillWorker(2);
+        V2TestSupport.report(endpoint, 1L, 0L, 1_000L, Map.of("engine-request", TaskPhase.RUNNING));
         Request head = addWaiting("1", 100L);
         Request small = addWaiting("2", 16L);
 
         assertTrue(loop.runOnce());
 
-        assertEquals(Stage.PREFILL_WAITING, head.stage());
-        assertEquals(List.of(small), sentToDecode);
-
-        head.setPrefillQueuedAtMs(System.currentTimeMillis() - 120_000L);
-        Request later = addWaiting("3", 16L);
-        loop.runOnce();
-        assertEquals(Stage.PREFILL_WAITING, later.stage());
-        assertEquals(List.of(small), sentToDecode);
-    }
-
-    @Test
-    void hotUpdatedThresholdLetsSmallerRequestPassKvBlockedHead() {
-        config.getDispatcher().setMaxInflightPerPrefillWorker(4);
-        config.getDispatcher().setDispatchStarvationThresholdMs(0L);
-        V2TestSupport.report(endpoint, 1L, 50L, 1_000L, Map.of("engine-request", TaskPhase.RUNNING));
-        Request head = addWaiting("1", 100L);
-        Request small = addWaiting("2", 16L);
-        loop.runOnce();
-        assertTrue(sentToDecode.isEmpty());
-
-        config.getDispatcher().setDispatchStarvationThresholdMs(60_000L);
-        loop.runOnce();
-
-        assertEquals(Stage.PREFILL_WAITING, head.stage());
-        assertEquals(List.of(small), sentToDecode);
-    }
-
-    @Test
-    void inflightFullStopsSmallRequestsEvenBeforeStarvationThreshold() {
-        config.getDispatcher().setDispatchStarvationThresholdMs(60_000L);
-        V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of("engine-request", TaskPhase.RUNNING));
-        Request head = addWaiting("1", 100L);
-        Request small = addWaiting("2", 1L);
-
-        loop.runOnce();
-
-        assertEquals(Stage.PREFILL_WAITING, head.stage());
+        assertEquals(Stage.DECODE_WAITING, head.stage());
         assertEquals(Stage.PREFILL_WAITING, small.stage());
-        assertTrue(sentToDecode.isEmpty());
+        assertEquals(List.of(head), sentToDecode);
+        assertEquals(2L, endpoint.prefillQueue().inflightCount());
+        verify(queueReporter).blocked(small, Stage.PREFILL_WAITING, QueueBlockReason.PREFILL_INFLIGHT_FULL, "p1:8000");
     }
 
     @Test

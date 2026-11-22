@@ -105,9 +105,6 @@ public final class PrefillQueueLoop {
      */
     boolean runOnce() {
         int maxInflight = configService.loadBalanceConfig().getDispatcher().getMaxInflightPerPrefillWorker();
-        long nowMs = System.currentTimeMillis();
-        long starvationThresholdMs =
-                configService.loadBalanceConfig().getDispatcher().getDispatchStarvationThresholdMs();
         returnMarkedRequests();
         if (!isCurrent(queue)) {
             queues.remove(queue);
@@ -115,12 +112,12 @@ public final class PrefillQueueLoop {
             close();
             return false;
         }
-        dispatchWaiting(queue, maxInflight, starvationThresholdMs, nowMs);
+        dispatchWaiting(queue, maxInflight);
         return queue.waitingCount() > 0;
     }
 
     /**
-     * 退回处理不受 Prefill 在途或 KV 容量限制，由同一个线程串行处理退回和下发。
+     * 退回处理不受 Prefill 在途上限限制，由同一个线程串行处理退回和下发。
      */
     private void returnMarkedRequests() {
         Request request;
@@ -137,7 +134,6 @@ public final class PrefillQueueLoop {
         queue.removeWaiting(request);
         request.setSelectedPrefill(null);
         request.setPrefillDecidedAtMs(0L);
-        request.setPrefillQueuedAtMs(0L);
         cleanup.releaseQueueSlot(request);
         if (preemptorPriority != null) {
             queueReporter.preemptedReturn(preemptorPriority, request.priority(), queue.endpoint().ipPort());
@@ -154,8 +150,7 @@ public final class PrefillQueueLoop {
                 && endpointRegistry.get(endpoint.getStatus().getRole(), endpoint.ipPort()) == endpoint;
     }
 
-    private void dispatchWaiting(PrefillQueue queue, int maxInflight, long starvationThresholdMs, long nowMs) {
-        Request head = null;
+    private void dispatchWaiting(PrefillQueue queue, int maxInflight) {
         Iterator<Request> iterator = queue.waitingIterator();
         while (iterator.hasNext()) {
             Request request = iterator.next();
@@ -167,19 +162,11 @@ public final class PrefillQueueLoop {
                 continue;
             }
             QueueBlockReason reason = tryDispatch(queue, request, maxInflight);
-            if (reason == QueueBlockReason.PREFILL_INFLIGHT_FULL || reason == QueueBlockReason.PREFILL_KV_FULL) {
+            if (reason == QueueBlockReason.PREFILL_INFLIGHT_FULL) {
                 queueReporter.blocked(request, Stage.PREFILL_WAITING, reason, queue.endpoint().ipPort());
             }
             if (reason == QueueBlockReason.PREFILL_INFLIGHT_FULL || reason == QueueBlockReason.ENDPOINT_RETIRED) {
                 return;
-            }
-            if (reason == QueueBlockReason.PREFILL_KV_FULL) {
-                if (head == null) {
-                    head = request;
-                }
-                if (starvationThresholdMs == 0L || nowMs - head.prefillQueuedAtMs() >= starvationThresholdMs) {
-                    return;
-                }
             }
         }
     }

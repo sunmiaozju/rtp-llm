@@ -92,7 +92,6 @@ public final class PrefillQueue {
         if (selectedPrefill == null || request.stage() != Stage.PREFILL_WAITING) {
             return;
         }
-        request.setPrefillQueuedAtMs(System.currentTimeMillis());
         synchronized (requestRecordsLock) {
             if (waiting.add(request)) {
                 totalPredictedWorkMs.add(selectedPrefill.predictedMs());
@@ -417,17 +416,16 @@ public final class PrefillQueue {
     }
 
     /**
-     * 在推进请求阶段之前，登记 dispatch 记录并占用 Prefill 在途名额和 KV。
+     * 在推进请求阶段之前，登记 dispatch 记录并占用 Prefill 在途名额。
      */
     QueueBlockReason tryReserveForDispatch(Request request, int maxInflight) {
         SelectedPrefill choice = request.selectedPrefill();
-        long kvTokens = choice.kvTokens(request.seqLen());
-        QueueBlockReason reason = activeTasks.blockReason(kvTokens, maxInflight);
+        QueueBlockReason reason = activeTasks.blockReason(maxInflight);
         if (reason != null) {
             return reason;
         }
 
-        DispatchedRequest record = new DispatchedRequest(request, kvTokens, choice.predictedMs());
+        DispatchedRequest record = new DispatchedRequest(request, choice.predictedMs());
         addDispatched(record);
         reason = tryAcquirePublishSlot(request, maxInflight);
         if (reason != null) {

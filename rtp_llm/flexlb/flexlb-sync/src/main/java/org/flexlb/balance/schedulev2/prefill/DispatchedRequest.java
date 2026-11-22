@@ -25,10 +25,6 @@ public final class DispatchedRequest {
 
     private final Request request;
     /**
-     * 这个请求在引擎上要新占的 KV token 数（输入 token 数减去命中缓存的部分）。
-     */
-    private final long kvTokens;
-    /**
      * 初次预测的 Prefill 工作量；引擎确认缓存命中后，随实际命中或剩余 token 变化更新。
      */
     private volatile long predictedMs;
@@ -46,18 +42,13 @@ public final class DispatchedRequest {
     private volatile long lastStatusUpdatedAtMs;
     private volatile Phase phase = Phase.COMMITTED;
 
-    public DispatchedRequest(Request request, long kvTokens, long predictedMs) {
+    public DispatchedRequest(Request request, long predictedMs) {
         this.request = request;
-        this.kvTokens = kvTokens;
         this.predictedMs = predictedMs;
     }
 
     public Request request() {
         return request;
-    }
-
-    public long kvTokens() {
-        return kvTokens;
     }
 
     public long predictedMs() {

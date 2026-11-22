@@ -451,8 +451,6 @@ public class CostBasedPrefillStrategy {
         WorkerStatus status = ep.getStatus();
         HostCacheMatch match = cacheMatchResult.hostMatch(status);
         long localMatchBlocks = match == null ? 0L : Math.max(0L, match.localMatchBlocks());
-        long remoteMatchBlocks = match == null ? 0L : Math.max(0L, match.globalMatchBlocks() - localMatchBlocks);
-        double matchBlocksForSelection = localMatchBlocks + remoteMatchBlocks * inputs.remoteDiscount();
         long blockSize = inputs.blockSize();
         CacheStatus cacheStatus = status == null ? null : status.getCacheStatus();
         if (blockSize <= 0L && cacheStatus != null) {
@@ -461,17 +459,14 @@ public class CostBasedPrefillStrategy {
         if (blockSize <= 0L) {
             return CacheTokenMatch.NONE;
         }
-        double rawMatchTokens = blockSize * matchBlocksForSelection;
-        long rawHit = rawMatchTokens >= Long.MAX_VALUE
-                ? Long.MAX_VALUE
-                : Math.max(0L, Math.round(rawMatchTokens));
-        long hitTokensForSelection = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : rawHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
-        long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
-        long remoteWorkHitTokens = inputs.kvcmSource() ? inputs.globalHitTokens() - localHitTokens : remoteHitTokens;
+        // Top K 只限制 KVCM 查询开销，不应给查过远端命中的候选额外亲和分。
+        long estimatedRemoteHitTokens = inputs.kvcmSource() ? inputs.globalHitTokens() - localHitTokens : 0L;
+        long hitTokensForSelection =
+                Math.round(localHitTokens + inputs.remoteDiscount() * Math.max(0L, estimatedRemoteHitTokens));
 
         long hitTokensForWorkload =
-                Math.round(localHitTokens * inputs.localWeight() + remoteWorkHitTokens * inputs.remoteWeight());
+                Math.round(localHitTokens * inputs.localWeight() + estimatedRemoteHitTokens * inputs.remoteWeight());
 
         // 初次缓存预测至少保留一块计算量；不足一块时保留全部输入。
         // 例如输入 1000、块大小 100、global 命中 900，local/remote 权重为 1.5/1：

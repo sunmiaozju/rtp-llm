@@ -79,7 +79,6 @@ public final class RequestCleanup {
         releaseQueueSlot(request);
         request.setSelectedPrefill(null);
         request.setPrefillDecidedAtMs(0L);
-        request.setPrefillQueuedAtMs(0L);
         if (request.moveTo(expected, Stage.MAIN_WAITING)) {
             mainQueue.addBackAndWake(request);
         }

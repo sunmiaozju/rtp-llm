@@ -82,7 +82,7 @@ numeric enums, and trailing JSON. Only explicitly allowlisted retired fields are
 | --- | --- |
 | `dispatcher.type` | `NON_BATCH_V2` (default and only mode). `BATCH` and `NON_BATCH` are rejected. |
 | `dispatcher.maxInflightPerPrefillWorker` | Positive request count, default 2. |
-| `dispatcher.dispatchStarvationThresholdMs` | NON_BATCH_V2: 500 ms by default; hot-reloadable; 0 means strict order. |
+| `dispatcher.dispatchStarvationThresholdMs` | Accepted for compatibility; no longer affects dispatch. |
 | `dispatcher.cacheMatchResultTtlMs` | NON_BATCH_V2: default 30000 ms; positive; hot-reloadable. |
 | Prefill ownership | Work remains tracked until authoritative completion, safe rollback or retirement. PDFUSION has no distinct Prefill-completion signal, so its ownership lasts through request termination. |
 | Queued requests on Worker retirement | Requests still owned by the Worker subqueue return to the global queue for route selection after their old route reservations are released. They retain their original priority, queue order and deadline. Requests whose dispatch ownership has already transferred follow delivery settlement. |

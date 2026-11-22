@@ -191,7 +191,7 @@ class PreparedPrefillSelectionTest {
         assertSame(first, initialChoice.endpoint());
         assertEquals(200L, initialChoice.estimatedPrefillComputeTokens());
         assertNull(request.ctx().getMetrics().getEstimatedPrefillComputeTokens());
-        assertEquals(new PrefillRouteMetrics(200L, 800L, "OVER_CAP", 5L),
+        assertEquals(new PrefillRouteMetrics(320L, 800L, "OVER_CAP", 5L),
                 request.ctx().getMetrics().getPrefillRouteMetrics());
 
         request.setSelectedPrefill(initialChoice);
@@ -202,11 +202,11 @@ class PreparedPrefillSelectionTest {
         RequestWorkLoadEstimateResult refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
         SelectedPrefill choice = picker.pick(request, RoleType.PREFILL, "g", refreshed);
         assertSame(second, choice.endpoint());
-        assertEquals(900L, choice.hitCacheTokens());
-        assertEquals(new PrefillRouteMetrics(900L, 900L, "FASTEST_IS_CACHE_BEST", null),
+        assertEquals(1_000L, choice.hitCacheTokens());
+        assertEquals(new PrefillRouteMetrics(1_000L, 1_000L, "FASTEST_IS_CACHE_BEST", null),
                 request.ctx().getMetrics().getPrefillRouteMetrics());
         var decision = request.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
-        assertEquals(900L, decision.candidates().getFirst().effectiveHitTokens());
+        assertEquals(1_000L, decision.candidates().getFirst().effectiveHitTokens());
 
         request.setSelectedPrefill(choice);
         assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
@@ -287,7 +287,7 @@ class PreparedPrefillSelectionTest {
         assertEquals(2, inputs.candidates().size());
         assertTrue(inputs.candidates()
                 .stream()
-                .anyMatch(candidate -> candidate.endpoint() == first && candidate.cacheHitTokens() == 0L));
+                .anyMatch(candidate -> candidate.endpoint() == first && candidate.cacheHitTokens() == 20L));
         assertTrue(inputs.candidates()
                 .stream()
                 .anyMatch(candidate -> candidate.endpoint() == second && candidate.cacheHitTokens() == 100L));
@@ -326,6 +326,28 @@ class PreparedPrefillSelectionTest {
     }
 
     @Test
+    void equalLocalHitsDoNotFavorTheWorkerWithRemoteResults() {
+        var affinity = new RoutingConfig.CacheAffinityConfig();
+        affinity.setMaxExtraTtftMs(10L);
+        affinity.setRemoteDiscount(0.05);
+        config.getRouter().getRoles().getPrefill().setCacheAffinity(affinity);
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of(first.ipPort(), new HostCacheMatch(5L, 5L), second.ipPort(), new HostCacheMatch(5L, 6L)),
+                CacheMatchSource.KVCM, 0L, 100L));
+        Request request = request("1");
+        request.ctx().getRequest().setSeqLen(1_000L);
+
+        var inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
+        assertEquals(List.of(505L, 505L),
+                inputs.candidates().stream().map(PrefillCandidateWork::cacheHitTokens).toList());
+
+        SelectedPrefill choice = picker.pick(request, RoleType.PREFILL, "g", inputs);
+        assertSame(first, choice.endpoint());
+        assertEquals(505L, choice.hitCacheTokens());
+        assertEquals(400L, choice.estimatedPrefillComputeTokens());
+    }
+
+    @Test
     void preparedSelectionKeepsLocalAffinityButQueuesDeduplicatedGlobalWork() {
         first.close();
         second.close();
@@ -346,7 +368,6 @@ class PreparedPrefillSelectionTest {
         assertEquals(800L, request.ctx().getGlobalHitTokens());
         assertSame(local, request.selectedPrefill().endpoint());
         assertEquals(640L, request.selectedPrefill().hitCacheTokens());
-        assertEquals(360L, request.selectedPrefill().kvTokens(request.seqLen()));
         assertEquals(205L, request.selectedPrefill().predictedMs());
         assertEquals(200L, request.selectedPrefill().estimatedPrefillComputeTokens());
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);

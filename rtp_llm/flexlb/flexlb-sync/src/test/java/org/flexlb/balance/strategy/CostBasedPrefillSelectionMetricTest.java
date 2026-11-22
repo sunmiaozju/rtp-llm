@@ -190,21 +190,18 @@ class CostBasedPrefillSelectionMetricTest {
     }
 
     @ParameterizedTest
-    @CsvSource({
-            "1791, KVCM, true, -1, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE",
-            "1791, KVCM, true, 0, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE",
-            "1792, KVCM, true, 0, NO_CACHE_ANYWHERE_KVCM",
-            "1793, KVCM, true, 0, NO_CACHE_ANYWHERE_KVCM",
-            "1792, KVCM, true, -1, NO_CACHE_ANYWHERE_KVCM",
-            "1792, KVCM, false, -1, NO_CACHE_ANYWHERE",
-            "1792, KVCM, true, 1, NO_CACHE_ANYWHERE_BUT_KVCM_HAS_HIT",
+    @CsvSource({"1791, KVCM, true, -1, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE",
+            "1791, KVCM, true, 0, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE", "1792, KVCM, true, 0, NO_CACHE_ANYWHERE_KVCM",
+            "1793, KVCM, true, 0, NO_CACHE_ANYWHERE_KVCM", "1792, KVCM, true, -1, NO_CACHE_ANYWHERE_KVCM",
+            "1792, KVCM, false, -1, NO_CACHE_ANYWHERE", "1792, KVCM, true, 1, FASTEST_IS_CACHE_BEST",
             "1792, LOCAL_SYNC, true, 0, NO_CACHE_ANYWHERE",
             "1791, LOCAL_SYNC, true, 0, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE",
-            "1791, KVCM, false, 0, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE",
-            "1791, KVCM, true, 1, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE"
-    })
-    void distinguishesKvcmMisses(long inputTokens, CacheMatchSource source, boolean querySucceeded,
-                                long matchedBlocks, String expectedDecision) {
+            "1791, KVCM, false, 0, NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE", "1791, KVCM, true, 1, FASTEST_IS_CACHE_BEST"})
+    void distinguishesKvcmMisses(long inputTokens,
+                                 CacheMatchSource source,
+                                 boolean querySucceeded,
+                                 long matchedBlocks,
+                                 String expectedDecision) {
         configureFocusedAffinity();
         context.getRequest().setSeqLen(inputTokens);
         when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
@@ -267,8 +264,8 @@ class CostBasedPrefillSelectionMetricTest {
 
     @ParameterizedTest
     @CsvSource({"2, 8, 0.0, 800, 200", "2, 8, 0.2, 800, 320", "2, 8, 1.0, 800, 800", "0, 8, 0.0, 800, 0",
-            "2, 10, 0.2, 900, 360", "10, 10, 0.2, 900, 900", "2, 2, 0.2, 200, 200", "0, 0, 0.2, 0, 0",
-            "0, 9223372036854775807, 0.2, 900, 900"})
+            "2, 10, 0.2, 900, 360", "10, 10, 0.2, 900, 1000", "2, 2, 0.2, 200, 200", "0, 0, 0.2, 0, 0",
+            "0, 9223372036854775807, 0.2, 900, 200"})
     void globalHitsDriveWorkWhileRoutingReportsEffectiveHits(long localBlocks,
                                                              long globalBlocks,
                                                              double remoteDiscount,
@@ -656,7 +653,7 @@ class CostBasedPrefillSelectionMetricTest {
         configureFocusedAffinity();
         var affinity = config.getRouter().getRoles().getPrefill().getCacheAffinity();
         affinity.setMaxExtraTtftMs(useCacheAffinity ? 10L : 0L);
-        affinity.setRemoteDiscount(1.0);
+        affinity.setRemoteDiscount(0.5);
         for (int i = 2; i <= 5; i++) {
             publish("10.0.0." + i, 8080);
         }
