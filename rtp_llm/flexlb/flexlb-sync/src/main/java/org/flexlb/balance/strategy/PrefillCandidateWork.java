@@ -9,5 +9,6 @@ public record PrefillCandidateWork(String address,
                                    PrefillEndpoint endpoint,
                                    long cacheHitTokens,
                                    long routingCacheMatchTokens,
+                                   long localHitTokens,
                                    long predictedMs) {
 }

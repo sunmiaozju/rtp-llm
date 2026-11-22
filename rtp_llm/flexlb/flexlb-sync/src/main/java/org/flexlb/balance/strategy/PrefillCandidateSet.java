@@ -15,9 +15,11 @@ final class PrefillCandidateSet {
     private long[] incomingPrefillMs = new long[0];
     private long[] cacheHitTokens = new long[0];
     private long[] routingCacheMatchTokens = new long[0];
+    private long[] localHitTokens = new long[0];
     private long[] ownershipVersions = new long[0];
     private int size;
     long minimumTtftRank;
+    long maxLocalHitTokensAtMinTtft;
     boolean hasKnownTtft;
     long maximumCacheHit;
     long maximumRoutingCacheMatchTokens;
@@ -30,6 +32,7 @@ final class PrefillCandidateSet {
         ensureCapacityForReset(expectedCapacity);
         size = 0;
         minimumTtftRank = Long.MAX_VALUE;
+        maxLocalHitTokensAtMinTtft = 0L;
         hasKnownTtft = false;
         maximumCacheHit = 0L;
         maximumRoutingCacheMatchTokens = 0L;
@@ -43,6 +46,7 @@ final class PrefillCandidateSet {
                       long incomingMs,
                       long effectiveHitTokens,
                       long routingHitTokens,
+                      long localHitTokens,
                       long ownershipVersion) {
         endpointAddresses[size] = address;
         endpoints[size] = endpoint;
@@ -50,9 +54,17 @@ final class PrefillCandidateSet {
         incomingPrefillMs[size] = incomingMs;
         cacheHitTokens[size] = effectiveHitTokens;
         routingCacheMatchTokens[size] = routingHitTokens;
+        this.localHitTokens[size] = localHitTokens;
         ownershipVersions[size] = ownershipVersion;
-        hasKnownTtft |= estimatedTtftMs[size] >= 0L;
-        minimumTtftRank = Math.min(minimumTtftRank, ttftRank(size));
+        if (estimatedMs >= 0L) {
+            if (!hasKnownTtft || estimatedMs < minimumTtftRank) {
+                minimumTtftRank = estimatedMs;
+                maxLocalHitTokensAtMinTtft = localHitTokens;
+            } else if (estimatedMs == minimumTtftRank) {
+                maxLocalHitTokensAtMinTtft = Math.max(maxLocalHitTokensAtMinTtft, localHitTokens);
+            }
+            hasKnownTtft = true;
+        }
         maximumCacheHit = Math.max(maximumCacheHit, cacheHitTokens[size]);
         maximumRoutingCacheMatchTokens = Math.max(
                 maximumRoutingCacheMatchTokens, routingCacheMatchTokens[size]);
@@ -71,6 +83,11 @@ final class PrefillCandidateSet {
     PrefillEndpoint endpoint(int index) { return endpoints[index]; }
     String endpointAddress(int index) { return endpointAddresses[index]; }
     long cacheHit(int index) { return cacheHitTokens[index]; }
+
+    long localHitTokens(int index) {
+        return localHitTokens[index];
+    }
+
     long ttftRank(int index) { return estimatedTtftMs[index] < 0L ? Long.MAX_VALUE : estimatedTtftMs[index]; }
     long estimatedTtftMs(int index) { return estimatedTtftMs[index]; }
     long prefillMs(int index) { return incomingPrefillMs[index]; }
@@ -90,6 +107,7 @@ final class PrefillCandidateSet {
         incomingPrefillMs = new long[capacity];
         cacheHitTokens = new long[capacity];
         routingCacheMatchTokens = new long[capacity];
+        localHitTokens = new long[capacity];
         ownershipVersions = new long[capacity];
     }
 

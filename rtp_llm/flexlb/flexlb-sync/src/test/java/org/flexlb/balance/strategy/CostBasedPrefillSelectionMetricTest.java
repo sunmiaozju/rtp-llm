@@ -655,6 +655,35 @@ class CostBasedPrefillSelectionMetricTest {
         assertTrue(candidates.cacheAffinity().overCapMs() == null);
     }
 
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void rotatesOnlyAmongWorkersTiedOnTtftAndLocalHits(boolean useCacheAffinity) {
+        configureFocusedAffinity();
+        var affinity = config.getRouter().getRoles().getPrefill().getCacheAffinity();
+        affinity.setMaxExtraTtftMs(useCacheAffinity ? 10L : 0L);
+        affinity.setRemoteDiscount(1.0);
+        for (int i = 2; i <= 5; i++) {
+            publish("10.0.0." + i, 8080);
+        }
+        when(cache.findMatchingEngines(any())).thenReturn(new CacheMatchResult(
+                Map.of("10.0.0.1:8080@0", HostCacheMatch.local(1L), "10.0.0.2:8080@0", new HostCacheMatch(2L, 5L),
+                        "10.0.0.3:8080@0", HostCacheMatch.local(5L), "10.0.0.4:8080@0", HostCacheMatch.local(5L),
+                        "10.0.0.5:8080@0", HostCacheMatch.local(8L)),
+                CacheMatchSource.KVCM, 0L, 100L));
+        var prepared = strategy.prepare(context, RoleType.PREFILL, null);
+        assertNotNull(prepared);
+
+        for (String expectedIp : List.of("10.0.0.3", "10.0.0.4", "10.0.0.3")) {
+            var selected = strategy.selectPrepared(context, RoleType.PREFILL, null, prepared,
+                    candidate -> switch (candidate.endpoint().getIp()) {
+                        case "10.0.0.1" -> useCacheAffinity ? 4L : 5L;
+                        case "10.0.0.5" -> 20L;
+                        default -> 5L;
+                    });
+            assertEquals(expectedIp, selected.serverStatus().getServerIp());
+        }
+    }
+
     @Test
     void equalMaximumCacheHitPreservesBestOnlySelection() {
         configureFocusedAffinity();
@@ -767,8 +796,8 @@ class CostBasedPrefillSelectionMetricTest {
             WorkerStatus status = mock(WorkerStatus.class);
             when(status.getMetricIpPort()).thenReturn(ip + ":8080");
             when(endpoint.getStatus()).thenReturn(status);
-            candidates.addCandidate(ip + ":8080", endpoint,
-                    ttftMs[i], Math.max(0L, ttftMs[i]), hitTokens[i], hitTokens[i], i + 1L);
+            candidates.addCandidate(ip + ":8080", endpoint, ttftMs[i], Math.max(0L, ttftMs[i]), hitTokens[i],
+                    hitTokens[i], 0L, i + 1L);
         }
         return candidates;
     }

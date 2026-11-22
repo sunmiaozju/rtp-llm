@@ -69,7 +69,7 @@ public class CostBasedPrefillStrategy {
                     entry.endpoint().getPredictor().evaluator(), cacheInputs.seqLen(), computeTokens,
                     match.computeHitTokens());
             candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.effectiveHitTokens(),
-                    match.routingHitTokens(), predictedMs));
+                    match.routingHitTokens(), match.localHitTokens(), predictedMs));
         }
         return RequestWorkLoadEstimateResult.success(cacheMatch, candidates);
     }
@@ -88,7 +88,7 @@ public class CostBasedPrefillStrategy {
         for (PrefillCandidateWork candidate : preparedCandidates) {
             long estimatedMs = ttft.applyAsLong(candidate);
             candidates.addCandidate(candidate.address(), candidate.endpoint(), estimatedMs, candidate.predictedMs(),
-                    candidate.cacheHitTokens(), candidate.routingCacheMatchTokens(),
+                    candidate.cacheHitTokens(), candidate.routingCacheMatchTokens(), candidate.localHitTokens(),
                     candidate.endpoint().prefillQueue().statusVersion());
         }
         CacheMatchResult cacheMatch = inputs.cacheMatch();
@@ -361,21 +361,27 @@ public class CostBasedPrefillStrategy {
                 Math.max(0.0, configuredRate));
     }
 
-    private int selectBaselineCandidate(PrefillCandidateSet survivors, long minimumTtftMs,
-                                        RoleType role, String group) {
+    private int selectBaselineCandidate(PrefillCandidateSet survivors,
+                                        long minimumTtftMs,
+                                        RoleType role,
+                                        String group) {
         return tieRotation.next(role, group, survivors.size(),
                 i -> survivors.ttftRank(i) == minimumTtftMs
-                        && (!survivors.hasKnownTtft || survivors.estimatedTtftMs(i) >= 0L),
+                        && (!survivors.hasKnownTtft || (survivors.estimatedTtftMs(i) >= 0L
+                                && survivors.localHitTokens(i) == survivors.maxLocalHitTokensAtMinTtft)),
                 survivors::endpointAddress);
     }
 
-    /** Fairly rotate only endpoints with the same best cache hit and estimated TTFT. */
+    /**
+     * 缓存亲和仍先比综合命中、再比 TTFT；两项相同时优先本地命中更多的节点。
+     */
     private int selectCacheLeader(PrefillCandidateSet survivors,
                                   BitSet preferredCandidates,
                                   RoleType role,
                                   String group) {
         long bestHit = Long.MIN_VALUE;
         long bestEstimatedTtftMs = Long.MAX_VALUE;
+        long bestLocalHitTokens = 0L;
         for (int candidateIndex = 0;
                 candidateIndex < survivors.size(); candidateIndex++) {
             if (!contains(preferredCandidates, candidateIndex)) {
@@ -383,17 +389,21 @@ public class CostBasedPrefillStrategy {
             }
             long hit = survivors.cacheHit(candidateIndex);
             long estimatedTtftMs = survivors.ttftRank(candidateIndex);
-            if (hit > bestHit
-                    || hit == bestHit && estimatedTtftMs < bestEstimatedTtftMs) {
+            long localHitTokens = survivors.localHitTokens(candidateIndex);
+            if (hit > bestHit || hit == bestHit && (estimatedTtftMs < bestEstimatedTtftMs
+                    || estimatedTtftMs == bestEstimatedTtftMs && localHitTokens > bestLocalHitTokens)) {
                 bestHit = hit;
                 bestEstimatedTtftMs = estimatedTtftMs;
+                bestLocalHitTokens = localHitTokens;
             }
         }
         long selectedHit = bestHit;
         long selectedTtft = bestEstimatedTtftMs;
+        long selectedLocalHitTokens = bestLocalHitTokens;
         return tieRotation.next(role, group, survivors.size(),
                 i -> contains(preferredCandidates, i) && survivors.cacheHit(i) == selectedHit
-                        && survivors.ttftRank(i) == selectedTtft,
+                        && survivors.ttftRank(i) == selectedTtft
+                        && survivors.localHitTokens(i) == selectedLocalHitTokens,
                 survivors::endpointAddress);
     }
 
@@ -439,8 +449,11 @@ public class CostBasedPrefillStrategy {
         return observed;
     }
 
-    private record CacheTokenMatch(long effectiveHitTokens, long routingHitTokens, long computeHitTokens) {
-        private static final CacheTokenMatch NONE = new CacheTokenMatch(0L, 0L, 0L);
+    private record CacheTokenMatch(long effectiveHitTokens,
+                                   long routingHitTokens,
+                                   long computeHitTokens,
+                                   long localHitTokens) {
+        private static final CacheTokenMatch NONE = new CacheTokenMatch(0L, 0L, 0L, 0L);
     }
 
     private CacheTokenMatch calculateCacheMatch(PrefillEndpoint ep, PrefillCacheMatchInputs inputs) {
@@ -479,7 +492,7 @@ public class CostBasedPrefillStrategy {
         // 例如输入 1000、块大小 100、global 命中 900，local/remote 权重为 1.5/1：
         // local 命中 100/300 时，加权命中为 950/1050，均按 900 抵扣，避免跨全长阈值后抵扣反而变少。
         computeHit = Math.min(computeHit, Math.max(0L, seqLen - blockSize));
-        return new CacheTokenMatch(effectiveHit, routingHit, computeHit);
+        return new CacheTokenMatch(effectiveHit, routingHit, computeHit, localHitTokens);
     }
 
     private void reportSelectedEstimates(
