@@ -1,21 +1,76 @@
-# Overview
+# FlexLB 架构总览
 
-FlexLB 是面向 AI 模型推理负载（RTP-LLM）的高性能智能负载均衡器：提供多种负载均衡策略、
-请求排队调度、KV cache 感知路由与主从高可用。基于 Spring Boot 2.7.18 响应式架构（WebFlux），
-运行于 Java 21。
+**FlexLB 决定请求发给哪台推理引擎，调用方按返回的地址下发，引擎负责执行。** 选路时，FlexLB 结合可用节点、缓存命中、队列负载和本地预占做决定；地址返回后，继续根据引擎上报更新负载和可用容量。
 
-本目录是**稳态架构文档**（描述当前代码长什么样）。架构变了要回来更新本目录。
-流程约束（构建、测试、提交规范）见根目录 [AGENTS.md](../../AGENTS.md)。
+第一次读 FlexLB，先从本页看模块分工，再沿[一次 Schedule 的生命周期](01-request-lifecycle.md)走一遍请求。需要深入时，按问题选择：
 
-## 文档索引
+- **`docs/architecture/`：** 服务如何协作、请求经过哪些阶段；`reference/` 提供配置、接口和指标的查询入口。
+- **`docs/design/`：** 当前调度器为什么这样决策，例如[命中更多为什么仍没选中](../design/routing/02-generation-routing-decisions.md)、[地址已返回为什么还要占容量](../design/scheduling/02-capacity-and-release.md)。
+- **`docs/implementation/`：** 对照具体类读源码，例如 [`WorkerStatus` 里哪些数据一起更新](../implementation/workers/03-worker-status-structure.md)。
 
-| 文档 | 内容 |
+构建、测试和提交约定见 [AGENTS.md](../../AGENTS.md)。
+
+## 一个业务请求如何得到推理地址？
+
+**要区分业务请求和 `Schedule` 调用。** 对 vLLM / SGLang 的 EPD（Encoder、Prefill、Decode 分离）部署，需要独立编码的业务请求分两阶段调度：调用方先请求 Encoder 地址，随后沿用同一业务请求 ID，**再次调用 `Schedule`** 请求 Generation 地址。不需要独立 Encoder 决策时，调用方直接请求 Generation。第二阶段里的选 P、选 D 是 FlexLB 处理**同一次** Generation 调用的两个步骤。
+
+```mermaid
+flowchart TD
+    A{1. 业务请求需要独立 Encoder 决策吗？} -->|是，vLLM 或 SGLang EPD| E[2a. 调用方请求 Encoder Schedule]
+    E --> ER[2b. 请求在 Encoder 队列排队，FlexLB 选定节点并返回地址]
+    ER --> G[3. 调用方发起 Generation Schedule]
+    A -->|否，直接请求 Generation| G
+    G --> P[4. 主队列准备缓存匹配，结合当前负载选 P]
+    P --> Q[5. 在所选 P 或 PDFusion 的队列等待并取得本机资源]
+    Q --> D{6. 常规 Generation 的部署形态}
+    D -->|P/D 分离| DS[6a. 进入 D 队列，选择 D 并取得可交付的地址]
+    DS --> R[7a. FlexLB 返回 P 和 D 地址]
+    D -->|PD 合一| F[7b. 返回按 P 策略选出的 PDFusion 地址]
+    R --> C[8. 调用方按 Generation 响应下发]
+    F --> C
+```
+
+RTP-LLM 的 **ViT** 是另一种角色：ViT-only 调用走独立选路，不经过图中的 Encoder 阶段；同一部署不会同时出现 ViT 和 Encoder。看[角色路由](routing/01-role-routing.md)区分部署形态，看[一次 Schedule 的生命周期](01-request-lifecycle.md)追踪单次 RPC。
+
+图中用 FlexLB 代表处理该次调度的副本。启用主选举时，收到请求的 follower 通常转发给 master；找不到 master 或满足特定转发失败条件时才在本地决策，并非任意 RPC 错误都本地重试。见[选主与转发](runtime/01-master-and-forwarding.md)。
+
+## FlexLB 根据什么做决定？
+
+下面是信息的流向。左侧的数据并行维护或按请求查询，不是每次 `Schedule` 都要从头执行的一串 RPC。
+
+```mermaid
+flowchart LR
+    W[1a. 服务发现与注册] --> N[2a. 确定可路由的逻辑节点]
+    H[1b. 引擎上报 WorkerStatus] --> N
+    H --> L[2b. 更新节点负载，与本地预占对账]
+    K[1c. 请求携带的前缀块标识] --> M[2c. 查询各节点的前缀缓存命中]
+    N --> P[3a. 对合法 P 比较命中与预计首 token 时间]
+    M --> P
+    L --> P
+    P --> D[3b. 需要 D 时按容量和成本选 D]
+    N --> D
+    L --> D
+    D --> B[4. 发布 P/D 地址，保留本地在途记录]
+    B --> L
+```
+
+- **节点信息回答“谁能参加”。** 服务发现给出物理地址；FlexLB 按逻辑引擎维护注册和健康状态。每套部署只有一个流量 group。Worker 的 DP group 是另一件事：属于同一 DP 组的节点要等 rank 齐全才参与新请求的选择。见[发现与注册](workers/01-discovery-and-registration.md)。
+- **缓存信息回答“在哪台 P 上能少算一些”。** FlexLB 用客户端提供的块标识，通过 `LOCAL_SYNC`、`KVCM` 或 `LOCAL_STANDBY` 获取命中情况。合法 P 先全部参与匹配，再结合负载判断为更多命中是否值得等待。缓存数据怎么来见[缓存匹配](../design/routing/03-cache-matching.md)；怎么影响排名见[Generation 选路决策](../design/routing/02-generation-routing-decisions.md)。
+- **队列和预占回答“选好了，现在能不能发”。** 两次引擎上报之间，FlexLB 可能已为其他请求预留资源。若只看上次上报，可能把同一份容量分配两次。地址发布后归还排队名额，P/D 在途记录仍分别等待引擎确认、完成或超时清理。见[容量与释放](../design/scheduling/02-capacity-and-release.md)和[状态与反馈](workers/02-status-and-feedback.md)。
+
+## 按问题找文档
+
+阅读 `WorkerStatus.java` 时，可直接对照 [WorkerStatus 的对象结构与数据流](../implementation/workers/03-worker-status-structure.md)，定位内部类、快照发布和任务记录的来源。
+
+| 问题 | 专题 |
 |---|---|
-| [01-routing-and-balancing](01-routing-and-balancing.md) | 路由与选点策略、单流量 group 约束、回滚机制 |
-| [03-resource-management](03-resource-management.md) | EndpointRegistry、worker 可用性与本地资源预留 |
-| [04-worker-sync-and-cache](04-worker-sync-and-cache.md) | Worker 状态 gRPC 同步、本地乐观预测、KV cache 三种匹配源（LOCAL_SYNC / KVCM / LOCAL_STANDBY） |
-| [05-lifecycle-and-consistency](05-lifecycle-and-consistency.md) | 生命周期 Hook 与 /hook/* 端点、ZooKeeper LeaderSelector 主选举、slave 转发 |
-| [06-configuration-and-observability](06-configuration-and-observability.md) | 全量配置字段与默认值、HTTP 端点、日志架构、指标体系 |
+| 节点没进候选集合？ | [角色路由](routing/01-role-routing.md) → [发现与注册](workers/01-discovery-and-registration.md)：先确认请求角色，再查 group、健康状态和 DP rank。 |
+| 进了候选却没选中？ | [缓存匹配](../design/routing/03-cache-matching.md) → [Generation 选路决策](../design/routing/02-generation-routing-decisions.md)：区分缓存没命中和命中了但等待成本过高。 |
+| 已选 P，为什么还没返回地址？ | [AutoTPM：队列、优先级与抢占](../design/scheduling/01-autotpm.md) → [容量与释放](../design/scheduling/02-capacity-and-release.md)：区分等 P 出队和已占 P 资源等 D。 |
+| 地址已返回，为什么在途数还没降？ | [容量与释放](../design/scheduling/02-capacity-and-release.md) → [状态与反馈](workers/02-status-and-feedback.md)：区分调度完成、引擎接收和引擎完成。 |
+| 哪个副本处理请求，上下线时会发生什么？ | [选主与转发](runtime/01-master-and-forwarding.md) · [启动与停机](runtime/02-startup-and-shutdown.md) |
+| Master 或 KVCM 不可用时的请求处理 | [容灾与降级](../design/runtime/03-failover-and-degradation.md)：区分换主、单次本地调度和缓存来源切换。 |
+| 怎么配置、调用和排查？ | [配置](reference/01-configuration.md) · [接口契约](reference/02-api-contracts.md) · [可观测性](reference/03-observability.md) |
 
 ## 技术栈
 
@@ -33,79 +88,16 @@ FlexLB 是面向 AI 模型推理负载（RTP-LLM）的高性能智能负载均�
 
 ## 模块划分
 
-多模块 Maven 工程：
+[父 POM](../../pom.xml) 声明了 7 个模块。生产服务从 `flexlb-api` 启动，调度逻辑在 `flexlb-sync`；`flexlb-mock-engine` 和 `flexlb-integration-tests` 用于验证，不在生产请求链路上。
 
 | 模块 | 职责 |
 |---|---|
-| **flexlb-api** | Web 层：`HttpLoadBalanceServer`（调度）、`FlexlbControlServer`（控制）、`HealthCheckServer`、`AppStateHookServer`（生命周期 hook）；主端口 7001 |
+| **flexlb-api** | gRPC `Schedule` 入口与转发，HTTP 控制、健康检查和生命周期 hook；HTTP 主端口 7001 |
 | **flexlb-common** | 共享模型（`WorkerStatus`、`Request`/`Response`、`RoleType`、`BalanceContext`）、`FlexlbConfig`/`ConfigService`、`FlexMonitor` 指标抽象 |
 | **flexlb-grpc** | 引擎 gRPC 客户端（worker status / cache status）+ KVCM meta-service 客户端（`KvcmGrpcClient`、leader 解析、健康探测） |
 | **flexlb-sync** | 核心：路由与策略、排队调度、动态资源管理、worker 状态同步、主选举、生命周期 Hook、监控上报 |
 | **flexlb-cache** | KV cache 匹配：LOCAL_SYNC 两级索引（`KvCacheManager`/`GlobalCacheIndex`/`EngineLocalView`）、KVCM provider、Local Standby 兜底索引、failover 编排 |
+| **flexlb-mock-engine** | 模拟引擎集群和负载客户端，用于验证调度、扩缩容和故障场景。使用方法见[模块 README](../../flexlb-mock-engine/README.md)。 |
+| **flexlb-integration-tests** | 独立的 Maven Failsafe 测试模块；当前 `src/` 中没有用例。`./mvnw -pl flexlb-integration-tests -am verify` 成功不代表跑过独立的端到端场景。 |
 
-flexlb-sync 内部包结构（`org.flexlb`）：
-
-```
-balance/
-├── scheduler/      DefaultRouter / PriorityScheduler / Dispatcher
-├── schedulev2/     Generation 主队列、Prefill 队列和 Decode 队列
-├── endpoint/       EndpointRegistry / PrefillEndpoint / DecodeEndpoint / 本地预留账本
-├── strategy/       LoadBalanceStrategy + Prefill / Decode / Random 策略
-└── resource/       PrefillResourceMeasure / DecodeResourceMeasure / ResourceMeasureFactory
-consistency/        LBStatusConsistencyService / ZookeeperMasterElectService
-sync/
-├── synchronizer/   MasterEngineSynchronizer（20ms 定时）/ AbstractEngineStatusSynchronizer（线程池）
-├── runner/         EngineSyncRunner / GrpcWorkerStatusRunner / GrpcCacheStatusCheckRunner
-├── schedule/       ExpirationCleaner（worker/任务过期清理）
-└── status/         EngineWorkerStatus / ModelWorkerStatus
-service/
-├── grace/          GracefulOnlineService / GracefulShutdownService / ActiveRequestCounter / strategy/ 各 Hooker
-├── grpc/           EngineGrpcService
-├── monitor/        EngineHealthReporter / BatchSchedulerReporter / PrioritySchedulerReporter / FlexlbLogManager
-└── RouteService
-```
-
-## 请求主链路
-
-```
-gRPC FlexlbService.Schedule (FlexlbGrpcServer, HTTP 端口 + 100)
-    ↓ ActiveRequestCounter.acquire()（在途请求计数）
-    ↓ 若 enableFallback=true → 直接返回业务码 8600，由客户端选路
-    ↓ 若启用一致性且本机非 master → 转发给 master（master 不可达则降级本地路由）
-    ↓ 校验客户端提供的 block_cache_keys 与 cache_key_block_size
-RouteService.route()
-    ├─ ViT：查询缓存或选择 ViT 端点
-    ├─ Encoder：Encoder 队列选点并返回地址
-    └─ Generation：V2 主队列准备缓存匹配与选 Prefill
-           → Prefill 队列 → Decode 队列 → 返回 P/D 地址
-           PD 合一时返回 PDFUSION 地址，不单独选 Decode。
-```
-
-Schedule 入口读取当前配置快照；`enableFallback=true` 时，在构建调度上下文、主从判断和转发之前返回 `success=false`、`code=8600`、`enqueued_by_master=false`，不进入调度或派发。
-开关关闭时将请求字段转换为 `BalanceContext` / `Request`，本地路由、排队和转发完成回调使用内部上下文。
-原始 `FlexlbScheduleRequestPB` 仅用于入口解析和向 Master 发起 gRPC 转发；转发 RPC 回调使用提取出的 request ID。
-
-## 核心不变量
-
-- **单流量 group**：每套 FlexLB 部署只支持一个流量 group，不支持同一部署同时承载多个流量 group。
-  Worker 的 DP group 用于检查 rank 是否完整，不是流量 group，不受此限制。
-- **路由读、同步写**：`EngineWorkerStatus.MODEL_ROLE_WORKER_STATUS`（静态单例，四个角色各一个
-  `ConcurrentHashMap<ip:httpPort@index, WorkerStatus>`）由后台同步线程写、路由线程读；
-  `WorkerStatus` 内所有计数为 Atomic 字段，原子性是**字段级**而非快照级。
-- **内部逻辑地址、外部物理地址**：worker 身份内部一律用逻辑 `ip:httpPort@index`
-  （map key、cache 匹配、回滚、feedback，N=1 也是 `@0`）；对外（schedule 响应、gRPC 拨号）
-  一律用物理地址，线上协议不出现 `@index`，仅 N>1 时 schedule 响应附加 wire
-  `engine_index`。
-- **选中即记账，失败必回滚**：策略 `select()` 成功即 `putLocalTask()` 预扣队列时间与 KV
-  token；多阶段路由部分失败必须经 `rollBackRoutingFailure()` → `removeLocalTask()` 撤销。
-- **本地预测 + 引擎对账**：`localTaskMap` 记录 IN_TRANSIT 任务；引擎状态返回后
-  `updateTaskStates()` 对账（IN_TRANSIT→CONFIRMED→RUNNING→FINISHED / LOST），
-  `updateKvCacheTokens()` 回填在途任务的 KV 修正。
-- **策略必须注册**：4 个策略 bean 在构造函数中自注册进 `LoadBalanceStrategyFactory`；
-  `DefaultRouter` 用 `@DependsOn` 保证注册先于路由器构造。
-- **并发抢占用 CAS**：ShortestTTFT 系策略通过 `lastSelectedTime` 的 `compareAndSet`
-  防止多个调度线程基于同一快照选中同一 worker。
-- **master 优先，可降级**：启用一致性时 slave 把请求转发给 master；master 未知或不可达时
-  **降级为本地路由**（不是拒绝）。
-- **KVCM 与 LOCAL_SYNC 互斥**：`kvcmEnabled` 时不再调度本地 cache 状态轮询，cache 匹配走
-  KVCM，Local Standby 作为兜底（自动/手动 failover）。
+对接调用方时，注意内部按逻辑引擎地址区分 worker，对外返回物理地址，多引擎端点另带 `engine_index`，详见[接口契约](reference/02-api-contracts.md)。

@@ -76,18 +76,15 @@ management).
 
 ## Architecture Docs
 
-架构设计文档在 [docs/architecture/](docs/architecture/00-overview.md)（稳态架构文档，
-描述当前代码长什么样；架构变了必须同步更新）：
+架构变更须同步更新对应的专题文档。首次阅读可从[架构总览](docs/architecture/00-overview.md)和[一次 Schedule 的生命周期](docs/architecture/01-request-lifecycle.md)开始。
 
-| 文档 | 内容 |
+| 文档模块 | 介绍什么 |
 |---|---|
-| [00-overview](docs/architecture/00-overview.md) | 模块划分、技术栈、请求主链路、核心不变量 |
-| [01-routing-and-balancing](docs/architecture/01-routing-and-balancing.md) | Router / LoadBalancer、角色多阶段路由、回滚、策略 |
-| [02-queue-scheduling](docs/architecture/02-queue-scheduling.md) | PriorityScheduler / WorkerBatcher 调度、请求生命周期 |
-| [03-resource-management](docs/architecture/03-resource-management.md) | EndpointRegistry、worker 可用性与本地资源预留 |
-| [04-worker-sync-and-cache](docs/architecture/04-worker-sync-and-cache.md) | Worker 状态同步、KV cache 索引 |
-| [05-lifecycle-and-consistency](docs/architecture/05-lifecycle-and-consistency.md) | 优雅上下线 Hook、ZooKeeper 主选举 |
-| [06-configuration-and-observability](docs/architecture/06-configuration-and-observability.md) | 环境变量配置、HTTP 端点、监控指标 |
+| [角色路由](docs/architecture/routing/) · [选路设计](docs/design/routing/) | 各引擎的角色路径，以及 Generation 如何根据缓存命中、预计耗时和容量选择 P/D。 |
+| [调度设计](docs/design/scheduling/) | AutoTPM 的队列、抢占和容量释放。 |
+| [Worker 架构](docs/architecture/workers/) · [Worker 实现](docs/implementation/workers/) | 注册、DP rank 和状态反馈；`WorkerStatus` 对象关系与字段附录。 |
+| [运行机制](docs/architecture/runtime/) · [容灾设计](docs/design/runtime/) | 选主、请求转发、启停，以及转发或缓存查询失败时的处理。 |
+| [`reference/`](docs/architecture/reference/) | 查询配置字段与生效时机、gRPC 和 HTTP 接口约定，以及排查请求时使用的日志和指标。 |
 
 ## Build Commands
 
@@ -136,7 +133,7 @@ java -jar flexlb-api/target/flexlb-api-1.0.0-SNAPSHOT.jar \
 
 运行模型服务时需要 `MODEL_SERVICE_CONFIG`；`FLEXLB_CONFIG` 可省略并使用有效默认值。
 ZooKeeper 主选举通过 `FLEXLB_CONFIG.consistency` 配置；不存在独立的一致性行为环境变量。字段说明见
-[06-configuration-and-observability](docs/architecture/06-configuration-and-observability.md)。
+[配置参考](docs/architecture/reference/01-configuration.md)。
 
 JVM args required for Java 21 module system（见 pom.xml spring-boot-maven-plugin 配置）。
 

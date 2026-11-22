@@ -1,7 +1,7 @@
 # QUEUE ordering, decision, and dispatcher modes
 
 > Historical design for schema v2. For current settings and Decode preemption behavior, see
-> [Configuration and observability](architecture/06-configuration-and-observability.md).
+> [Configuration](architecture/reference/01-configuration.md) and [AutoTPM scheduling](design/scheduling/01-autotpm.md).
 
 ## Purpose
 
