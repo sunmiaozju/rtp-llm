@@ -20,7 +20,7 @@ class EnvironmentConfigSourceTest {
         Map<String, String> environment = Map.of("FLEXLB_CONFIG", """
                 {
                   "schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},
-                  "dispatcher":{"type":"NON_BATCH"},
+                  "dispatcher":{"type":"NON_BATCH_V2"},
                   "observability":{"logging":{
                     "level":"debug","stdoutEnabled":true
                   }},
@@ -39,7 +39,7 @@ class EnvironmentConfigSourceTest {
         });
 
         FlexlbConfig config = configService.loadBalanceConfig();
-        assertThat(config.getDispatcher().typeName()).isEqualTo("NON_BATCH");
+        assertThat(config.getDispatcher().typeName()).isEqualTo("NON_BATCH_V2");
         assertThat(config.getObservability().getLogging().getLevel())
                 .isEqualTo(LogLevel.DEBUG);
         assertThat(config.getObservability().getLogging().isStdoutEnabled()).isTrue();

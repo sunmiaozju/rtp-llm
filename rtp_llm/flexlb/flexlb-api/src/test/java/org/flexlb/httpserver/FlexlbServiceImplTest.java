@@ -2040,7 +2040,7 @@ class FlexlbServiceImplTest {
                 {
                   "scheduler":{"type":"QUEUE","queueTimeoutMs":7777,
                     "ordering":{"type":"FIFO"}},
-                  "dispatcher":{"type":"NON_BATCH"},
+                  "dispatcher":{"type":"NON_BATCH_V2"},
                   "requestLifecycle":{"request":{"timeoutMs":3600000},"decision":{"lifetime":2}}
                 }
                 """);
