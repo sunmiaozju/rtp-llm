@@ -25,19 +25,20 @@ import java.util.stream.Collectors;
 @Component
 public class DefaultRouter {
 
+    private final VitCacheSelector vitCacheSelector;
     private final EncoderStrategy encoderSelector;
     private final ConfigService configService;
     private final Set<RoleType> deployedRoles;
-    @Autowired
-    private VitCacheSelector vitCacheSelector;
 
     @Autowired
     public DefaultRouter(EncoderStrategy encoderSelector,
                          ConfigService configService,
-                         ModelMetaConfig modelMetaConfig) {
+                         ModelMetaConfig modelMetaConfig,
+                         VitCacheSelector vitCacheSelector) {
         this.encoderSelector = encoderSelector;
         this.configService = configService;
         this.deployedRoles = Collections.unmodifiableSet(new LinkedHashSet<>(modelMetaConfig.requiredRoles()));
+        this.vitCacheSelector = vitCacheSelector;
     }
 
     boolean isEncoderOnly(BalanceContext context) {

@@ -43,7 +43,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         var workers = new org.flexlb.sync.status.WorkerDirectory(registry);
         var model = org.mockito.Mockito.mock(ModelMetaConfig.class);
         org.mockito.Mockito.when(model.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
-        var router = new DefaultRouter(new EncoderStrategy(workers), configService, model);
+        var router = new DefaultRouter(new EncoderStrategy(workers), configService, model, null);
         var cache = org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class);
         org.mockito.Mockito.when(cache.findMatchingEngines(org.mockito.ArgumentMatchers.any())).thenReturn(
                 org.flexlb.cache.domain.CacheMatchResult.empty(org.flexlb.cache.domain.CacheMatchSource.LOCAL_SYNC));
