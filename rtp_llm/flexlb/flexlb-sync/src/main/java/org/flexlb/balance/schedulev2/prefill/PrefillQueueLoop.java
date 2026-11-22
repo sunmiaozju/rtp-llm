@@ -172,7 +172,7 @@ public final class PrefillQueueLoop {
     }
 
     private QueueBlockReason tryDispatch(PrefillQueue queue, Request request, int maxInflight) {
-        QueueBlockReason reason = queue.tryReserveForDispatch(request, maxInflight);
+        QueueBlockReason reason = queue.tryReserveForDispatch(request, maxInflight, configService);
         if (reason != null) {
             return reason;
         }

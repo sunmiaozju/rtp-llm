@@ -276,6 +276,24 @@ class ConfigServiceTest {
     }
 
     @Test
+    void runtimeUpdatesEnableAndDisablePrefillWorkloadUpdate() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, "{\"schemaVersion\":3}");
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        var initial = service.loadBalanceConfig().getRouter().getRoles().getPrefill();
+        assertThat(initial.isEnableWorkloadUpdate()).isFalse();
+
+        String update = "{\"schemaVersion\":3,\"router\":{\"roles\":{\"prefill\":{\"enableWorkloadUpdate\":%s}}}}";
+        source.emit(update.formatted(true));
+        var enabled = service.loadBalanceConfig().getRouter().getRoles().getPrefill();
+        assertThat(enabled.isEnableWorkloadUpdate()).isTrue();
+        assertThat(initial.isEnableWorkloadUpdate()).isFalse();
+
+        source.emit(update.formatted(false));
+        assertThat(service.loadBalanceConfig().getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()).isFalse();
+        assertThat(enabled.isEnableWorkloadUpdate()).isTrue();
+    }
+
+    @Test
     void runtimeUpdateReplacesDecodeLimitsWithoutChangingExistingSnapshot() {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},

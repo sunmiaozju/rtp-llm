@@ -2,6 +2,7 @@ package org.flexlb.balance.schedulev2.prefill;
 
 import lombok.Data;
 import org.flexlb.balance.schedulev2.request.Request;
+import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
 
 import java.util.Objects;
@@ -24,6 +25,7 @@ public final class DispatchedRequest {
     }
 
     private final Request request;
+    private final ConfigService configService;
     /**
      * 初次预测的 Prefill 工作量；引擎确认缓存命中后，随实际命中或剩余 token 变化更新。
      */
@@ -42,9 +44,10 @@ public final class DispatchedRequest {
     private volatile long lastStatusUpdatedAtMs;
     private volatile Phase phase = Phase.COMMITTED;
 
-    public DispatchedRequest(Request request, long predictedMs) {
+    public DispatchedRequest(Request request, long predictedMs, ConfigService configService) {
         this.request = request;
         this.predictedMs = predictedMs;
+        this.configService = configService;
     }
 
     public Request request() {
@@ -56,6 +59,10 @@ public final class DispatchedRequest {
     }
 
     boolean isWorkLoadChanged(WorkerStatus.TaskObservation newWorkerStatus) {
+        if (!configService.loadBalanceConfig().getRouter().getRoles().getPrefill().isEnableWorkloadUpdate()) {
+            return false;
+        }
+
         WorkerStatus.TaskObservation oldWorkerStatus = workerStatus;
         return oldWorkerStatus == null || oldWorkerStatus.prefixLengthValid() != newWorkerStatus.prefixLengthValid()
                 || oldWorkerStatus.prefixLength() != newWorkerStatus.prefixLength()

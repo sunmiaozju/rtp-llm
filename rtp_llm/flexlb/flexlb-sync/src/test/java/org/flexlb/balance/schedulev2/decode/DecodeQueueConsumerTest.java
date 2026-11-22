@@ -685,7 +685,7 @@ class DecodeQueueConsumerTest {
         Request request = V2TestSupport.request(config, id, priority, 16L);
         request.setQueueSeq(Long.parseLong(id));
         var prefillQueue = V2TestSupport.prefillEndpoint("p1:8000").prefillQueue();
-        V2TestSupport.dispatch(prefillQueue, new DispatchedRequest(request, 0L));
+        V2TestSupport.dispatch(prefillQueue, new DispatchedRequest(request, 0L, configService));
         assertNull(prefillQueue.tryAcquirePublishSlot(request, 1));
         request.selectedPrefill().serverStatus().setGroup("g");
         queueCapacity.increaseTotalQueueCount(request.future());

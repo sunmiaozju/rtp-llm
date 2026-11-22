@@ -6,6 +6,7 @@ import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.balance.schedulev2.prefill.DispatchedRequest;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueue;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
+import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
@@ -34,6 +35,7 @@ class PrefillEndpointTest {
 
     private PrefillEndpoint endpoint;
     private FlexlbConfig config = SchedulingTestConfig.newConfig();
+    private final ConfigService configService = mock(ConfigService.class);
     private final RequestSchedulerReporter v2Reporter = mock(RequestSchedulerReporter.class);
 
     @AfterEach
@@ -47,7 +49,7 @@ class PrefillEndpointTest {
     void finishedOnlyStatusReleasesV2PrefillClaim() {
         var queue = createV2Queue();
         var request = V2TestSupport.request(SchedulingTestConfig.newConfig(), "901", 50, 10);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L));
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L, configService));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertEquals(1L, queue.inflightCount());
         WorkerStatusPB.Builder response = WorkerStatusPB.newBuilder();
@@ -65,7 +67,7 @@ class PrefillEndpointTest {
         var request = V2TestSupport.request(SchedulingTestConfig.newConfig(), "902", 50, 10);
         org.springframework.test.util.ReflectionTestUtils.setField(request, "publishedAtMs",
                 System.currentTimeMillis() - 10_000L);
-        var record = new DispatchedRequest(request, 5L);
+        var record = new DispatchedRequest(request, 5L, configService);
         V2TestSupport.dispatch(queue, record);
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(record.statusExpired(System.currentTimeMillis(), 1000L));
@@ -85,7 +87,7 @@ class PrefillEndpointTest {
     void unchangedVersionStatusCleansExpiredPublishedRequestUsingCurrentConfig() {
         var queue = createV2Queue();
         var request = V2TestSupport.request(config, "903", 50, 10);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L));
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L, configService));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(request.publish(org.flexlb.balance.schedulev2.request.Stage.DECODE_WAITING, List.of()));
         org.springframework.test.util.ReflectionTestUtils.setField(request, "publishedAtMs",
@@ -120,7 +122,7 @@ class PrefillEndpointTest {
         config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(1000L);
         var queue = createV2Queue();
         var request = V2TestSupport.request(config, "904", 50, 10);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L));
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L, configService));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(request.publish(org.flexlb.balance.schedulev2.request.Stage.DECODE_WAITING, List.of()));
         org.springframework.test.util.ReflectionTestUtils.setField(request, "publishedAtMs",
@@ -140,7 +142,7 @@ class PrefillEndpointTest {
         config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(1000L);
         var queue = createV2Queue();
         var request = V2TestSupport.request(config, "905", 50, 10);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L));
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L, configService));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(request.publish(org.flexlb.balance.schedulev2.request.Stage.DECODE_WAITING, List.of()));
         org.springframework.test.util.ReflectionTestUtils.setField(request, "publishedAtMs",
@@ -160,7 +162,7 @@ class PrefillEndpointTest {
         var queue = createV2Queue();
         var request = V2TestSupport.request(config, "906", 50, 10);
         request.setQueueSeq(1L);
-        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L));
+        V2TestSupport.dispatch(queue, new DispatchedRequest(request, 5L, configService));
         assertNull(queue.tryAcquirePublishSlot(request, 1));
         assertTrue(request.publish(org.flexlb.balance.schedulev2.request.Stage.DECODE_WAITING, List.of()));
         var waiting = V2TestSupport.request(config, "907", 50, 10);
@@ -188,7 +190,6 @@ class PrefillEndpointTest {
             endpoint.close();
         }
         var queues = mock(PrefillQueueRegistry.class);
-        var configService = mock(org.flexlb.config.ConfigService.class);
         org.mockito.Mockito.when(configService.loadBalanceConfig()).thenReturn(config);
         var events = new org.flexlb.balance.scheduler.EndpointEventHandler(mock(RequestRegistry.class), queues,
                 configService, mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));

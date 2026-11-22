@@ -9,6 +9,7 @@ import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestOrder;
 import org.flexlb.balance.schedulev2.request.SelectedPrefill;
 import org.flexlb.balance.schedulev2.request.Stage;
+import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatus.TaskObservation;
 import org.flexlb.enums.TaskPhase;
@@ -418,14 +419,14 @@ public final class PrefillQueue {
     /**
      * 在推进请求阶段之前，登记 dispatch 记录并占用 Prefill 在途名额。
      */
-    QueueBlockReason tryReserveForDispatch(Request request, int maxInflight) {
+    QueueBlockReason tryReserveForDispatch(Request request, int maxInflight, ConfigService configService) {
         SelectedPrefill choice = request.selectedPrefill();
         QueueBlockReason reason = activeTasks.blockReason(maxInflight);
         if (reason != null) {
             return reason;
         }
 
-        DispatchedRequest record = new DispatchedRequest(request, choice.predictedMs());
+        DispatchedRequest record = new DispatchedRequest(request, choice.predictedMs(), configService);
         addDispatched(record);
         reason = tryAcquirePublishSlot(request, maxInflight);
         if (reason != null) {

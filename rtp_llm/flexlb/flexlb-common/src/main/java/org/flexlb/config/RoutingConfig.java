@@ -29,6 +29,7 @@ public final class RoutingConfig {
         private ExecutionTimeEstimatorConfig executionTimeEstimator =
                 new ExecutionTimeEstimatorConfig();
         private CacheAffinityConfig cacheAffinity;
+        private boolean enableWorkloadUpdate;
     }
 
     @Getter
