@@ -265,6 +265,7 @@ public final class Request {
         Response response = new Response();
         response.setSuccess(true);
         response.setServerStatus(serverStatuses);
+        ctx.getMetrics().setEstimatedPrefillComputeTokens(selectedPrefill.estimatedPrefillComputeTokens());
         writeQueueTimes();
         future.complete(response);
         return true;

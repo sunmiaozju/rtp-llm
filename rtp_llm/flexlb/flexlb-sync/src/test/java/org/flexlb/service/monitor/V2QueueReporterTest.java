@@ -12,10 +12,14 @@ import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceMetrics.PrefillRouteMetrics;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
+import org.flexlb.enums.FlexMetricType;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
+import org.flexlb.metric.FlexStatisticsType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
@@ -29,6 +33,7 @@ import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
 import static org.flexlb.constant.MetricConstant.CACHE_FIND_MATCHING_ENGINES_RT;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
+import static org.flexlb.constant.MetricConstant.REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_METRICS_REPORT_DROPPED;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT;
@@ -121,6 +126,7 @@ class V2QueueReporterTest {
         V2TestSupport.register(prefills, prefill.selectedPrefill().endpoint());
         prefills.addWaiting(prefill);
         Request decode = add("3");
+        var decodePrefill = V2TestSupport.choose(decode, prefill.selectedPrefill().endpoint(), 0L, 10L);
         decode.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         decode.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING);
         reporter.sample(table, List.of("p1:8000", "p2:8000"));
@@ -142,8 +148,8 @@ class V2QueueReporterTest {
         depth("decode_reserved", "all", 1);
 
         clearInvocations(monitor);
-        prefill.publish(Stage.DECODE_WAITING, List.of());
-        decode.publish(Stage.DECODE_RESERVED, List.of());
+        prefill.publish(Stage.DECODE_WAITING, List.of(prefill.selectedPrefill().serverStatus()));
+        decode.publish(Stage.DECODE_RESERVED, List.of(decodePrefill.serverStatus()));
         reporter.sample(table, List.of());
         depth("decode_waiting", "all", 0);
         depth("decode_reserved", "all", 0);
@@ -290,22 +296,51 @@ class V2QueueReporterTest {
         org.mockito.Mockito.verifyNoMoreInteractions(monitor);
     }
 
+    @ParameterizedTest
+    @ValueSource(longs = {0L, 8L})
+    void successfulCompletionReportsPrefillComputeTokensOnMetricsWorker(long tokens) throws Exception {
+        reporter.init();
+        var tags = FlexMetricTags.of();
+        var reportThread = new CompletableFuture<Thread>();
+        doAnswer(invocation -> {
+            reportThread.complete(Thread.currentThread());
+            return null;
+        }).when(monitor).report(REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS, tags, (double) tokens);
+
+        Request request = add("1");
+        var prefill = V2TestSupport.selected(V2TestSupport.prefillEndpoint("p1:8000"), 0L, 10L, tokens);
+        request.setSelectedPrefill(prefill);
+        request.future().thenAccept(response -> reporter.completed(request, response));
+        assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
+        assertTrue(request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING));
+        assertTrue(request.publish(Stage.DECODE_WAITING, List.of(prefill.serverStatus())));
+        assertNotSame(Thread.currentThread(), reportThread.get(5L, TimeUnit.SECONDS));
+        finishReports();
+
+        verify(monitor).register(REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS, FlexMetricType.GAUGE,
+                FlexStatisticsType.SUMMARY);
+        verify(monitor).report(REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS, tags, (double) tokens);
+    }
+
     @Test
     void successfulCompletionReportsOnlyLatestPrefillSampleWithoutRoleTags() throws Exception {
         Request request = add("1");
+        var prefill = V2TestSupport.choose(request, V2TestSupport.prefillEndpoint("p1:8000"), 0L, 10L);
         var metrics = request.ctx().getMetrics();
         metrics.setPrefillRouteMetrics(new PrefillRouteMetrics(900L, 1_000L, "CACHE_LEADER", null));
         metrics.setPrefillRouteMetrics(new PrefillRouteMetrics(128L, 256L, "OVER_CAP", 15L));
         request.future().thenAccept(response -> reporter.completed(request, response));
         assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
         assertTrue(request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING));
-        assertTrue(request.publish(Stage.DECODE_WAITING, List.of()));
+        assertTrue(request.publish(Stage.DECODE_WAITING, List.of(prefill.serverStatus())));
         finishReports();
 
         verify(monitor).report(CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS, FlexMetricTags.of(), 128.0);
         verify(monitor).report(CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS, FlexMetricTags.of(), 256.0);
         verify(monitor).report(CACHE_AFFINITY_DECISION, FlexMetricTags.of("decision", "OVER_CAP"), 1.0);
         verify(monitor).report(CACHE_AFFINITY_OVER_CAP_MS, FlexMetricTags.of(), 15.0);
+        verify(monitor).report(REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS, FlexMetricTags.of(),
+                (double) prefill.estimatedPrefillComputeTokens());
         verify(monitor, times(3)).report(eq(SCHEDULE_V2_QUEUE_WAIT_MS), any(), anyDouble());
         org.mockito.Mockito.verifyNoMoreInteractions(monitor);
     }
@@ -317,6 +352,7 @@ class V2QueueReporterTest {
         Request timedOut = add("3");
         for (Request request : List.of(failed, cancelled, timedOut)) {
             request.ctx().getMetrics().setPrefillRouteMetrics(new PrefillRouteMetrics(128L, 256L, "OVER_CAP", 15L));
+            request.ctx().getMetrics().setEstimatedPrefillComputeTokens(8L);
             request.future().thenAccept(response -> reporter.completed(request, response));
         }
         assertTrue(failed.fail(StrategyErrorType.DISPATCH_FAILED, "test failure"));
@@ -342,7 +378,8 @@ class V2QueueReporterTest {
         reporter.init();
         int registered = 0;
         for (var invocation : org.mockito.Mockito.mockingDetails(monitor).getInvocations()) {
-            if (invocation.getMethod().getName().equals("register")) {
+            if (invocation.getMethod().getName().equals("register")
+                    && !REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS.equals(invocation.getArgument(0))) {
                 assertEquals(org.flexlb.enums.FlexPriorityType.NORMAL, invocation.getArgument(2));
                 registered++;
             }
@@ -403,9 +440,10 @@ class V2QueueReporterTest {
 
     private void reportSuccessfulCompletion(String id) {
         Request request = add(id);
+        var prefill = V2TestSupport.choose(request, V2TestSupport.prefillEndpoint("p1:8000"), 0L, 10L);
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING);
-        assertTrue(request.publish(Stage.DECODE_WAITING, List.of()));
+        assertTrue(request.publish(Stage.DECODE_WAITING, List.of(prefill.serverStatus())));
         reporter.completed(request, request.future().join());
     }
 

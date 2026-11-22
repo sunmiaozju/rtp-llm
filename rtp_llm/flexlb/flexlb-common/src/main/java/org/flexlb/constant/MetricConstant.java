@@ -687,6 +687,12 @@ public class MetricConstant {
     public static final String REQUEST_SEQ_LEN = "app.request.seq.len";
 
     /**
+     * Estimated input tokens to compute on the Prefill worker selected in a successful Schedule response.
+     */
+    public static final String REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS =
+            "app.request.prefill.estimated.compute.tokens";
+
+    /**
      * Caller-provided cache_key_block_size in tokens.
      */
     public static final String REQUEST_BLOCK_SIZE = "app.request.block.size";

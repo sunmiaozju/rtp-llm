@@ -73,9 +73,9 @@ class RequestSchedulerV2Test {
         PrefillQueueRegistry prefillQueues = new PrefillQueueRegistry();
         V2TestSupport.report(endpoint, 1L, 1_000L, 1_000L, Map.of());
         V2TestSupport.register(prefillQueues, endpoint);
-        var choice = V2TestSupport.selected(endpoint, 0L, 10L);
+        var choice = V2TestSupport.selected(endpoint, 0L, 10L, 16L);
         var estimate = RequestWorkLoadEstimateResult.success(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC),
-                List.of(new PrefillCandidateWork(endpoint.ipPort(), endpoint, 0L, 0L, 10L)));
+                List.of(new PrefillCandidateWork(endpoint.ipPort(), endpoint, 0L, 0L, 10L, 16L)));
         CostBasedPrefillStrategy prefillStrategy = mock(CostBasedPrefillStrategy.class);
         when(prefillStrategy.prepare(any(), any(), any())).thenReturn(estimate);
         when(prefillStrategy.selectPrepared(any(), any(), any(), any(), any())).thenReturn(choice);
@@ -83,10 +83,12 @@ class RequestSchedulerV2Test {
                 mock(DefaultRouter.class), prefillStrategy, mock(DecodeSelector.class), prefillQueues, modelMetaConfig,
                 mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class), mock(V2QueueReporter.class));
 
-        Response response = scheduler.submit(context("1", 50, 60_000L)).get(5, TimeUnit.SECONDS);
+        BalanceContext context = context("1", 50, 60_000L);
+        Response response = scheduler.submit(context).get(5, TimeUnit.SECONDS);
 
         assertTrue(response.isSuccess());
         assertEquals(List.of(choice.serverStatus()), response.getServerStatus());
+        assertEquals(16L, context.getMetrics().getEstimatedPrefillComputeTokens());
         assertEquals(1L, endpoint.prefillQueue().inflightCount());
         V2TestSupport.reportTasks(endpoint.prefillQueue(), Map.of(), Map.of("1", TaskPhase.RUNNING));
         assertEquals(0L, endpoint.prefillQueue().inflightCount());

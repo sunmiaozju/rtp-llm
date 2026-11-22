@@ -32,6 +32,9 @@ public final class BalanceMetrics {
     private volatile Long lastCacheMatchUs;
 
     @Setter
+    private volatile Long estimatedPrefillComputeTokens;
+
+    @Setter
     private PrefillRouteMetrics prefillRouteMetrics;
 
     public void recordPrepareSubmitRejected() {

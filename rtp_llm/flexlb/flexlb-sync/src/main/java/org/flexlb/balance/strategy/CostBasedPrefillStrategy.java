@@ -64,12 +64,12 @@ public class CostBasedPrefillStrategy {
         List<PrefillCandidateWork> candidates = new ArrayList<>(endpoints.size());
         for (EndpointRegistry.PrefillRoutingEntry entry : endpoints) {
             CacheTokenMatch match = calculateCacheMatch(entry.endpoint(), cacheInputs);
-            long computeTokens = Math.max(0L, cacheInputs.seqLen() - match.computeHitTokens());
-            long predictedMs = PrefillPredictionBoundary.predictSingleRequestMs(
-                    entry.endpoint().getPredictor().evaluator(), cacheInputs.seqLen(), computeTokens,
-                    match.computeHitTokens());
-            candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.effectiveHitTokens(),
-                    match.localHitTokens(), predictedMs));
+            long estimatedPrefillComputeTokens = Math.max(0L, cacheInputs.seqLen() - match.hitTokensForWorkload());
+            long predictedMs =
+                    PrefillPredictionBoundary.predictSingleRequestMs(entry.endpoint().getPredictor().evaluator(),
+                            cacheInputs.seqLen(), estimatedPrefillComputeTokens, match.hitTokensForWorkload());
+            candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.hitTokensForSelection(),
+                    match.localHitTokens(), predictedMs, estimatedPrefillComputeTokens));
         }
         return RequestWorkLoadEstimateResult.success(cacheMatch, candidates);
     }
@@ -103,7 +103,8 @@ public class CostBasedPrefillStrategy {
 
         long seqLen = context.getRequest().getSeqLen();
         return new SelectedPrefill(endpoint, status, Math.max(0L, Math.min(seqLen, hitCacheTokens)),
-                candidates.prefillMs(selectedIndex));
+                candidates.prefillMs(selectedIndex),
+                preparedCandidates.get(selectedIndex).estimatedPrefillComputeTokens());
     }
 
     private int selectPrefillIndex(BalanceContext context,
@@ -448,7 +449,7 @@ public class CostBasedPrefillStrategy {
         return observed;
     }
 
-    private record CacheTokenMatch(long effectiveHitTokens, long computeHitTokens, long localHitTokens) {
+    private record CacheTokenMatch(long hitTokensForSelection, long hitTokensForWorkload, long localHitTokens) {
         private static final CacheTokenMatch NONE = new CacheTokenMatch(0L, 0L, 0L);
     }
 
@@ -462,7 +463,7 @@ public class CostBasedPrefillStrategy {
         HostCacheMatch match = cacheMatchResult.hostMatch(status);
         long localMatchBlocks = match == null ? 0L : Math.max(0L, match.localMatchBlocks());
         long remoteMatchBlocks = match == null ? 0L : Math.max(0L, match.globalMatchBlocks() - localMatchBlocks);
-        double effectiveMatchBlocks = localMatchBlocks + remoteMatchBlocks * inputs.remoteDiscount();
+        double matchBlocksForSelection = localMatchBlocks + remoteMatchBlocks * inputs.remoteDiscount();
         long blockSize = inputs.blockSize();
         CacheStatus cacheStatus = status == null ? null : status.getCacheStatus();
         if (blockSize <= 0L && cacheStatus != null) {
@@ -471,23 +472,23 @@ public class CostBasedPrefillStrategy {
         if (blockSize <= 0L) {
             return CacheTokenMatch.NONE;
         }
-        double rawMatchTokens = blockSize * effectiveMatchBlocks;
+        double rawMatchTokens = blockSize * matchBlocksForSelection;
         long rawHit = rawMatchTokens >= Long.MAX_VALUE
                 ? Long.MAX_VALUE
                 : Math.max(0L, Math.round(rawMatchTokens));
-        long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : rawHit;
+        long hitTokensForSelection = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : rawHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
         long remoteWorkHitTokens = inputs.kvcmSource() ? inputs.globalHitTokens() - localHitTokens : remoteHitTokens;
 
-        long computeHit =
+        long hitTokensForWorkload =
                 Math.round(localHitTokens * inputs.localWeight() + remoteWorkHitTokens * inputs.remoteWeight());
 
         // 初次缓存预测至少保留一块计算量；不足一块时保留全部输入。
         // 例如输入 1000、块大小 100、global 命中 900，local/remote 权重为 1.5/1：
         // local 命中 100/300 时，加权命中为 950/1050，均按 900 抵扣，避免跨全长阈值后抵扣反而变少。
-        computeHit = Math.min(computeHit, Math.max(0L, seqLen - blockSize));
-        return new CacheTokenMatch(effectiveHit, computeHit, localHitTokens);
+        hitTokensForWorkload = Math.min(hitTokensForWorkload, Math.max(0L, seqLen - blockSize));
+        return new CacheTokenMatch(hitTokensForSelection, hitTokensForWorkload, localHitTokens);
     }
 
     private void reportSelectedEstimates(

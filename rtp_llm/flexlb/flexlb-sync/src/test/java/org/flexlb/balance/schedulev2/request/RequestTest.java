@@ -3,16 +3,19 @@ package org.flexlb.balance.schedulev2.request;
 import org.flexlb.balance.scheduler.CancelReason;
 import org.flexlb.balance.scheduler.DeliveryClaimKind;
 import org.flexlb.balance.scheduler.RequestState;
+import org.flexlb.balance.schedulev2.V2TestSupport;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -75,6 +78,19 @@ class RequestTest {
         assertEquals(Stage.FAILED, request.stage());
         assertEquals(RequestState.Phase.FAILED, request.toRequestState().state());
         assertEquals("first", request.toRequestState().detail());
+    }
+
+    @Test
+    void cancelledRequestDoesNotRecordTheSelectedPrefillWork() {
+        Request request = request("cancel-before-publish");
+        var prefill = V2TestSupport.selected(V2TestSupport.prefillEndpoint("p1:8000"), 0L, 10L, 16L);
+        request.setSelectedPrefill(prefill);
+        assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
+        assertTrue(request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING));
+
+        assertTrue(request.cancel(CancelReason.CLIENT_CANCELLED));
+        assertFalse(request.publish(Stage.DECODE_WAITING, List.of(prefill.serverStatus())));
+        assertNull(request.ctx().getMetrics().getEstimatedPrefillComputeTokens());
     }
 
     @Test

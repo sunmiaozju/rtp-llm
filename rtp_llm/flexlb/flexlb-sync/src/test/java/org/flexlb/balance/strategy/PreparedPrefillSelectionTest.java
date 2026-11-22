@@ -128,11 +128,18 @@ class PreparedPrefillSelectionTest {
         request.ctx().getRequest().setSeqLen(1_000L);
 
         RequestWorkLoadEstimateResult inputs = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
-        assertSame(first, picker.pick(request, RoleType.PREFILL, "g", inputs).endpoint());
+        SelectedPrefill initialChoice = picker.pick(request, RoleType.PREFILL, "g", inputs);
+        assertSame(first, initialChoice.endpoint());
+        assertEquals(200L, initialChoice.estimatedPrefillComputeTokens());
+        assertNull(request.ctx().getMetrics().getEstimatedPrefillComputeTokens());
         assertEquals(new PrefillRouteMetrics(200L, 800L, "OVER_CAP", 5L),
                 request.ctx().getMetrics().getPrefillRouteMetrics());
 
+        request.setSelectedPrefill(initialChoice);
+        assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
         first.close();
+        assertTrue(request.moveTo(Stage.PREFILL_WAITING, Stage.MAIN_WAITING));
+        request.setSelectedPrefill(null);
         RequestWorkLoadEstimateResult refreshed = picker.prepare(request.ctx(), RoleType.PREFILL, "g");
         SelectedPrefill choice = picker.pick(request, RoleType.PREFILL, "g", refreshed);
         assertSame(second, choice.endpoint());
@@ -141,6 +148,15 @@ class PreparedPrefillSelectionTest {
                 request.ctx().getMetrics().getPrefillRouteMetrics());
         var decision = request.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
         assertEquals(900L, decision.candidates().getFirst().effectiveHitTokens());
+
+        request.setSelectedPrefill(choice);
+        assertTrue(request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING));
+        assertTrue(request.moveTo(Stage.PREFILL_WAITING, Stage.DECODE_WAITING));
+        var metrics = request.ctx().getMetrics();
+        assertNull(metrics.getEstimatedPrefillComputeTokens());
+        var publishedEstimate = request.future().thenApply(response -> metrics.getEstimatedPrefillComputeTokens());
+        assertTrue(request.publish(Stage.DECODE_WAITING, List.of(choice.serverStatus())));
+        assertEquals(100L, publishedEstimate.join());
     }
 
     @Test
@@ -273,6 +289,7 @@ class PreparedPrefillSelectionTest {
         assertEquals(640L, request.selectedPrefill().hitCacheTokens());
         assertEquals(360L, request.selectedPrefill().kvTokens(request.seqLen()));
         assertEquals(205L, request.selectedPrefill().predictedMs());
+        assertEquals(200L, request.selectedPrefill().estimatedPrefillComputeTokens());
         request.moveTo(Stage.MAIN_WAITING, Stage.PREFILL_WAITING);
         queues.addWaiting(request);
         Request next = request("2");

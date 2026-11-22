@@ -121,7 +121,14 @@ public final class V2TestSupport {
     }
 
     public static SelectedPrefill selected(PrefillEndpoint endpoint, long hitCache, long predictedMs) {
-        return new SelectedPrefill(endpoint, new ServerStatus(), hitCache, predictedMs);
+        return selected(endpoint, hitCache, predictedMs, 0L);
+    }
+
+    public static SelectedPrefill selected(PrefillEndpoint endpoint,
+                                           long hitCache,
+                                           long predictedMs,
+                                           long estimatedPrefillComputeTokens) {
+        return new SelectedPrefill(endpoint, new ServerStatus(), hitCache, predictedMs, estimatedPrefillComputeTokens);
     }
 
     /**

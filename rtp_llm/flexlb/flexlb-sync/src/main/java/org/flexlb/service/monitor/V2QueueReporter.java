@@ -16,6 +16,7 @@ import org.flexlb.enums.FlexMetricType;
 import org.flexlb.enums.FlexPriorityType;
 import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
+import org.flexlb.metric.FlexStatisticsType;
 import org.flexlb.util.Logger;
 import org.springframework.stereotype.Component;
 
@@ -31,6 +32,7 @@ import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_DECISION;
 import static org.flexlb.constant.MetricConstant.CACHE_AFFINITY_OVER_CAP_MS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_CANDIDATE_MAX_HIT_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_ROUTING_SELECTED_MATCH_HIT_TOKENS;
+import static org.flexlb.constant.MetricConstant.REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_PREFILL_INFLIGHT_LIMIT;
 import static org.flexlb.constant.MetricConstant.SCHEDULE_V2_QUEUE_BLOCKED_ATTEMPT_QPS;
@@ -60,6 +62,7 @@ public class V2QueueReporter {
 
     @PostConstruct
     public void init() {
+        monitor.register(REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS, FlexMetricType.GAUGE, FlexStatisticsType.SUMMARY);
         monitor.register(SCHEDULE_V2_QUEUE_DEPTH, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(SCHEDULE_V2_QUEUE_OLDEST_WAIT_MS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(SCHEDULE_V2_PREFILL_INFLIGHT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
@@ -172,6 +175,10 @@ public class V2QueueReporter {
             PrefillRouteMetrics sample = input.metrics().getPrefillRouteMetrics();
             if (sample != null) {
                 reportPrefillRouteMetrics(sample);
+            }
+            Long estimatedPrefillComputeTokens = input.metrics().getEstimatedPrefillComputeTokens();
+            if (estimatedPrefillComputeTokens != null) {
+                report(REQUEST_PREFILL_ESTIMATED_COMPUTE_TOKENS, FlexMetricTags.of(), estimatedPrefillComputeTokens);
             }
         }
     }
