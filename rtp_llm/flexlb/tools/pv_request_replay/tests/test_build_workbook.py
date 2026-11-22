@@ -143,7 +143,7 @@ class CurrentRoutingDecisionTest(unittest.TestCase):
     def test_malformed_candidates_are_skipped_when_building_workbook(self):
         route = route_record("malformed-candidate", epoch_ms(1, 45), "10.0.0.8")
         route["routingDecisions"] = [{"role": "PREFILL", "candidates": [None, "invalid",
-            {"endpoint": "10.0.0.8:8001@1", "selected": True, "routingMatchTokens": 512}]}]
+            {"endpoint": "10.0.0.8:8001@1", "selected": True, "effectiveHitTokens": 512}]}]
         self.assertEqual(workbook_module.get_route_cache_selection(route),
                          {"hitCacheTokens": 512, "selectedIp": "10.0.0.8"})
         with tempfile.TemporaryDirectory() as directory:
@@ -171,7 +171,7 @@ class CurrentRoutingDecisionTest(unittest.TestCase):
                                ("[2001:db8::1]:8001@1", "2001:db8::1")):
             with self.subTest(endpoint=endpoint):
                 route = {"routingDecisions": [{"role": "PREFILL", "candidates": [
-                    {"endpoint": endpoint, "selected": True, "routingMatchTokens": 512}]}]}
+                     {"endpoint": endpoint, "selected": True, "effectiveHitTokens": 512}]}]}
 
                 self.assertEqual(workbook_module.get_route_cache_selection(route),
                                  {"hitCacheTokens": 512, "selectedIp": host})
@@ -185,7 +185,7 @@ class CurrentRoutingDecisionTest(unittest.TestCase):
         route.pop("shortestTtftDecisions", None)
         route["routingDecisions"] = [{"role": "PREFILL", "selectionReason": "CACHE_LEADER",
             "candidates": [{"endpoint": "10.0.0.8:8001@1", "selected": True,
-                            "routingMatchTokens": 512, "estimatedTtftMs": 20}]}]
+                            "effectiveHitTokens": 512, "estimatedTtftMs": 20}]}]
         self.assertTrue(workbook_module.route_success(route))
         self.assertEqual(workbook_module.get_route_cache_selection(route)["hitCacheTokens"], 512)
         with tempfile.TemporaryDirectory() as directory:

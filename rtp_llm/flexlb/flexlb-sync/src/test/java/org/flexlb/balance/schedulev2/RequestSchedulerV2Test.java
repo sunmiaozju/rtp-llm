@@ -75,7 +75,7 @@ class RequestSchedulerV2Test {
         V2TestSupport.register(prefillQueues, endpoint);
         var choice = V2TestSupport.selected(endpoint, 0L, 10L);
         var estimate = RequestWorkLoadEstimateResult.success(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC),
-                List.of(new PrefillCandidateWork(endpoint.ipPort(), endpoint, 0L, 0L, 0L, 10L)));
+                List.of(new PrefillCandidateWork(endpoint.ipPort(), endpoint, 0L, 0L, 10L)));
         CostBasedPrefillStrategy prefillStrategy = mock(CostBasedPrefillStrategy.class);
         when(prefillStrategy.prepare(any(), any(), any())).thenReturn(estimate);
         when(prefillStrategy.selectPrepared(any(), any(), any(), any(), any())).thenReturn(choice);

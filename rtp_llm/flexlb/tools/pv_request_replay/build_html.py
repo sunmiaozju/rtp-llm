@@ -217,7 +217,7 @@ def compact_current_candidate(row: dict[str, Any]) -> dict[str, Any] | None:
     physical_endpoint, engine_separator, engine_index = endpoint.partition("@")
     host, separator, port = physical_endpoint.rpartition(":")
     fields = ("estimatedTtftMs", "estimatedDrainMs", "incomingPrefillMs", "effectiveHitTokens",
-              "routingMatchTokens", "pendingRequests", "usedKvTokens", "availableKvTokens", "logWeight",
+              "pendingRequests", "usedKvTokens", "availableKvTokens", "logWeight",
               "ownershipVersion", "routingAttempt", "totalWorkerCount", "candidateWorkerCount")
     return {
         **{key: cell_number(row.get(key)) for key in fields},

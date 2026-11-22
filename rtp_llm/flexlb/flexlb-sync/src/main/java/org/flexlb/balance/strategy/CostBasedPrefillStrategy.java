@@ -69,7 +69,7 @@ public class CostBasedPrefillStrategy {
                     entry.endpoint().getPredictor().evaluator(), cacheInputs.seqLen(), computeTokens,
                     match.computeHitTokens());
             candidates.add(new PrefillCandidateWork(entry.address(), entry.endpoint(), match.effectiveHitTokens(),
-                    match.routingHitTokens(), match.localHitTokens(), predictedMs));
+                    match.localHitTokens(), predictedMs));
         }
         return RequestWorkLoadEstimateResult.success(cacheMatch, candidates);
     }
@@ -88,7 +88,7 @@ public class CostBasedPrefillStrategy {
         for (PrefillCandidateWork candidate : preparedCandidates) {
             long estimatedMs = ttft.applyAsLong(candidate);
             candidates.addCandidate(candidate.address(), candidate.endpoint(), estimatedMs, candidate.predictedMs(),
-                    candidate.cacheHitTokens(), candidate.routingCacheMatchTokens(), candidate.localHitTokens(),
+                    candidate.cacheHitTokens(), candidate.localHitTokens(),
                     candidate.endpoint().prefillQueue().statusVersion());
         }
         CacheMatchResult cacheMatch = inputs.cacheMatch();
@@ -159,8 +159,8 @@ public class CostBasedPrefillStrategy {
             decision = null;
         }
         context.getMetrics()
-                .setPrefillRouteMetrics(new PrefillRouteMetrics(candidates.routingCacheMatchTokens(selectedIndex),
-                        candidates.maximumRoutingCacheMatchTokens, decision, overCapMs));
+                .setPrefillRouteMetrics(new PrefillRouteMetrics(candidates.cacheHit(selectedIndex),
+                        candidates.maximumCacheHit, decision, overCapMs));
     }
 
     private void recordDecision(BalanceContext context,
@@ -240,7 +240,6 @@ public class CostBasedPrefillStrategy {
                 null,
                 candidates.prefillMs(index),
                 candidates.cacheHit(index),
-                candidates.routingCacheMatchTokens(index),
                 0L,
                 null,
                 null,
@@ -449,11 +448,8 @@ public class CostBasedPrefillStrategy {
         return observed;
     }
 
-    private record CacheTokenMatch(long effectiveHitTokens,
-                                   long routingHitTokens,
-                                   long computeHitTokens,
-                                   long localHitTokens) {
-        private static final CacheTokenMatch NONE = new CacheTokenMatch(0L, 0L, 0L, 0L);
+    private record CacheTokenMatch(long effectiveHitTokens, long computeHitTokens, long localHitTokens) {
+        private static final CacheTokenMatch NONE = new CacheTokenMatch(0L, 0L, 0L);
     }
 
     private CacheTokenMatch calculateCacheMatch(PrefillEndpoint ep, PrefillCacheMatchInputs inputs) {
@@ -479,8 +475,7 @@ public class CostBasedPrefillStrategy {
         long rawHit = rawMatchTokens >= Long.MAX_VALUE
                 ? Long.MAX_VALUE
                 : Math.max(0L, Math.round(rawMatchTokens));
-        long routingHit = Math.min(seqLen, rawHit);
-        long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : routingHit;
+        long effectiveHit = rawHit >= seqLen ? Math.max(0L, seqLen - blockSize) : rawHit;
         long localHitTokens = CacheMatchResult.matchedTokens(localMatchBlocks, blockSize, seqLen);
         long remoteHitTokens = CacheMatchResult.matchedTokens(remoteMatchBlocks, blockSize, seqLen);
         long remoteWorkHitTokens = inputs.kvcmSource() ? inputs.globalHitTokens() - localHitTokens : remoteHitTokens;
@@ -492,7 +487,7 @@ public class CostBasedPrefillStrategy {
         // 例如输入 1000、块大小 100、global 命中 900，local/remote 权重为 1.5/1：
         // local 命中 100/300 时，加权命中为 950/1050，均按 900 抵扣，避免跨全长阈值后抵扣反而变少。
         computeHit = Math.min(computeHit, Math.max(0L, seqLen - blockSize));
-        return new CacheTokenMatch(effectiveHit, routingHit, computeHit, localHitTokens);
+        return new CacheTokenMatch(effectiveHit, computeHit, localHitTokens);
     }
 
     private void reportSelectedEstimates(

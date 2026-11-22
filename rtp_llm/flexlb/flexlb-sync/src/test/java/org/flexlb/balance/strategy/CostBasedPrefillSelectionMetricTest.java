@@ -266,15 +266,14 @@ class CostBasedPrefillSelectionMetricTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"2, 8, 0.0, 800, 200, 200", "2, 8, 0.2, 800, 320, 320", "2, 8, 1.0, 800, 800, 800",
-            "0, 8, 0.0, 800, 0, 0", "2, 10, 0.2, 900, 360, 360", "10, 10, 0.2, 900, 900, 1000",
-            "2, 2, 0.2, 200, 200, 200", "0, 0, 0.2, 0, 0, 0", "0, 9223372036854775807, 0.2, 900, 900, 1000"})
-    void globalHitsDriveWorkWhileAffinityAndRoutingMetricsKeepRemoteDiscount(long localBlocks,
-                                                                             long globalBlocks,
-                                                                             double remoteDiscount,
-                                                                             long computeHitTokens,
-                                                                             long affinityHitTokens,
-                                                                             long routingHitTokens) {
+    @CsvSource({"2, 8, 0.0, 800, 200", "2, 8, 0.2, 800, 320", "2, 8, 1.0, 800, 800", "0, 8, 0.0, 800, 0",
+            "2, 10, 0.2, 900, 360", "10, 10, 0.2, 900, 900", "2, 2, 0.2, 200, 200", "0, 0, 0.2, 0, 0",
+            "0, 9223372036854775807, 0.2, 900, 900"})
+    void globalHitsDriveWorkWhileRoutingReportsEffectiveHits(long localBlocks,
+                                                             long globalBlocks,
+                                                             double remoteDiscount,
+                                                             long computeHitTokens,
+                                                             long effectiveHitTokens) {
         configureFocusedAffinity();
         config.getRouter().getRoles().getPrefill().getCacheAffinity().setRemoteDiscount(remoteDiscount);
         when(cache.findMatchingEngines(any())).thenReturn(
@@ -283,15 +282,16 @@ class CostBasedPrefillSelectionMetricTest {
 
         RequestWorkLoadEstimateResult inputs = strategy.prepare(context, RoleType.PREFILL, null);
         PrefillCandidateWork prepared = inputs.candidates().getFirst();
-        assertEquals(affinityHitTokens, prepared.cacheHitTokens());
-        assertEquals(routingHitTokens, prepared.routingCacheMatchTokens());
+        assertEquals(effectiveHitTokens, prepared.cacheHitTokens());
         assertEquals(1_000L - computeHitTokens, prepared.predictedMs());
 
         var selected = select();
-        assertEquals(affinityHitTokens, selected.serverStatus().getDebugInfo().getHitCacheLen());
+        assertEquals(effectiveHitTokens, selected.serverStatus().getDebugInfo().getHitCacheLen());
         assertEquals(1_000L - computeHitTokens, selected.predictedMs());
-        assertEquals(affinityHitTokens, selected.hitCacheTokens());
-        assertEquals(routingHitTokens, context.getMetrics().getPrefillRouteMetrics().selectedHitTokens());
+        assertEquals(effectiveHitTokens, selected.hitCacheTokens());
+        var metrics = context.getMetrics().getPrefillRouteMetrics();
+        assertEquals(effectiveHitTokens, metrics.selectedHitTokens());
+        assertEquals(effectiveHitTokens, metrics.candidateMaxHitTokens());
     }
 
     @ParameterizedTest
@@ -370,7 +370,6 @@ class CostBasedPrefillSelectionMetricTest {
             assertEquals(work[index], candidate.predictedMs());
             long localHit = index < 4 ? (5L - index) * 100L : 0L;
             assertEquals(localHit, candidate.cacheHitTokens());
-            assertEquals(localHit, candidate.routingCacheMatchTokens());
         }
         var selected = select();
         assertEquals("10.0.0.1", selected.serverStatus().getServerIp());
@@ -434,7 +433,6 @@ class CostBasedPrefillSelectionMetricTest {
                 default -> 0L;
             };
             assertEquals(localHit, candidate.cacheHitTokens());
-            assertEquals(localHit, candidate.routingCacheMatchTokens());
         }
         verify(cache).findMatchingEngines(new CacheMatchQuery(context.getRequestId(),
                 context.getRequest().getBlockCacheKeys(), 2_304L, RoleType.PREFILL, null));
@@ -506,7 +504,6 @@ class CostBasedPrefillSelectionMetricTest {
         assertEquals(0L, context.getGlobalHitTokens());
         assertEquals(expectedWork, candidate.predictedMs());
         assertEquals(200L, candidate.cacheHitTokens());
-        assertEquals(200L, candidate.routingCacheMatchTokens());
     }
 
     @Test
@@ -796,8 +793,8 @@ class CostBasedPrefillSelectionMetricTest {
             WorkerStatus status = mock(WorkerStatus.class);
             when(status.getMetricIpPort()).thenReturn(ip + ":8080");
             when(endpoint.getStatus()).thenReturn(status);
-            candidates.addCandidate(ip + ":8080", endpoint, ttftMs[i], Math.max(0L, ttftMs[i]), hitTokens[i],
-                    hitTokens[i], 0L, i + 1L);
+            candidates.addCandidate(ip + ":8080", endpoint, ttftMs[i], Math.max(0L, ttftMs[i]), hitTokens[i], 0L,
+                    i + 1L);
         }
         return candidates;
     }

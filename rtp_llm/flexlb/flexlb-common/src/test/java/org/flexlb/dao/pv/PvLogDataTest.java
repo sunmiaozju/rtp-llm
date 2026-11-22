@@ -72,10 +72,11 @@ class PvLogDataTest {
     void keepsCacheSelectionWhenSelectedCandidateHasNoEndpoint() {
         BalanceContext context = new BalanceContext();
         context.recordCacheSelection(RoleType.PREFILL, "10.0.0.2", 512L);
-        context.recordRoutingDecision(new RoutingDecision(RoleType.PREFILL, "default", "CostBasedPrefill",
-                "CACHE_LEADER", null, null, null, 1600L, 1, "10.0.0.2:8080", 1, 1, false, Map.of(), List.of(
-                        new RoutingDecision.Candidate(null, true, 90L, 20L, 70L, 512L, 512L,
-                                1L, null, null, null, "MODELED", 1L)), null));
+        context.recordRoutingDecision(
+                new RoutingDecision(RoleType.PREFILL, "default", "CostBasedPrefill", "CACHE_LEADER", null, null, null,
+                        1600L, 1, "10.0.0.2:8080", 1, 1, false, Map.of(), List.of(new RoutingDecision.Candidate(null,
+                                true, 90L, 20L, 70L, 512L, 1L, null, null, null, "MODELED", 1L)),
+                        null));
 
         PvLogData data = new PvLogData(context);
 
@@ -327,8 +328,10 @@ class PvLogDataTest {
         context.recordCacheSelection(RoleType.DECODE, "10.0.0.3", 128);
         context.recordSelectionReason(RoleType.PREFILL, "CACHE_LEADER");
         context.recordRoutingDecision(new RoutingDecision(RoleType.PREFILL, "default", "CostBasedPrefill",
-                "CACHE_LEADER", null, null, null, 1600L, 1, "10.0.0.2:8080", 2, 1, false, java.util.Map.of(), List.of(
-                        new RoutingDecision.Candidate("10.0.0.2:8080", true, 90L, 20L, 70L, 512L, 512L, 1L, null, null, null, "MODELED", 1L)), null));
+                "CACHE_LEADER", null, null, null, 1600L, 1, "10.0.0.2:8080", 2, 1, false, java.util.Map.of(),
+                List.of(new RoutingDecision.Candidate("10.0.0.2:8080", true, 90L, 20L, 70L, 512L, 1L, null, null, null,
+                        "MODELED", 1L)),
+                null));
         context.finishRequestTiming();
 
         PvLogData data = new PvLogData(context);
@@ -342,6 +345,7 @@ class PvLogDataTest {
         assertEquals(1, data.getCacheMatchSelections().size());
         assertTrue(data.getSelectionReasons().isEmpty());
         assertEquals(1, data.getRoutingDecisions().size());
+        assertEquals(512L, data.getRoutingDecisions().getFirst().candidates().getFirst().effectiveHitTokens());
         assertEquals("10.0.0.3", data.getCacheMatchSelections().getFirst().selectedIp());
         assertEquals(128, data.getCacheMatchSelections().getFirst().hitCacheTokens());
 

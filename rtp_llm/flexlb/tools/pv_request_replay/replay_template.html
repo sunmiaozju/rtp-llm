@@ -409,7 +409,7 @@
       const metrics = decode
         ? [['KV 已用 Token', tokenWork(candidate.usedKvTokens)], ['KV 可用 Token', tokenWork(candidate.availableKvTokens)], ['采样 logWeight', candidate.logWeight == null ? '—' : Number(candidate.logWeight).toPrecision(6)]]
         : [['预测首 Token 耗时', milliseconds(candidate.estimatedTtftMs)], ['预测排空耗时', milliseconds(candidate.estimatedDrainMs)], ['本请求 Prefill 耗时', milliseconds(candidate.incomingPrefillMs)]];
-      const extra = decode ? [] : [['有效命中 Token', tokenWork(candidate.effectiveHitTokens)], ['路由匹配 Token', tokenWork(candidate.routingMatchTokens)], ['预测状态', escaped(candidate.predictionState)]];
+      const extra = decode ? [] : [['有效命中 Token', tokenWork(candidate.effectiveHitTokens)], ['预测状态', escaped(candidate.predictionState)]];
       const details = decode ? '' : `<div class="muted">最短 TTFT ${milliseconds(policy.minimumTtftMs)} · 选择方式 ${escaped(policy.candidateChoice)} · 缓存亲和额外耗时上限 ${milliseconds(policy.cacheAffinityMaxExtraTtftMs)} · 最低命中率 ${pct(policy.cacheAffinityMinPrefixHitPercent)}</div>`;
       return `<div class="candidate ${candidate.selected ? 'selected' : ''}" data-candidate-host="${escaped(candidate.host)}">
         <div class="candidate-top"><span class="host">${escaped(candidate.role)} · ${escaped(candidate.endpoint || `${candidate.host}:${candidate.port}`)}</span><span>${candidate.selected ? '✓ 最终选中' : ''}</span></div>

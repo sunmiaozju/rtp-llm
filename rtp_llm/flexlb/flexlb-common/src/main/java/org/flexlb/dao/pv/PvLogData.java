@@ -178,12 +178,12 @@ public class PvLogData {
     }
 
     private boolean hasRecordedCacheSelection(BalanceContext.CacheMatchSelection selection) {
-        return routingDecisions.stream().filter(decision -> decision.role() == selection.role())
+        return routingDecisions.stream()
+                .filter(decision -> decision.role() == selection.role())
                 .flatMap(decision -> decision.candidates().stream())
-                .anyMatch(candidate -> candidate.selected()
-                        && candidate.endpoint() != null
+                .anyMatch(candidate -> candidate.selected() && candidate.endpoint() != null
                         && candidate.endpoint().startsWith(selection.selectedIp() + ":")
-                        && java.util.Objects.equals(candidate.routingMatchTokens(), selection.hitCacheTokens()));
+                        && java.util.Objects.equals(candidate.effectiveHitTokens(), selection.hitCacheTokens()));
     }
 
     @JsonIgnoreProperties({"success", "code", "error_message", "admission_reject_reason",

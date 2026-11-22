@@ -114,7 +114,7 @@ class PreparedPrefillSelectionTest {
     }
 
     @Test
-    void reselectionReplacesBothRoutingHitCountsAndAffinityDiagnostics() {
+    void reselectionReplacesEffectiveHitCountsAndAffinityDiagnostics() {
         RoutingConfig.CacheAffinityConfig affinity = new RoutingConfig.CacheAffinityConfig();
         affinity.setMaxExtraTtftMs(0L);
         affinity.setMinPrefixHitPercent(0.0);
@@ -137,8 +137,10 @@ class PreparedPrefillSelectionTest {
         SelectedPrefill choice = picker.pick(request, RoleType.PREFILL, "g", refreshed);
         assertSame(second, choice.endpoint());
         assertEquals(900L, choice.hitCacheTokens());
-        assertEquals(new PrefillRouteMetrics(1_000L, 1_000L, "FASTEST_IS_CACHE_BEST", null),
+        assertEquals(new PrefillRouteMetrics(900L, 900L, "FASTEST_IS_CACHE_BEST", null),
                 request.ctx().getMetrics().getPrefillRouteMetrics());
+        var decision = request.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
+        assertEquals(900L, decision.candidates().getFirst().effectiveHitTokens());
     }
 
     @Test
@@ -210,10 +212,10 @@ class PreparedPrefillSelectionTest {
         assertEquals(2, inputs.candidates().size());
         assertTrue(inputs.candidates()
                 .stream()
-                .anyMatch(candidate -> candidate.endpoint() == first && candidate.routingCacheMatchTokens() == 0L));
+                .anyMatch(candidate -> candidate.endpoint() == first && candidate.cacheHitTokens() == 0L));
         assertTrue(inputs.candidates()
                 .stream()
-                .anyMatch(candidate -> candidate.endpoint() == second && candidate.routingCacheMatchTokens() == 100L));
+                .anyMatch(candidate -> candidate.endpoint() == second && candidate.cacheHitTokens() == 100L));
     }
 
     @Test

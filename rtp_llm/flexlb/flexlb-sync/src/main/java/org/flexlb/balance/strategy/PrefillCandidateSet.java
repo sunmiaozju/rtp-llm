@@ -14,7 +14,6 @@ final class PrefillCandidateSet {
     private long[] estimatedTtftMs = new long[0];
     private long[] incomingPrefillMs = new long[0];
     private long[] cacheHitTokens = new long[0];
-    private long[] routingCacheMatchTokens = new long[0];
     private long[] localHitTokens = new long[0];
     private long[] ownershipVersions = new long[0];
     private int size;
@@ -22,7 +21,6 @@ final class PrefillCandidateSet {
     long maxLocalHitTokensAtMinTtft;
     boolean hasKnownTtft;
     long maximumCacheHit;
-    long maximumRoutingCacheMatchTokens;
     private String affinityDecision;
     private RoutingDecision.CacheAffinity cacheAffinity;
 
@@ -35,7 +33,6 @@ final class PrefillCandidateSet {
         maxLocalHitTokensAtMinTtft = 0L;
         hasKnownTtft = false;
         maximumCacheHit = 0L;
-        maximumRoutingCacheMatchTokens = 0L;
         affinityDecision = null;
         cacheAffinity = null;
     }
@@ -45,7 +42,6 @@ final class PrefillCandidateSet {
                       long estimatedMs,
                       long incomingMs,
                       long effectiveHitTokens,
-                      long routingHitTokens,
                       long localHitTokens,
                       long ownershipVersion) {
         endpointAddresses[size] = address;
@@ -53,7 +49,6 @@ final class PrefillCandidateSet {
         estimatedTtftMs[size] = estimatedMs;
         incomingPrefillMs[size] = incomingMs;
         cacheHitTokens[size] = effectiveHitTokens;
-        routingCacheMatchTokens[size] = routingHitTokens;
         this.localHitTokens[size] = localHitTokens;
         ownershipVersions[size] = ownershipVersion;
         if (estimatedMs >= 0L) {
@@ -66,8 +61,6 @@ final class PrefillCandidateSet {
             hasKnownTtft = true;
         }
         maximumCacheHit = Math.max(maximumCacheHit, cacheHitTokens[size]);
-        maximumRoutingCacheMatchTokens = Math.max(
-                maximumRoutingCacheMatchTokens, routingCacheMatchTokens[size]);
         size++;
     }
 
@@ -91,7 +84,6 @@ final class PrefillCandidateSet {
     long ttftRank(int index) { return estimatedTtftMs[index] < 0L ? Long.MAX_VALUE : estimatedTtftMs[index]; }
     long estimatedTtftMs(int index) { return estimatedTtftMs[index]; }
     long prefillMs(int index) { return incomingPrefillMs[index]; }
-    long routingCacheMatchTokens(int index) { return routingCacheMatchTokens[index]; }
     long ownershipVersion(int index) { return ownershipVersions[index]; }
     int size() { return size; }
 
@@ -106,7 +98,6 @@ final class PrefillCandidateSet {
         estimatedTtftMs = new long[capacity];
         incomingPrefillMs = new long[capacity];
         cacheHitTokens = new long[capacity];
-        routingCacheMatchTokens = new long[capacity];
         localHitTokens = new long[capacity];
         ownershipVersions = new long[capacity];
     }

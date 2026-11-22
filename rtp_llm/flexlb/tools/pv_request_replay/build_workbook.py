@@ -314,7 +314,7 @@ def get_route_cache_selection(route: dict[str, Any] | None) -> dict[str, Any]:
         if not isinstance(candidate, dict):
             continue
         if candidate.get("selected"):
-            return {"hitCacheTokens": candidate.get("routingMatchTokens"),
+            return {"hitCacheTokens": candidate.get("effectiveHitTokens", candidate.get("routingMatchTokens")),
                     "selectedIp": candidate.get("ip")}
     return {}
 
@@ -1153,7 +1153,7 @@ def write_routing_decisions_sheet(workbook: xlsxwriter.Workbook, rows: list[dict
     common = ["request_id", "flexlb_instance", "role", "group", "strategy", "selectionReason", "decisionTimeMs", "routingAttempt",
               "selectedEndpoint", "totalWorkerCount", "candidateWorkerCount", "snapshotTruncated"]
     fields = ["endpoint", "selected", "predictionState", "estimatedTtftMs", "estimatedDrainMs",
-              "incomingPrefillMs", "effectiveHitTokens", "routingMatchTokens", "pendingRequests",
+              "incomingPrefillMs", "effectiveHitTokens", "pendingRequests",
               "usedKvTokens", "availableKvTokens", "logWeight", "ownershipVersion"]
     policy_fields = ["requestInputTokens", "candidateChoice", "minimumTtftMs", "relativeTolerance",
                      "minimumToleranceMs", "shortestTtftPoolSize", "cacheAffinityMaxExtraTtftMs",
