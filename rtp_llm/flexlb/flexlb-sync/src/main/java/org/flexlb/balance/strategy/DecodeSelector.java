@@ -25,10 +25,12 @@ public class DecodeSelector {
     private static final int MAX_SELECTION_ATTEMPTS = 2;
     private enum Availability { READY, BUSY, IMPOSSIBLE }
     private final WorkerDirectory workerDirectory;
-    private final EndpointRoundRobin rotation = new EndpointRoundRobin();
+    private final EndpointRoundRobin rotation;
 
-    public DecodeSelector(WorkerDirectory workerDirectory) {
+    public DecodeSelector(WorkerDirectory workerDirectory,
+                          EndpointRoundRobin rotation) {
         this.workerDirectory = workerDirectory;
+        this.rotation = rotation;
     }
 
     public PlacementResult<DecodeEndpoint, RoleType> select(DecodeRequirement request, String group) {

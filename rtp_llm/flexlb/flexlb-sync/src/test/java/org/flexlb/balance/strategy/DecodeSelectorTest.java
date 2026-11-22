@@ -104,7 +104,7 @@ class DecodeSelectorTest {
     }
 
     private DecodeSelector availableStrategy(EndpointRegistry registry) {
-        return new DecodeSelector(new WorkerDirectory(registry));
+        return new DecodeSelector(new WorkerDirectory(registry), new EndpointRoundRobin());
     }
 
     @Test
@@ -201,8 +201,7 @@ class DecodeSelectorTest {
     void should_handle_empty_worker_map_when_no_workers_available() {
         EndpointRegistry emptyRegistry = StrategyTestSupport.endpointRegistry(configService);
         WorkerDirectory engineWorkerStatus = new WorkerDirectory(emptyRegistry);
-        DecodeSelector decodeSelector = new DecodeSelector(
-                engineWorkerStatus);
+        DecodeSelector decodeSelector = new DecodeSelector(engineWorkerStatus, new EndpointRoundRobin());
 
         BalanceContext balanceContext = context(1_000, 1_000L);
 
@@ -230,8 +229,8 @@ class DecodeSelectorTest {
         Mockito.when(racing.findDecodeEndpoint(stale)).thenReturn(null);
         Mockito.when(racing.findDecodeEndpoint(replacement)).thenReturn(replacementEndpoint);
 
-        PlacementResult<DecodeEndpoint, RoleType> result =
-                new DecodeSelector(racing).select(DecodeRequirement.capture(context(1_000, 1_001L)), null);
+        PlacementResult<DecodeEndpoint, RoleType> result = new DecodeSelector(racing, new EndpointRoundRobin())
+                .select(DecodeRequirement.capture(context(1_000, 1_001L)), null);
 
         assertEquals(PlacementResult.Status.SUCCESS, result.status());
         assertSame(replacementEndpoint, result.value());
@@ -557,8 +556,7 @@ class DecodeSelectorTest {
                 .kvBudget(endpoint.routingView().totalKv()));
         assertEquals(0L, endpoint.routingView().engineFacingKvUsed());
 
-        DecodeSelector strategy = new DecodeSelector(
-                new WorkerDirectory(registry));
+        DecodeSelector strategy = new DecodeSelector(new WorkerDirectory(registry), new EndpointRoundRobin());
 
         BalanceContext context = context(100, 3L);
         Request request = context.getRequest();

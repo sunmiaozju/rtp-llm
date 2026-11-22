@@ -30,6 +30,18 @@ class EndpointRoundRobinTest {
     }
 
     @Test
+    void prefillAndDecodeAdvanceIndependentlyInTheSameGroup() {
+        var rotation = new EndpointRoundRobin();
+        var candidates = List.of("a", "b");
+        for (String expected : candidates) {
+            for (RoleType role : List.of(RoleType.PREFILL, RoleType.DECODE)) {
+                int selected = rotation.next(role, "default", candidates.size(), i -> true, candidates::get);
+                assertEquals(expected, candidates.get(selected));
+            }
+        }
+    }
+
+    @Test
     void concurrentEqualSelectionsAdvanceExactlyOnce() throws Exception {
         var rotation = new EndpointRoundRobin();
         try (var executor = Executors.newFixedThreadPool(8)) {

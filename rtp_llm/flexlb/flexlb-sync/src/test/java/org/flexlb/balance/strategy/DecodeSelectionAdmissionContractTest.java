@@ -149,7 +149,7 @@ class DecodeSelectionAdmissionContractTest {
             endpoints = StrategyTestSupport.endpointRegistry(configs);
             queued = publish(QUEUED_IP);
             free = publish(FREE_IP);
-            strategy = new DecodeSelector(new WorkerDirectory(endpoints));
+            strategy = new DecodeSelector(new WorkerDirectory(endpoints), new EndpointRoundRobin());
 
             long kvBudget = dimension == CapacityDimension.EXPECTED_KV ? 400L : 0L;
             assertNotNull(queued.reserve("1", 0L, kvBudget, 50));

@@ -21,6 +21,7 @@ import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
+import org.flexlb.balance.strategy.EndpointRoundRobin;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
@@ -314,7 +315,7 @@ class DecodeQueueConsumerTest {
         when(endpointRegistry.findDecodeEndpoint(any())).thenCallRealMethod();
         when(endpointRegistry.get(eq(RoleType.DECODE), any()))
                 .thenAnswer(call -> EndpointRegistry.getEndpointsByRole(RoleType.DECODE).get(call.getArgument(1)));
-        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory, new EndpointRoundRobin());
         when(selector.select(any(), any(), any())).thenAnswer(call -> {
             var selection = realSelector.select(call.getArgument(0), call.getArgument(1), call.getArgument(2));
             if (retireBeforeReserve && selection.value() == decode) {

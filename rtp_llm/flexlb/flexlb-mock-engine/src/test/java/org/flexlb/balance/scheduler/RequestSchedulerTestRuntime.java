@@ -6,6 +6,7 @@ import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
 import org.flexlb.balance.strategy.DecodeSelector;
 import org.flexlb.balance.strategy.EncoderStrategy;
+import org.flexlb.balance.strategy.EndpointRoundRobin;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.BalanceContext;
@@ -49,7 +50,8 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
         org.mockito.Mockito.when(cache.findMatchingEngines(org.mockito.ArgumentMatchers.any())).thenReturn(
                 org.flexlb.cache.domain.CacheMatchResult.empty(org.flexlb.cache.domain.CacheMatchSource.LOCAL_SYNC));
         var health = org.mockito.Mockito.mock(org.flexlb.service.monitor.EngineHealthReporter.class);
-        var prefill = new CostBasedPrefillStrategy(workers, cache, health) {
+        var rotation = new EndpointRoundRobin();
+        var prefill = new CostBasedPrefillStrategy(workers, cache, health, rotation) {
             @Override
             public org.flexlb.balance.strategy.RequestWorkLoadEstimateResult prepare(BalanceContext context,
                                                                                            RoleType role, String group) {
@@ -68,7 +70,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
             }
         };
         var v2 = new org.flexlb.balance.schedulev2.RequestSchedulerV2(configService, queueCapacity, registry,
-                placementAvailability, router, prefill, new DecodeSelector(workers), queues, model,
+                placementAvailability, router, prefill, new DecodeSelector(workers, rotation), queues, model,
                 new org.flexlb.balance.eviction.DecodePreemptionCoordinator(requestReporter), workers,
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.V2QueueReporter.class));
         this.scheduler = new RequestScheduler(configService, router, lifecycle, v2);

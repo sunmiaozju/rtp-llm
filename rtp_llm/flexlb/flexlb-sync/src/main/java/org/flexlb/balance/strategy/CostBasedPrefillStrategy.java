@@ -40,14 +40,16 @@ public class CostBasedPrefillStrategy {
     private final WorkerDirectory workerDirectory;
     private final CacheAwareService cacheAwareService;
     private final EngineHealthReporter engineHealthReporter;
-    private final EndpointRoundRobin tieRotation = new EndpointRoundRobin();
+    private final EndpointRoundRobin tieRotation;
 
     public CostBasedPrefillStrategy(WorkerDirectory workerDirectory,
                                     CacheAwareService cacheAwareService,
-                                    EngineHealthReporter engineHealthReporter) {
+                                    EngineHealthReporter engineHealthReporter,
+                                    EndpointRoundRobin tieRotation) {
         this.workerDirectory = workerDirectory;
         this.cacheAwareService = cacheAwareService;
         this.engineHealthReporter = engineHealthReporter;
+        this.tieRotation = tieRotation;
     }
 
     /**

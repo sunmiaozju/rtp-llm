@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
 import org.flexlb.balance.strategy.CostBasedPrefillStrategy;
+import org.flexlb.balance.strategy.EndpointRoundRobin;
 import org.flexlb.cache.domain.CacheMatchResult;
 import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.cache.match.CacheAwareService;
@@ -135,7 +136,7 @@ class CacheHitFeedbackFlowTest {
         when(loops.onServerSelect(true)).thenReturn(mock(io.netty.channel.EventLoopGroup.class));
         reporter = new EngineHealthReporter(
                 monitor, cacheMetrics, engineClient, loops, directory);
-        strategy = new CostBasedPrefillStrategy(directory, cache, reporter);
+        strategy = new CostBasedPrefillStrategy(directory, cache, reporter, new EndpointRoundRobin());
         pv.start();
         ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger("pvLogger")).addAppender(pv);
     }

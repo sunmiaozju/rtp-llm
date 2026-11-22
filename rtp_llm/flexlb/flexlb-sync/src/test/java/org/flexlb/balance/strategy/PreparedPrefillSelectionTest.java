@@ -67,8 +67,8 @@ class PreparedPrefillSelectionTest {
         first = publish("10.0.0.1", "10");
         second = publish("10.0.0.2", "15");
         when(cache.findMatchingEngines(any())).thenReturn(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC));
-        CostBasedPrefillStrategy strategy =
-                new CostBasedPrefillStrategy(new WorkerDirectory(registry), cache, mock(EngineHealthReporter.class));
+        strategy = new CostBasedPrefillStrategy(new WorkerDirectory(registry), cache, mock(EngineHealthReporter.class),
+                new EndpointRoundRobin());
         picker = new PrefillPicker(mock(DefaultRouter.class), strategy);
     }
 

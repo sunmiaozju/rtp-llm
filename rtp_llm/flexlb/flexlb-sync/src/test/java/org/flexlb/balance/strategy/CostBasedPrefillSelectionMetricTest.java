@@ -80,8 +80,8 @@ class CostBasedPrefillSelectionMetricTest {
         when(cache.findMatchingEngines(any()))
                 .thenReturn(CacheMatchResult.empty(CacheMatchSource.KVCM));
         reporter = mock(EngineHealthReporter.class);
-        strategy = new CostBasedPrefillStrategy(
-                new WorkerDirectory(registry), cache, reporter);
+        strategy =
+                new CostBasedPrefillStrategy(new WorkerDirectory(registry), cache, reporter, new EndpointRoundRobin());
 
         Request request = new Request();
         request.setRequestId("10001");
