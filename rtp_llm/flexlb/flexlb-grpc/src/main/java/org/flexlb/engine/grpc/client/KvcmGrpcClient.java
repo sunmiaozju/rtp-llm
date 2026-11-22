@@ -48,7 +48,6 @@ public class KvcmGrpcClient {
 
     private final boolean enabled;
     private final CacheMatchConfiguration configuration;
-    private final KvcmConfig topologyConfig;
     private final KvcmMetaServiceClient metaServiceClient;
     private final KvcmLeaderResolver leaderResolver;
     private final KvcmWorkerMetadataResolver workerMetadataResolver;
@@ -84,7 +83,7 @@ public class KvcmGrpcClient {
         this.applicationWarmupState = applicationWarmupState;
         this.grpcReporter = grpcReporter;
         this.metricsReporter = metricsReporter;
-        this.topologyConfig = configuration.getKvcmConfig();
+        KvcmConfig topologyConfig = configuration.getKvcmConfig();
         this.enabled = configuration.isKvcmEnabled();
 
         if (!enabled) {
@@ -140,16 +139,14 @@ public class KvcmGrpcClient {
             throw new KvcmQueryException("KVCM worker metadata unavailable for role=" + roleType
                     + ", group=" + group);
         }
-        return queryWithRetry(config, requestId, blockCacheKeys, namespace, queryType, roleType, group);
+        return queryWithRetry(config, requestId, blockCacheKeys, namespace, queryType);
     }
 
     private Map<String, org.flexlb.dao.cache.HostCacheMatch> queryWithRetry(KvcmCacheMatchingConfig config,
                                                                             String requestId,
                                                                             List<Long> blockCacheKeys,
                                                                             String namespace,
-                                                                            QueryType queryType,
-                                                                            RoleType roleType,
-                                                                            String group) {
+                                                                            QueryType queryType) {
         int maxQueryRetryCount = Math.max(0, config.getMaxQueryRetryCount());
         Deadline queryDeadline = Deadline.after(config.getRequestTimeoutMs(), TimeUnit.MILLISECONDS);
         for (int attemptIndex = 0; ; attemptIndex++) {
@@ -158,8 +155,7 @@ public class KvcmGrpcClient {
                     throw new KvcmQueryException("KVCM cache query timed out");
                 }
                 Map<String, org.flexlb.dao.cache.HostCacheMatch> result = queryOnce(
-                        config, queryDeadline, requestId, blockCacheKeys, namespace, queryType,
-                        roleType, group, attemptIndex + 1);
+                        config, queryDeadline, requestId, blockCacheKeys, namespace, queryType, attemptIndex + 1);
                 recordQuerySuccess();
                 return result;
             } catch (RuntimeException failure) {
@@ -183,8 +179,6 @@ public class KvcmGrpcClient {
             List<Long> blockCacheKeys,
             String namespace,
             QueryType queryType,
-            RoleType roleType,
-            String group,
             int attempt) {
         GrpcTarget currentLeader = leaderResolver.resolve();
         if (currentLeader == null) {
