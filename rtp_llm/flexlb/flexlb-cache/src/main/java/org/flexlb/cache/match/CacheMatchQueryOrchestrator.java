@@ -64,12 +64,14 @@ public class CacheMatchQueryOrchestrator {
 
     public CacheMatchResult findMatchingEngines(CacheMatchQuery query) {
         long startTimeNs = System.nanoTime();
-        if (!configuration.isKvcmEnabled()) {
+        CacheMatchSource source = effectiveSource();
+        if (source == CacheMatchSource.LOCAL_SYNC) {
             return queryLocalSync(query, startTimeNs);
         }
-        CacheMatchSource source = failoverManager.activeSource();
         if (source == CacheMatchSource.LOCAL_STANDBY) {
-            cacheMetricsReporter.reportStandbyFallback("active_source");
+            if (configuration.isKvcmEnabled()) {
+                cacheMetricsReporter.reportStandbyFallback("active_source");
+            }
             return queryAndTrackLocalStandby(query, startTimeNs);
         }
         if (query.blockCacheKeys() == null || query.blockCacheKeys().isEmpty()) {
@@ -99,9 +101,6 @@ public class CacheMatchQueryOrchestrator {
     }
 
     public CacheMatchSource effectiveSource() {
-        if (!configuration.isKvcmEnabled()) {
-            return CacheMatchSource.LOCAL_SYNC;
-        }
         return failoverManager.activeSource();
     }
 

@@ -40,7 +40,7 @@ public class KvcmWorkerMetadataResolver {
     public KvcmWorkerMetadataResolver(CacheMatchConfiguration configuration,
                                       WorkerStatusProvider workerStatusProvider) {
         this.serviceRoute = configuration.getServiceRoute();
-        KvcmConfig config = configuration.getKvcmConfig();
+        KvcmConfig config = configuration.getKvcmTopology();
         this.configuredNamespace = configuration.isKvcmEnabled()
                 ? StringUtils.trimToNull(config.getNamespace())
                 : null;

@@ -10,47 +10,36 @@ import org.springframework.stereotype.Component;
 /**
  * Centralized cache-matching configuration derived from the model service route.
  */
-@Getter
 @Slf4j
 @Component
 public class CacheMatchConfiguration {
 
+    @Getter
     private final ServiceRoute serviceRoute;
-    private final KvcmConfig kvcmConfig;
+    // 本地备用索引的参数和自动切换策略在启动时确定，不随后续配置更新而改变。
+    @Getter
     private final LocalStandbyConfig localStandbyConfig;
-    private volatile KvcmCacheMatchingConfig kvcmRuntimeConfig;
-    private final boolean kvcmEnabled;
-    private final boolean localSyncEnabled;
-    private final boolean localStandbyEnabled;
-    private final boolean autoSwitchEnabled;
+    private volatile CacheMatchingConfig cacheMatching;
 
     @Autowired
     public CacheMatchConfiguration(
             ModelMetaConfig modelMetaConfig,
             ConfigService configService) {
         this(modelMetaConfig, configService.loadBalanceConfig());
-        if (kvcmEnabled) {
+        if (isKvcmEnabled()) {
             configService.addUpdateListener(this::applyRuntimeConfigUpdate);
         }
     }
 
     public CacheMatchConfiguration(ModelMetaConfig modelMetaConfig, FlexlbConfig flexlbConfig) {
         this.serviceRoute = modelMetaConfig.getServiceRoute();
-        this.kvcmConfig = serviceRoute.getKvcm();
-        this.kvcmEnabled = flexlbConfig.isKvcmAndStandbyEnabled();
-        if (kvcmEnabled && kvcmConfig == null) {
+        this.cacheMatching = flexlbConfig.getCacheMatching();
+        if (getConfiguredMode() == CacheMatchMode.KVCM && getKvcmTopology() == null) {
             throw new IllegalStateException(
-                    "FLEXLB_CONFIG cacheMatching.type=" + flexlbConfig.getKvcmAndStandbyConfig().getType()
-                            + " requires MODEL_SERVICE_CONFIG kvcm topology");
+                    "FLEXLB_CONFIG cacheMatching.type=KVCM requires MODEL_SERVICE_CONFIG kvcm topology");
         }
-        this.kvcmRuntimeConfig = kvcmEnabled ? flexlbConfig.getKvcmAndStandbyConfig() : null;
-        this.localSyncEnabled = !kvcmEnabled;
-        this.localStandbyEnabled = kvcmEnabled;
-        this.localStandbyConfig = kvcmEnabled
-                ? kvcmRuntimeConfig.getLocalStandby()
-                : null;
-        this.autoSwitchEnabled = localStandbyEnabled
-                && localStandbyConfig.isAutoSwitch();
+        this.localStandbyConfig = flexlbConfig.isKvcmAndStandbyEnabled()
+                ? flexlbConfig.getKvcmAndStandbyConfig().getLocalStandby() : null;
         logInitialization();
     }
 
@@ -64,42 +53,76 @@ public class CacheMatchConfiguration {
                     + "mode requires a restart");
             return;
         }
-        kvcmRuntimeConfig = config.getKvcmAndStandbyConfig();
+        KvcmCacheMatchingConfig clientSettings = config.getKvcmAndStandbyConfig();
+        cacheMatching = clientSettings;
         log.info("Applied KVCM cache matching configuration update: requestTimeoutMs={}, "
                         + "heartbeatFailureThreshold={}, queryFailureThreshold={}, maxQueryRetryCount={}, "
                         + "recoverySuccessThreshold={}, topKHostCount={}, backendTypes={}, medium={}",
-                kvcmRuntimeConfig.getRequestTimeoutMs(),
-                kvcmRuntimeConfig.getHeartbeatFailureThreshold(),
-                kvcmRuntimeConfig.getQueryFailureThreshold(),
-                kvcmRuntimeConfig.getMaxQueryRetryCount(),
-                kvcmRuntimeConfig.getRecoverySuccessThreshold(),
-                kvcmRuntimeConfig.getTopKHostCount(),
-                kvcmRuntimeConfig.getBackendTypes(),
-                kvcmRuntimeConfig.getMedium());
+                clientSettings.getRequestTimeoutMs(),
+                clientSettings.getHeartbeatFailureThreshold(),
+                clientSettings.getQueryFailureThreshold(),
+                clientSettings.getMaxQueryRetryCount(),
+                clientSettings.getRecoverySuccessThreshold(),
+                clientSettings.getTopKHostCount(),
+                clientSettings.getBackendTypes(),
+                clientSettings.getMedium());
     }
 
     public CacheMatchMode getConfiguredMode() {
-        return kvcmEnabled ? kvcmRuntimeConfig.getType() : CacheMatchMode.LOCAL_SYNC;
+        return cacheMatching.getType();
+    }
+
+    /**
+     * 返回启动时从 {@code MODEL_SERVICE_CONFIG.kvcm} 读取的地址、服务发现配置和命名空间。
+     * 未配置 KVCM 时返回 {@code null}。
+     */
+    public KvcmConfig getKvcmTopology() {
+        return serviceRoute.getKvcm();
+    }
+
+    public boolean isLocalSyncEnabled() {
+        return getConfiguredMode() == CacheMatchMode.LOCAL_SYNC;
+    }
+
+    public boolean isLocalStandbyEnabled() {
+        return localStandbyConfig != null;
+    }
+
+    public boolean isKvcmEnabled() {
+        return getKvcmClientSettings() != null;
+    }
+
+    public boolean isAutoSwitchEnabled() {
+        return isKvcmEnabled() && localStandbyConfig.isAutoSwitch();
+    }
+
+    /**
+     * 返回当前 {@code FLEXLB_CONFIG.cacheMatching} 中用于 KVCM 查询和健康探测的参数。
+     * 热更新对后续查询生效，已发起的查询在重试时仍使用原参数。未启用 KVCM 客户端时返回 {@code null}。
+     */
+    public KvcmCacheMatchingConfig getKvcmClientSettings() {
+        return getKvcmTopology() != null && cacheMatching instanceof KvcmCacheMatchingConfig kvcm ? kvcm : null;
     }
 
     private void logInitialization() {
         log.info(
-                "Cache match configuration initialized: configuredMode={}, kvcmEnabled={}, "
-                        + "localSyncEnabled={}, localStandbyEnabled={}, autoSwitchEnabled={}",
-                getConfiguredMode(), kvcmEnabled, localSyncEnabled, localStandbyEnabled, autoSwitchEnabled);
-        if (kvcmEnabled) {
+                "Cache match configuration initialized: configuredMode={}, kvcmEnabled={}, autoSwitchEnabled={}",
+                getConfiguredMode(), isKvcmEnabled(), isAutoSwitchEnabled());
+        if (isKvcmEnabled()) {
+            KvcmConfig topology = getKvcmTopology();
+            KvcmCacheMatchingConfig clientSettings = getKvcmClientSettings();
             log.info(
                     "KVCM cache matching configuration: address={}, namespace={}, "
                             + "requestTimeoutMs={}, leaderRefreshIntervalMs={}, "
                             + "heartbeatFailureThreshold={}, queryFailureThreshold={}, maxQueryRetryCount={}, "
                             + "recoverySuccessThreshold={}, topKHostCount={}, backendTypes={}, medium={}",
-                    kvcmConfig.getAddress(), kvcmConfig.getNamespace(), kvcmRuntimeConfig.getRequestTimeoutMs(),
-                    kvcmRuntimeConfig.getLeaderRefreshIntervalMs(), kvcmRuntimeConfig.getHeartbeatFailureThreshold(),
-                    kvcmRuntimeConfig.getQueryFailureThreshold(), kvcmRuntimeConfig.getMaxQueryRetryCount(),
-                    kvcmRuntimeConfig.getRecoverySuccessThreshold(), kvcmRuntimeConfig.getTopKHostCount(),
-                    kvcmRuntimeConfig.getBackendTypes(), kvcmRuntimeConfig.getMedium());
+                    topology.getAddress(), topology.getNamespace(), clientSettings.getRequestTimeoutMs(),
+                    clientSettings.getLeaderRefreshIntervalMs(), clientSettings.getHeartbeatFailureThreshold(),
+                    clientSettings.getQueryFailureThreshold(), clientSettings.getMaxQueryRetryCount(),
+                    clientSettings.getRecoverySuccessThreshold(), clientSettings.getTopKHostCount(),
+                    clientSettings.getBackendTypes(), clientSettings.getMedium());
         }
-        if (localStandbyEnabled) {
+        if (isLocalStandbyEnabled()) {
             log.info("Local standby cache configuration: autoSwitch={}, "
                             + "ttlMs={}, minimumTtlMs={}, ttlReductionStartRatio={}, "
                             + "maximumEntries={}, capacityMultiplier={}, asyncQueueCapacity={}",

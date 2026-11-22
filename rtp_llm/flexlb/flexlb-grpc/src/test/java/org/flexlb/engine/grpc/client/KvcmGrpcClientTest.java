@@ -8,12 +8,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import io.grpc.Deadline;
 import io.grpc.Status.Code;
 import org.flexlb.config.CacheMatchConfiguration;
+import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.KvcmCacheMatchingConfig;
 import org.flexlb.config.KvcmCacheMatchingConfig.BackendType;
+import org.flexlb.config.LocalStandbyCacheMatchingConfig;
+import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.kvcm.KvcmHealthSnapshot;
 import org.flexlb.dao.kvcm.KvcmHealthState;
 import org.flexlb.dao.route.KvcmConfig;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.dao.route.ServiceRoute;
 import org.flexlb.engine.grpc.core.GrpcTarget;
 import org.flexlb.engine.grpc.monitor.GrpcReporter;
 import org.flexlb.engine.grpc.monitor.KvcmMetricsReporter;
@@ -56,6 +60,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.after;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -76,8 +81,8 @@ class KvcmGrpcClientTest {
         KvcmCacheMatchingConfig runtimeConfig = new KvcmCacheMatchingConfig();
         runtimeConfig.setLeaderRefreshIntervalMs(60_000);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
         CountDownLatch refreshStarted = new CountDownLatch(1);
         CountDownLatch refreshInterrupted = new CountDownLatch(1);
         CountDownLatch releaseRefresh = new CountDownLatch(1);
@@ -196,8 +201,8 @@ class KvcmGrpcClientTest {
         runtimeConfig.setQueryFailureThreshold(1);
         runtimeConfig.setHeartbeatFailureThreshold(1);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
         KvcmLeaderResolver leader = mock(KvcmLeaderResolver.class);
         when(leader.refresh()).thenReturn(true);
         when(leader.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
@@ -268,8 +273,8 @@ class KvcmGrpcClientTest {
         runtimeConfig.setTopKHostCount(5);
         runtimeConfig.setBackendTypes(List.of(BackendType.ST_TAIRMEMPOOL, BackendType.ST_EVENT_REPORT_L2));
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(config);
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(config);
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
 
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
@@ -400,8 +405,8 @@ class KvcmGrpcClientTest {
         runtimeConfig.setLeaderRefreshIntervalMs(60_000);
         runtimeConfig.setMaxQueryRetryCount(0);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
 
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
@@ -435,19 +440,23 @@ class KvcmGrpcClientTest {
     }
 
     @Test
-    void skipsQueriesWhenDisabled() {
-        CacheMatchConfiguration configuration = mock(CacheMatchConfiguration.class);
-        when(configuration.isKvcmEnabled()).thenReturn(false);
+    void standaloneLocalStandbyDoesNotQueryOrProbeKvcm() {
+        FlexlbConfig config = new FlexlbConfig();
+        config.setCacheMatching(new LocalStandbyCacheMatchingConfig());
+        var configuration = new CacheMatchConfiguration(new ModelMetaConfig(new ServiceRoute()), config);
+        KvcmLeaderResolver leader = mock(KvcmLeaderResolver.class);
         client = createClient(
                 configuration,
                 mock(KvcmMetaServiceClient.class),
-                mock(KvcmLeaderResolver.class),
+                leader,
                 mock(KvcmWorkerMetadataResolver.class),
                 mock(GrpcReporter.class));
 
         assertTrue(client.findMatchingEngines(
                 "request-2", List.of(11L), 2192L,
                 RoleType.PREFILL, "default").isEmpty());
+        // 启用探测的客户端会在启动时立即刷新 leader。
+        verify(leader, after(250).never()).refresh();
     }
 
     @Test
@@ -524,8 +533,8 @@ class KvcmGrpcClientTest {
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
                 new AtomicReference<>(initialConfig);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenAnswer(ignored -> runtimeConfig.get());
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenAnswer(ignored -> runtimeConfig.get());
 
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
@@ -600,8 +609,8 @@ class KvcmGrpcClientTest {
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
                 new AtomicReference<>(initialConfig);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenAnswer(ignored -> runtimeConfig.get());
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenAnswer(ignored -> runtimeConfig.get());
 
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
@@ -662,8 +671,8 @@ class KvcmGrpcClientTest {
         runtimeConfig.setMaxQueryRetryCount(5);
         runtimeConfig.setRequestTimeoutMs(300L);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
         KvcmWorkerMetadataResolver metadataResolver = mock(KvcmWorkerMetadataResolver.class);
@@ -698,8 +707,8 @@ class KvcmGrpcClientTest {
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
                 new AtomicReference<>(initialConfig);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenAnswer(ignored -> runtimeConfig.get());
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenAnswer(ignored -> runtimeConfig.get());
 
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
         KvcmWorkerMetadataResolver metadataResolver =
@@ -746,8 +755,8 @@ class KvcmGrpcClientTest {
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
                 new AtomicReference<>(initialConfig);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenAnswer(ignored -> runtimeConfig.get());
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenAnswer(ignored -> runtimeConfig.get());
 
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
@@ -785,8 +794,8 @@ class KvcmGrpcClientTest {
         runtimeConfig.setLeaderRefreshIntervalMs(60_000);
         runtimeConfig.setMaxQueryRetryCount(0);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
         KvcmMetaServiceClient metaServiceClient = mock(KvcmMetaServiceClient.class);
         KvcmLeaderResolver leaderResolver = mock(KvcmLeaderResolver.class);
         when(leaderResolver.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
@@ -828,8 +837,8 @@ class KvcmGrpcClientTest {
         runtimeConfig.setLeaderRefreshIntervalMs(60_000);
         runtimeConfig.setMaxQueryRetryCount(0);
         when(configuration.isKvcmEnabled()).thenReturn(true);
-        when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-        when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+        when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+        when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
         return createClient(configuration, metaService, leader, metadata, reporter);
     }
 

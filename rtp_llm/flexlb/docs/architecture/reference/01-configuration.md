@@ -251,6 +251,7 @@ UniConfig / Nacos 的 v3 部分更新示例：
   支持 `LOCAL_SYNC` / `KVCM` / `LOCAL_STANDBY`；KVCM 和 LOCAL_STANDBY 共用查询、健康、远端命中
   （`medium` / `topKHostCount` / `backendTypes`）和 Local Standby 参数。
   使用 Worker 本地同步缓存时显式设置 `cacheMatching.type=LOCAL_SYNC`。
+  仅按本机成功调度的历史匹配时，设置 `cacheMatching.type=LOCAL_STANDBY` 即可，可省略 `MODEL_SERVICE_CONFIG.kvcm`。
   Java 配置接口通过 `getType()` 提供模式；`isKvcmAndStandbyEnabled()` 对 KVCM 和 LOCAL_STANDBY
   返回 true，`getKvcmAndStandbyConfig()` 提供这两个模式共用的参数。
 - `optimizer`：启用开关和服务发现轮询间隔。
@@ -296,7 +297,7 @@ Nacos 监听更新通过 `ConfigService` 校验并发布到 `CacheMatchConfigura
 下一次查询使用新配置，同一次查询的重试继续使用原配置快照和原绝对 Deadline。
 查询线程只读取内存快照，不访问 Nacos。
 
-`cacheMatching.type` 支持 `KVCM` 与 `LOCAL_STANDBY` 双向热切换，切换时保留未指定的参数。
+启动时已配置 `MODEL_SERVICE_CONFIG.kvcm` 的实例支持 `KVCM` 与 `LOCAL_STANDBY` 双向热切换，切换时保留未指定的参数。
 以下片段合并到现有配置后固定使用本地 Standby：
 
 ```json
@@ -307,7 +308,7 @@ Nacos 监听更新通过 `ConfigService` 校验并发布到 `CacheMatchConfigura
 ```
 
 将 type 设置为 `KVCM` 恢复 KVCM 优先策略，并遵循现有健康检查和 `localStandby.autoSwitch`。
-两个模式都要求 `MODEL_SERVICE_CONFIG.kvcm` 定位信息；启动时均初始化 KVCM 和 Standby。
+显式选择 `LOCAL_STANDBY` 时，请求只查本地。配置了 KVCM 定位信息时仍会后台探测 KVCM；省略时不启动探测。
 配置到达各副本后立即更新选源，已发起的缓存查询继续完成。`configuredMode` 返回配置模式，
 `effectiveSource` 返回实际选源。与 `LOCAL_SYNC` 之间切换需要重启。
 环境变量只在启动时读取；运行时切换通过 Nacos 或 UniConfig 配置来源下发。

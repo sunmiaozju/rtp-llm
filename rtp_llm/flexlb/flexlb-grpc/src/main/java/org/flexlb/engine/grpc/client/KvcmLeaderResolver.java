@@ -38,7 +38,7 @@ public class KvcmLeaderResolver {
 
     public KvcmLeaderResolver(CacheMatchConfiguration configuration, RoutingServiceDiscovery serviceDiscovery, KvcmMetaServiceClient metaServiceClient) {
         this.configuration = configuration;
-        this.topologyConfig = configuration.getKvcmConfig();
+        this.topologyConfig = configuration.getKvcmTopology();
         this.enabled = configuration.isKvcmEnabled();
         this.kvcmEndpoint = enabled ? topologyConfig.toEndpoint() : null;
         this.serviceDiscovery = serviceDiscovery;
@@ -68,7 +68,7 @@ public class KvcmLeaderResolver {
                         GetClusterInfoRequest.newBuilder()
                                 .setTraceId(IdUtils.fastUuid())
                                 .build(),
-                        configuration.getKvcmRuntimeConfig().getRequestTimeoutMs());
+                        configuration.getKvcmClientSettings().getRequestTimeoutMs());
                 ErrorCode code = response.getHeader().getStatus().getCode();
                 if (code != ErrorCode.OK || !response.hasLeaderEndpoint()) {
                     log.warn("KVCM bootstrap target {} did not return a leader, code={}",

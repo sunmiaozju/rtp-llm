@@ -41,7 +41,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
     private final GrpcChannelFactory channelFactory;
     private final GrpcChannelPool<EngineChannelKey> channelPool;
     private final GrpcReporter grpcReporter;
-    private final boolean kvcmEnabled;
+    private final boolean localSyncEnabled;
     private final long enqueueTimeoutMillis;
 
     public EngineGrpcClient(
@@ -62,7 +62,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
         this.channelFactory = channelFactory;
         this.channelPool = new GrpcChannelPool<>(key -> channelFactory.create(key.target()));
         this.grpcReporter = grpcReporter;
-        this.kvcmEnabled = cacheMatchConfiguration.isKvcmEnabled();
+        this.localSyncEnabled = cacheMatchConfiguration.isLocalSyncEnabled();
         if (enqueueTimeoutMillis <= 0L) {
             throw new IllegalArgumentException("enqueueTimeoutMillis must be positive");
         }
@@ -82,7 +82,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
             String ip = host.getIp();
             activeIps.add(ip);
             for (ServiceType serviceType : ServiceType.values()) {
-                if (kvcmEnabled && serviceType.isCacheStatusService()) {
+                if (serviceType.isCacheStatusService() && !localSyncEnabled) {
                     continue;
                 }
                 int port = serviceType.isStatusService()

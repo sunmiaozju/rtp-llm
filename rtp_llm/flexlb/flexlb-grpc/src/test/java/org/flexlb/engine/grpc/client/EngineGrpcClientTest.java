@@ -6,7 +6,12 @@ import io.grpc.inprocess.InProcessChannelBuilder;
 import io.grpc.inprocess.InProcessServerBuilder;
 import io.grpc.stub.StreamObserver;
 import org.flexlb.config.CacheMatchConfiguration;
+import org.flexlb.config.FlexlbConfig;
+import org.flexlb.config.LocalStandbyCacheMatchingConfig;
+import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.master.WorkerHost;
+import org.flexlb.dao.route.KvcmConfig;
+import org.flexlb.dao.route.ServiceRoute;
 import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.engine.grpc.RpcServiceGrpc;
 import org.flexlb.engine.grpc.core.GrpcChannelFactory;
@@ -14,6 +19,8 @@ import org.flexlb.engine.grpc.core.GrpcTarget;
 import org.flexlb.engine.grpc.monitor.GrpcReporter;
 import org.flexlb.engine.grpc.nameresolver.EngineAddressResolver;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
@@ -42,6 +49,7 @@ class EngineGrpcClientTest {
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
         CacheMatchConfiguration cacheMatchConfiguration = mock(CacheMatchConfiguration.class);
         List<ManagedChannel> createdChannels = new ArrayList<>();
+        when(cacheMatchConfiguration.isLocalSyncEnabled()).thenReturn(true);
         when(channelFactory.create(any()))
                 .thenAnswer(invocation -> {
                     ManagedChannel channel = mock(ManagedChannel.class);
@@ -72,13 +80,20 @@ class EngineGrpcClientTest {
         client.shutdown();
     }
 
-    @Test
-    void doesNotCreateCacheStatusChannelsWhenKvcmIsEnabled() {
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void skipsWorkerCacheStatusChannelsForKvcmAndStandaloneStandby(boolean useKvcm) {
+        FlexlbConfig config = new FlexlbConfig();
+        ServiceRoute route = new ServiceRoute();
+        if (useKvcm) {
+            route.setKvcm(new KvcmConfig());
+        } else {
+            config.setCacheMatching(new LocalStandbyCacheMatchingConfig());
+        }
         EngineAddressResolver addressResolver = mock(EngineAddressResolver.class);
         GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
-        CacheMatchConfiguration cacheMatchConfiguration = mock(CacheMatchConfiguration.class);
-        when(cacheMatchConfiguration.isKvcmEnabled()).thenReturn(true);
+        CacheMatchConfiguration cacheMatchConfiguration = new CacheMatchConfiguration(new ModelMetaConfig(route), config);
         when(channelFactory.create(any())).thenReturn(mock(ManagedChannel.class));
 
         EngineGrpcClient client = new EngineGrpcClient(
@@ -102,6 +117,7 @@ class EngineGrpcClientTest {
         GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
         CacheMatchConfiguration cacheMatchConfiguration = mock(CacheMatchConfiguration.class);
+        when(cacheMatchConfiguration.isLocalSyncEnabled()).thenReturn(true);
         when(channelFactory.create(any())).thenReturn(mock(ManagedChannel.class));
         EngineGrpcClient client = new EngineGrpcClient(
                 addressResolver, channelFactory, grpcReporter, cacheMatchConfiguration);
@@ -161,7 +177,7 @@ class EngineGrpcClientTest {
                             1000)
                     .get(2, TimeUnit.SECONDS)
                     .getAlive());
-            verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18002));
+            verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 18002));
         } finally {
             client.shutdown();
             server.shutdownNow().awaitTermination(2, TimeUnit.SECONDS);
@@ -238,7 +254,7 @@ class EngineGrpcClientTest {
             verify(grpcReporter).reportConnectionDuration(eq("GetWorkerStatus"), anyLong());
             verify(grpcReporter).reportCallMetrics(
                     eq("GetWorkerStatus"), anyLong(), anyInt(), eq(true));
-            verify(channelFactory, times(5)).create(new GrpcTarget("10.0.0.1", 18002));
+            verify(channelFactory, times(3)).create(new GrpcTarget("10.0.0.1", 18002));
             verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
         } finally {
             client.shutdown();

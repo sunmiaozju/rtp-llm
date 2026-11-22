@@ -102,8 +102,8 @@ class ApplicationLifecycleTest {
                 var runtimeConfig = new KvcmCacheMatchingConfig();
                 runtimeConfig.setLeaderRefreshIntervalMs(60_000);
                 when(configuration.isKvcmEnabled()).thenReturn(true);
-                when(configuration.getKvcmConfig()).thenReturn(new KvcmConfig());
-                when(configuration.getKvcmRuntimeConfig()).thenReturn(runtimeConfig);
+                when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
+                when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);
                 return configuration;
             });
             context.registerBean(KvcmMetaServiceClient.class, () -> mock(KvcmMetaServiceClient.class));

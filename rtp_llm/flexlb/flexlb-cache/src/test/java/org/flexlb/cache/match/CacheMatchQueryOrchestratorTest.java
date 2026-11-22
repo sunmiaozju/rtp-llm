@@ -77,6 +77,7 @@ class CacheMatchQueryOrchestratorTest {
 
     @Test
     void localSyncStatusDoesNotReadUnconfiguredKvcmHealth() {
+        when(failoverManager.activeSource()).thenReturn(CacheMatchSource.LOCAL_SYNC);
         when(configuration.isKvcmEnabled()).thenReturn(false);
 
         var status = orchestrator().status();
@@ -115,8 +116,8 @@ class CacheMatchQueryOrchestratorTest {
     }
 
     @Test
-    void usesLocalSyncWhenKvcmIsDisabled() {
-        when(configuration.isKvcmEnabled()).thenReturn(false);
+    void usesLocalSyncWhenSelected() {
+        when(failoverManager.activeSource()).thenReturn(CacheMatchSource.LOCAL_SYNC);
         when(localSyncProvider.findMatchingEngines(
                 "request-1", List.of(11L, 22L), 2192L,
                 RoleType.PREFILL, "default"))
@@ -285,6 +286,7 @@ class CacheMatchQueryOrchestratorTest {
 
     @Test
     void retainsBlockSizeForEmptyLocalSyncQuery() {
+        when(failoverManager.activeSource()).thenReturn(CacheMatchSource.LOCAL_SYNC);
         CacheMatchQuery empty = new CacheMatchQuery(
                 "request-empty", List.of(), 2192L, RoleType.PREFILL, "default");
 

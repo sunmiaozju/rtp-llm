@@ -273,7 +273,7 @@ class NacosConfigSourceTest {
             route.setKvcm(new KvcmConfig());
             ModelMetaConfig modelMetaConfig = new ModelMetaConfig(route);
             CacheMatchConfiguration configuration = new CacheMatchConfiguration(modelMetaConfig, configService);
-            KvcmCacheMatchingConfig initial = configuration.getKvcmRuntimeConfig();
+            KvcmCacheMatchingConfig initial = configuration.getKvcmClientSettings();
             assertThat(initial.getTopKHostCount()).isEqualTo(3);
             assertThat(initial.getBackendTypes()).isEmpty();
 
@@ -285,7 +285,7 @@ class NacosConfigSourceTest {
                     {"schemaVersion":3,"cacheMatching":{"topKHostCount":7,
                      "backendTypes":["ST_EVENT_REPORT_L2","ST_TAIRMEMPOOL"]}}
                     """);
-            KvcmCacheMatchingConfig updated = configuration.getKvcmRuntimeConfig();
+            KvcmCacheMatchingConfig updated = configuration.getKvcmClientSettings();
             assertThat(updated.getTopKHostCount()).isEqualTo(7);
             assertThat(updated.getBackendTypes()).containsExactly(
                     KvcmCacheMatchingConfig.BackendType.ST_EVENT_REPORT_L2,
@@ -298,15 +298,15 @@ class NacosConfigSourceTest {
                     "\"backendTypes\":null")) {
                 listener.getValue().receiveConfigInfo(
                         "{\"schemaVersion\":3,\"cacheMatching\":{" + invalidField + "}}");
-                assertThat(configuration.getKvcmRuntimeConfig()).isSameAs(updated);
+                assertThat(configuration.getKvcmClientSettings()).isSameAs(updated);
                 assertThat(configService.loadBalanceConfig().getKvcmAndStandbyConfig()).isSameAs(updated);
             }
 
             listener.getValue().receiveConfigInfo("""
                     {"schemaVersion":3,"cacheMatching":{"backendTypes":[]}}
                     """);
-            assertThat(configuration.getKvcmRuntimeConfig().getBackendTypes()).isEmpty();
-            assertThat(configuration.getKvcmRuntimeConfig().getTopKHostCount()).isEqualTo(7);
+            assertThat(configuration.getKvcmClientSettings().getBackendTypes()).isEmpty();
+            assertThat(configuration.getKvcmClientSettings().getTopKHostCount()).isEqualTo(7);
             assertThat(updated.getBackendTypes()).hasSize(2);
         } finally {
             configService.close();

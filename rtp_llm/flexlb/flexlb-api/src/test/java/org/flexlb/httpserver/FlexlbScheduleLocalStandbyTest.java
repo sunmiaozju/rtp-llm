@@ -2,16 +2,22 @@ package org.flexlb.httpserver;
 
 import io.grpc.stub.StreamObserver;
 import org.flexlb.cache.domain.CacheMatchQuery;
+import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.cache.match.CacheHitFeedbackTracker;
+import org.flexlb.cache.match.CacheMatchFailoverManager;
+import org.flexlb.cache.match.CacheMatchQueryOrchestrator;
 import org.flexlb.cache.match.CacheMetadataUpdateOrchestrator;
+import org.flexlb.cache.match.kvcm.KvcmCacheMatchProvider;
 import org.flexlb.cache.match.localstandby.LocalStandbyCacheManager;
 import org.flexlb.cache.match.localstandby.LocalStandbyCacheMatchProvider;
+import org.flexlb.cache.match.localstandby.LocalStandbyComparisonService;
+import org.flexlb.cache.match.localsync.LocalSyncCacheMatchProvider;
 import org.flexlb.cache.telemetry.CacheMetricsReporter;
 import org.flexlb.config.CacheMatchConfiguration;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
-import org.flexlb.config.LocalStandbyConfig;
+import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.consistency.LBStatusConsistencyService;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.ServerStatus;
@@ -19,6 +25,7 @@ import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatusProvider;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
+import org.flexlb.engine.grpc.client.KvcmGrpcClient;
 import org.flexlb.schedule.grpc.FlexlbScheduleProtocol;
 import org.flexlb.service.RouteService;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
@@ -46,11 +53,12 @@ class FlexlbScheduleLocalStandbyTest {
 
     @ParameterizedTest
     @EnumSource(value = RoleType.class, names = {"PREFILL", "PDFUSION"})
-    void successfulScheduleWarmsIndexWithClientProvidedKeys(RoleType role) throws Exception {
-        CacheMatchConfiguration configuration = mock(CacheMatchConfiguration.class);
-        when(configuration.isLocalStandbyEnabled()).thenReturn(true);
-        when(configuration.getLocalStandbyConfig()).thenReturn(new LocalStandbyConfig());
-        when(configuration.getServiceRoute()).thenReturn(new ServiceRoute());
+    void localStandbyMatchesKeysFromSuccessfulScheduleWithoutKvcmTopology(RoleType role) throws Exception {
+        ConfigService configs = new ConfigService("""
+                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":100000}},
+                 "cacheMatching":{"type":"LOCAL_STANDBY"}}
+                """);
+        CacheMatchConfiguration configuration = new CacheMatchConfiguration(new ModelMetaConfig(new ServiceRoute()), configs);
         WorkerStatus worker = mock(WorkerStatus.class);
         when(worker.getLogicalIpPort()).thenReturn("127.0.0.1:8080@1");
         WorkerStatusProvider workers = mock(WorkerStatusProvider.class);
@@ -65,9 +73,11 @@ class FlexlbScheduleLocalStandbyTest {
         }).when(manager).addRoutedRequestBlocks(any(), any());
         LocalStandbyCacheMatchProvider provider = new LocalStandbyCacheMatchProvider(
                 configuration, manager, metrics);
-        CacheAwareService cache = new CacheAwareService(null, new CacheHitFeedbackTracker(null, new ConfigService("""
-                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":100000}}}
-                """)), new CacheMetadataUpdateOrchestrator(configuration, null, provider));
+        var sources = new CacheMatchFailoverManager(configuration, mock(KvcmGrpcClient.class), metrics, configs);
+        var queries = new CacheMatchQueryOrchestrator(mock(LocalSyncCacheMatchProvider.class), mock(KvcmCacheMatchProvider.class),
+                provider, manager, sources, new LocalStandbyComparisonService(configuration, provider), metrics, configuration);
+        CacheAwareService cache = new CacheAwareService(queries, new CacheHitFeedbackTracker(null, configs),
+                new CacheMetadataUpdateOrchestrator(configuration, null, provider));
         RouteService router = mock(RouteService.class);
         CompletableFuture<Response> routed = new CompletableFuture<>();
         when(router.route(any())).thenReturn(routed);
@@ -82,10 +92,13 @@ class FlexlbScheduleLocalStandbyTest {
             verify(observer).onNext(org.mockito.ArgumentMatchers.argThat(result -> result.getSuccess()));
             indexed.get(5, TimeUnit.SECONDS);
             assertEquals(3, manager.mappingCount());
-            var prediction = provider.asyncLocalStandbyMatch(new CacheMatchQuery(
-                    "followup", List.of(11L, 22L, 33L), 4096, role, "default")).get(5, TimeUnit.SECONDS);
+            var prediction = cache.findMatchingEngines(new CacheMatchQuery(
+                    "followup", List.of(11L, 22L, 33L), 4096, role, "default"));
+            assertEquals(CacheMatchSource.LOCAL_STANDBY, prediction.source());
+            assertEquals(CacheMatchSource.LOCAL_STANDBY, queries.status().effectiveSource());
             assertEquals(3, prediction.exactHostMatch(worker.getLogicalIpPort()).localMatchBlocks());
             assertEquals(4096, prediction.blockSize());
+            verify(metrics, never()).reportStandbyFallback(any());
         } finally {
             provider.shutdown();
             manager.shutdown();

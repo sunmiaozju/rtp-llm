@@ -51,8 +51,8 @@ class CacheMatchHotSwitchTest {
             assertEquals(CacheMatchMode.LOCAL_STANDBY, fixture.orchestrator.status().configuredMode());
             assertEquals(CacheMatchSource.LOCAL_STANDBY, fixture.orchestrator.status().effectiveSource());
             assertEquals(CacheMatchMode.KVCM, initial.getKvcmAndStandbyConfig().getType());
-            assertEquals(731, fixture.configuration.getKvcmRuntimeConfig().getRequestTimeoutMs());
-            assertEquals(7, fixture.configuration.getKvcmRuntimeConfig().getTopKHostCount());
+            assertEquals(731, fixture.configuration.getKvcmClientSettings().getRequestTimeoutMs());
+            assertEquals(7, fixture.configuration.getKvcmClientSettings().getTopKHostCount());
             assertEquals(1234, fixture.configuration.getLocalStandbyConfig().getMaximumEntries());
             assertTrue(fixture.configuration.isKvcmEnabled());
             assertTrue(fixture.configuration.isLocalStandbyEnabled());
@@ -61,7 +61,7 @@ class CacheMatchHotSwitchTest {
             fixture.switchTo("KVCM");
             assertEquals(CacheMatchSource.KVCM, fixture.manager.activeSource());
             assertEquals(CacheMatchMode.KVCM, fixture.orchestrator.status().configuredMode());
-            assertEquals(731, fixture.configuration.getKvcmRuntimeConfig().getRequestTimeoutMs());
+            assertEquals(731, fixture.configuration.getKvcmClientSettings().getRequestTimeoutMs());
             assertEquals(1234,
                     fixture.configService.loadBalanceConfig()
                             .getKvcmAndStandbyConfig()
@@ -99,7 +99,7 @@ class CacheMatchHotSwitchTest {
             fixture.switchTo("KVCM");
             fixture.heartbeat(true);
             assertEquals(CacheMatchSource.KVCM, fixture.manager.activeSource());
-            assertEquals(900, fixture.configuration.getKvcmRuntimeConfig().getRequestTimeoutMs());
+            assertEquals(900, fixture.configuration.getKvcmClientSettings().getRequestTimeoutMs());
         }
     }
 

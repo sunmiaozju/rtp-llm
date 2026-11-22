@@ -53,6 +53,6 @@ P2 的回包里总前缀更长，但其中 48 个 token 依赖远端。`topKHost
 2. **读取还有效的前缀。** 假设历史中 P1 曾接过 `[A, B, C]`，P2 曾接过 `[A]`，记录都未过期。现在查询 `[A, B, C, D]`，先得到 3 块和 1 块。若 P1 上报 `cacheMatchRollbackBlocks=1`，P2 为 0，分别扣除引擎需要重算的尾块，最终返回 `(2, 2)` 和 `(1, 1)`；最多扣到零。这里没有远端增量。
 3. **让旧记录失效。** 引擎可能根本没执行那条请求，也可能已经淘汰 B；反过来，另一台 FlexLB 发来的请求可能已在 P1 上留下了本机不知道的块。standby 用 TTL 限制旧预测保留的时间，不能用 TTL 证明引擎仍有该块。容量按存活 worker 的显存块数估算，并受配置上限约束；用量升高时缩短 TTL，到达上限拒绝新映射，已有映射仍可刷新。
 
-显式配置 `LOCAL_STANDBY` 时，请求直接同步查本机索引，KVCM 恢复健康也不会把配置改回去。`KVCM` 和 `LOCAL_STANDBY` 共用已启动的组件，支持热切换；与 `LOCAL_SYNC` 互切则需重启。平时用 KVCM 选路，可以异步计算同一请求在 standby 下的预测，再用**实际选中的节点**和引擎反馈核对误差。一次成功查询得到零块是有效样本；查询失败不是零命中样本。对照如何关联请求、哪些反馈有效，见[缓存预测与引擎实际命中的对照](../../architecture/workers/02-status-and-feedback.md#缓存预测与引擎实际命中的对照)。
+显式配置 `LOCAL_STANDBY` 时，请求直接同步查本机索引，不需要配置 KVCM。若启动时提供了 KVCM 定位信息，后台继续探测 KVCM，但恢复健康不会改变显式选源；此时支持与 `KVCM` 热切换。与 `LOCAL_SYNC` 互切则需重启。平时用 KVCM 选路，可以异步计算同一请求在 standby 下的预测，再用**实际选中的节点**和引擎反馈核对误差。一次成功查询得到零块是有效样本；查询失败不是零命中样本。对照如何关联请求、哪些反馈有效，见[缓存预测与引擎实际命中的对照](../../architecture/workers/02-status-and-feedback.md#缓存预测与引擎实际命中的对照)。
 
 源码：[路由成功后的异步写入](../../../flexlb-cache/src/main/java/org/flexlb/cache/match/localstandby/LocalStandbyCacheMatchProvider.java)、[前缀匹配与回退块数](../../../flexlb-cache/src/main/java/org/flexlb/cache/match/localstandby/LocalStandbyCacheManager.java)、[索引过期与容量限制](../../../flexlb-cache/src/main/java/org/flexlb/cache/match/localstandby/LocalStandbyCacheIndex.java)。
