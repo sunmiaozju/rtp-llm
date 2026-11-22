@@ -17,7 +17,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PreDestroy;
-import java.util.List;
+import java.util.Set;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -34,7 +34,7 @@ public final class MasterEngineSynchronizer {
 
     private static final Logger logger = LoggerFactory.getLogger("syncLogger");
 
-    private final List<RoleType> requiredRoles;
+    private final Set<RoleType> requiredRoles;
     private final WorkerAddressService workerAddressService;
     private final WorkerDirectory workerDirectory;
     private final EngineHealthReporter engineHealthReporter;
@@ -66,7 +66,7 @@ public final class MasterEngineSynchronizer {
         this.engineGrpcService = engineGrpcService;
         this.cacheAwareService = cacheAwareService;
         this.cacheIntervalService = cacheIntervalService;
-        this.requiredRoles = modelMetaConfig.requiredRoles();
+        this.requiredRoles = modelMetaConfig.getRequiredRoles();
 
         this.syncEngineStatusInterval = flexlbConfig.getWorkerRegistry().getHealth()
                 .getStatusPollIntervalMs();

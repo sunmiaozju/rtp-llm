@@ -15,8 +15,8 @@ import org.flexlb.service.grpc.EngineStatusConverter;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 
-import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -47,7 +47,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
                 requestReporter);
         var workers = new org.flexlb.sync.status.WorkerDirectory(registry);
         var model = org.mockito.Mockito.mock(ModelMetaConfig.class);
-        org.mockito.Mockito.when(model.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
+        org.mockito.Mockito.when(model.getRequiredRoles()).thenReturn(Set.of(RoleType.PREFILL, RoleType.DECODE));
         var router = new DefaultRouter(new EncoderStrategy(workers), configService, model, null);
         var cache = org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class);
         org.mockito.Mockito.when(cache.findMatchingEngines(org.mockito.ArgumentMatchers.any())).thenReturn(

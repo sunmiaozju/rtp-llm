@@ -64,7 +64,7 @@ final class SchedulerRuntime {
                              QueueCapacity queueCapacity,
                              ModelMetaConfig modelMetaConfig,
                              Runnable closePlacement) {
-        this.queueRoles = modelMetaConfig.requiredRoles().stream()
+        this.queueRoles = modelMetaConfig.getRequiredRoles().stream()
                 .filter(role -> role == RoleType.PREFILL || role == RoleType.PDFUSION)
                 .toList();
         this.requests = requests;

@@ -9,11 +9,13 @@ import org.flexlb.util.JsonUtils;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ServiceRouteTest {
@@ -103,7 +105,8 @@ class ServiceRouteTest {
         var prefill = config.endpointsWithGroup(RoleType.PREFILL);
         assertEquals(List.of("g1", "g2"), prefill.stream().map(pair -> pair.getLeft()).toList());
         assertEquals(List.of("p1", "p2"), prefill.stream().map(pair -> pair.getRight().getAddress()).toList());
-        assertEquals(List.of(RoleType.DECODE, RoleType.PREFILL), config.requiredRoles());
+        assertEquals(Set.of(RoleType.DECODE, RoleType.PREFILL), config.getRequiredRoles());
+        assertThrows(UnsupportedOperationException.class, () -> config.getRequiredRoles().remove(RoleType.PREFILL));
         assertTrue(config.endpointsWithGroup(RoleType.ENCODER).isEmpty());
         assertTrue(config.endpointsWithGroup(null).isEmpty());
         var decode = config.endpointsWithGroup(RoleType.DECODE);
@@ -148,7 +151,7 @@ class ServiceRouteTest {
         ServiceRoute route = objectMapper.readValue(json, ServiceRoute.class);
         ModelMetaConfig config = new ModelMetaConfig(route);
 
-        assertEquals(List.of(RoleType.VIT, RoleType.ENCODER), config.requiredRoles());
+        assertEquals(Set.of(RoleType.VIT, RoleType.ENCODER), config.getRequiredRoles());
         assertEquals("encoder", route.getRoleEndpoints(RoleType.ENCODER).getFirst().getAddress());
         assertEquals("g1", route.getRoleEndpoints(RoleType.ENCODER).getFirst().getGroup());
         assertEquals("vit", route.getRoleEndpoints(RoleType.VIT).getFirst().getAddress());

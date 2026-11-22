@@ -85,7 +85,7 @@ public class RequestSchedulerV2 {
         this.endpointRegistry = endpointRegistry;
         this.configService = configService;
         this.prefillCheck = new PrefillPublishCheck(endpointRegistry, prefillQueues);
-        this.deployedRoles = Set.copyOf(modelMetaConfig.requiredRoles());
+        this.deployedRoles = modelMetaConfig.getRequiredRoles();
         this.prefillRole = deployedRoles.contains(RoleType.PREFILL)
                 ? RoleType.PREFILL
                 : deployedRoles.contains(RoleType.PDFUSION) ? RoleType.PDFUSION : null;

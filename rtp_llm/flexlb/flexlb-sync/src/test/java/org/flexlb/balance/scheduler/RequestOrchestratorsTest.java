@@ -15,7 +15,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.InOrder;
 
-import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -168,7 +168,7 @@ class RequestOrchestratorsTest {
         RequestRegistry requests = mock(RequestRegistry.class);
 
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
-        when(modelMetaConfig.requiredRoles()).thenReturn(List.of(role));
+        when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of(role));
         new SchedulerRuntime(requests, registry, reporter, mock(RequestSchedulerReporter.class),
                 service, capacity, modelMetaConfig).report();
 
@@ -188,11 +188,11 @@ class RequestOrchestratorsTest {
         ConfigService service = mock(ConfigService.class);
         when(service.loadBalanceConfig()).thenReturn(config);
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
-        when(modelMetaConfig.requiredRoles()).thenReturn(List.of(role));
+        when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of(role));
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
         SchedulerRuntime runtime = new SchedulerRuntime(mock(RequestRegistry.class), mock(EndpointRegistry.class),
                 reporter, mock(RequestSchedulerReporter.class), service, new QueueCapacity(), modelMetaConfig);
-        when(modelMetaConfig.requiredRoles()).thenReturn(List.of());
+        when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of());
 
         runtime.report();
 

@@ -16,9 +16,8 @@ import org.flexlb.util.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.Collections;
-import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -37,7 +36,7 @@ public class DefaultRouter {
                          VitCacheSelector vitCacheSelector) {
         this.encoderSelector = encoderSelector;
         this.configService = configService;
-        this.deployedRoles = Collections.unmodifiableSet(new LinkedHashSet<>(modelMetaConfig.requiredRoles()));
+        this.deployedRoles = modelMetaConfig.getRequiredRoles();
         this.vitCacheSelector = vitCacheSelector;
     }
 
@@ -99,10 +98,10 @@ public class DefaultRouter {
     }
 
     private Set<RoleType> requestedRoles(BalanceContext context) {
-        Set<RoleType> requested = context.getRequestedRoles();
-        return requested == null ? deployedRoles
-                : deployedRoles.stream().filter(requested::contains)
-                        .collect(Collectors.toCollection(LinkedHashSet::new));
+        return Optional.ofNullable(context.getRequestedRoles())
+                .map(requestedRoles -> deployedRoles.stream().filter(requestedRoles::contains)
+                        .collect(Collectors.toSet()))
+                .orElse(deployedRoles);
     }
 
     public String resolvePolicyGroup(BalanceContext context) {

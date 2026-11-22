@@ -18,6 +18,7 @@ import org.flexlb.service.monitor.RequestSchedulerReporter;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /** Test-only composition root for mock-engine end-to-end scheduler tests. */
 public final class RequestSchedulerTestRuntime implements AutoCloseable {
@@ -42,7 +43,7 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
                 requestReporter);
         var workers = new org.flexlb.sync.status.WorkerDirectory(registry);
         var model = org.mockito.Mockito.mock(ModelMetaConfig.class);
-        org.mockito.Mockito.when(model.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
+        org.mockito.Mockito.when(model.getRequiredRoles()).thenReturn(Set.of(RoleType.PREFILL, RoleType.DECODE));
         var router = new DefaultRouter(new EncoderStrategy(workers), configService, model, null);
         var cache = org.mockito.Mockito.mock(org.flexlb.cache.match.CacheAwareService.class);
         org.mockito.Mockito.when(cache.findMatchingEngines(org.mockito.ArgumentMatchers.any())).thenReturn(

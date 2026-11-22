@@ -64,7 +64,7 @@ class RequestSchedulerV2Test {
         config.getDispatcher().setMaxInflightPerPrefillWorker(1);
         when(configService.loadBalanceConfig()).thenReturn(config);
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
-        when(modelMetaConfig.requiredRoles()).thenReturn(List.of(RoleType.PDFUSION));
+        when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of(RoleType.PDFUSION));
         var endpoint = V2TestSupport.prefillEndpoint("p1:8000");
         when(endpoint.getStatus().getRole()).thenReturn(RoleType.PDFUSION);
         EndpointRegistry endpointRegistry = mock(EndpointRegistry.class);
@@ -248,7 +248,7 @@ class RequestSchedulerV2Test {
         config.getDispatcher().setMainQueueConsumerThreads(1);
         when(configService.loadBalanceConfig()).thenReturn(config);
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
-        when(modelMetaConfig.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
+        when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of(RoleType.PREFILL, RoleType.DECODE));
         EndpointRegistry endpointRegistry = mock(EndpointRegistry.class);
         PlacementAvailability placementAvailability = new PlacementAvailability();
         PrefillQueueRegistry prefillQueues = new PrefillQueueRegistry();

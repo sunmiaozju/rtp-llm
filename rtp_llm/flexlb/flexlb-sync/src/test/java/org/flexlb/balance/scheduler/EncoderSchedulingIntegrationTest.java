@@ -70,7 +70,7 @@ class EncoderSchedulingIntegrationTest {
         requests = new RequestRegistry(configService, mock(BatchSchedulerReporter.class),
                 mock(RequestSchedulerReporter.class));
         ModelMetaConfig model = mock(ModelMetaConfig.class);
-        when(model.requiredRoles()).thenReturn(List.of(RoleType.ENCODER));
+        when(model.getRequiredRoles()).thenReturn(Set.of(RoleType.ENCODER));
         router = spy(new DefaultRouter(new EncoderStrategy(directory), configService, model, null));
         scheduler = new RequestScheduler(configService, router, requests,
                 mock(org.flexlb.balance.schedulev2.RequestSchedulerV2.class));
@@ -278,7 +278,7 @@ class EncoderSchedulingIntegrationTest {
         requests = new RequestRegistry(configService, mock(BatchSchedulerReporter.class),
                 mock(RequestSchedulerReporter.class));
         ModelMetaConfig model = mock(ModelMetaConfig.class);
-        when(model.requiredRoles()).thenReturn(List.of(RoleType.PREFILL, RoleType.DECODE));
+        when(model.getRequiredRoles()).thenReturn(Set.of(RoleType.PREFILL, RoleType.DECODE));
         DefaultRouter router = new DefaultRouter(new EncoderStrategy(directory), configService, model, null);
         scheduler = new RequestScheduler(configService, router, requests,
                 mock(org.flexlb.balance.schedulev2.RequestSchedulerV2.class));
