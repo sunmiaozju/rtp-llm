@@ -106,7 +106,7 @@ public final class EvictionPlanner {
                                                         PreemptionConfig preemption,
                                                         Map<String, String> failures) {
         CapacityDeficit deficit = ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens);
-        if (deficit.fits()) {
+        if (deficit.hasCapacity()) {
             failures.put(ep.endpointId(), "decode_capacity_sufficient");
             return null;
         }
@@ -129,9 +129,13 @@ public final class EvictionPlanner {
         return DecodeEvictionProposal.ORDER.compare(local, engine) <= 0 ? local : engine;
     }
 
-    private static DecodeEvictionProposal planDecodeOneOwnership(
-            int incomingPriority, long inputKvTokens, long inputAndMaxOutputKvTokens, DecodeEndpointSnapshot ep, CapacityDeficit deficit,
-            VictimOwnership ownership, Map<String, String> failures) {
+    private static DecodeEvictionProposal planDecodeOneOwnership(int incomingPriority,
+                                                                 long inputKvTokens,
+                                                                 long inputAndMaxOutputKvTokens,
+                                                                 DecodeEndpointSnapshot ep,
+                                                                 CapacityDeficit deficit,
+                                                                 VictimOwnership ownership,
+                                                                 Map<String, String> failures) {
         if (deficit.requests() > 0L && deficit.needsKv()) {
             return planDecodeCombined(incomingPriority, inputKvTokens, inputAndMaxOutputKvTokens, ep, deficit, ownership, failures);
         }
@@ -142,7 +146,9 @@ public final class EvictionPlanner {
             failures.put(ep.endpointId(), set.failReason());
             return null;
         }
-        if (!ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, set.release()).fits()) {
+        if (!ep.capacity()
+                .evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, set.release())
+                .hasCapacity()) {
             failures.put(ep.endpointId(), "insufficient_releasable_capacity");
             return null;
         }
@@ -152,19 +158,27 @@ public final class EvictionPlanner {
     }
 
     /** Preserve the cost ordering while testing every proposal against all capacity dimensions. */
-    private static DecodeEvictionProposal planDecodeCombined(
-            int incomingPriority, long inputKvTokens, long inputAndMaxOutputKvTokens, DecodeEndpointSnapshot ep, CapacityDeficit deficit,
-            VictimOwnership ownership, Map<String, String> failures) {
+    private static DecodeEvictionProposal planDecodeCombined(int incomingPriority,
+                                                             long inputKvTokens,
+                                                             long inputAndMaxOutputKvTokens,
+                                                             DecodeEndpointSnapshot ep,
+                                                             CapacityDeficit deficit,
+                                                             VictimOwnership ownership,
+                                                             Map<String, String> failures) {
         DecodeVictimSet slotOnly = selectSlotVictims(incomingPriority, ep, deficit.requests(), Set.of(), ownership);
-        DecodeEvictionProposal slotSide = slotOnly.ok()
-                && ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, slotOnly.release()).fits()
-                ? buildDecodeProposal(ep, DecodeEvictionProposal.CASE_SLOT, slotOnly.victims(),
-                        slotOnly.harmProfile(), slotOnly.weightedCost(), slotOnly.freedKvTokens()) : null;
+        DecodeEvictionProposal slotSide = slotOnly.ok() && ep.capacity()
+                .evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, slotOnly.release())
+                .hasCapacity()
+                        ? buildDecodeProposal(ep, DecodeEvictionProposal.CASE_SLOT, slotOnly.victims(),
+                                slotOnly.harmProfile(), slotOnly.weightedCost(), slotOnly.freedKvTokens())
+                        : null;
         DecodeVictimSet kvOnly = selectKvVictims(incomingPriority, inputKvTokens, inputAndMaxOutputKvTokens, ep, CapacityRelease.NONE, Set.of(), ownership);
-        DecodeEvictionProposal kvSide = kvOnly.ok()
-                && ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, kvOnly.release()).fits()
-                ? buildDecodeProposal(ep, DecodeEvictionProposal.CASE_KV, kvOnly.victims(),
-                        kvOnly.harmProfile(), kvOnly.weightedCost(), kvOnly.freedKvTokens()) : null;
+        DecodeEvictionProposal kvSide = kvOnly.ok() && ep.capacity()
+                .evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, kvOnly.release())
+                .hasCapacity()
+                        ? buildDecodeProposal(ep, DecodeEvictionProposal.CASE_KV, kvOnly.victims(),
+                                kvOnly.harmProfile(), kvOnly.weightedCost(), kvOnly.freedKvTokens())
+                        : null;
         if (slotSide != null || kvSide != null) {
             if (slotSide == null) { return kvSide; }
             if (kvSide == null) { return slotSide; }
@@ -188,7 +202,7 @@ public final class EvictionPlanner {
             return null;
         }
         CapacityRelease release = first.release().plus(second.release());
-        if (!ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, release).fits()) {
+        if (!ep.capacity().evaluate(ep.usage(), inputKvTokens, inputAndMaxOutputKvTokens, release).hasCapacity()) {
             failures.put(ep.endpointId(), "insufficient_releasable_capacity");
             return null;
         }

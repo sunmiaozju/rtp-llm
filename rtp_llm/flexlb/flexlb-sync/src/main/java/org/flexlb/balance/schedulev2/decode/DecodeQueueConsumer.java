@@ -215,8 +215,8 @@ public final class DecodeQueueConsumer implements Runnable {
      */
     private DecodeChoice reserveEmptyDecode(Request request, String group, DecodeRequirement requirement) {
         var endpoints = EndpointRegistry.getEndpointsByRole(RoleType.DECODE);
-        for (var view : workerDirectory.getDecodeCandidates(group)) {
-            WorkerEndpoint candidate = endpoints.get(view.address());
+        for (var entry : workerDirectory.getDecodeCandidates(group)) {
+            WorkerEndpoint candidate = endpoints.get(entry.getKey());
             if (!(candidate instanceof DecodeEndpoint endpoint) || endpoint.isRetired()) {
                 continue;
             }

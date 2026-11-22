@@ -216,14 +216,13 @@ class DecodeSelectorTest {
         registerWorker("127.0.0.2", 10_000, 9_000);
         EndpointRegistry registry = decodeRegistry();
         WorkerDirectory actual = new WorkerDirectory(registry);
-        Map<String, DecodeEndpoint.DecodeRoutingView> views = new HashMap<>();
-        for (DecodeEndpoint.DecodeRoutingView view : actual.getDecodeCandidates(null)) {
-            views.put(view.address(), view);
+        Map<String, Map.Entry<String, DecodeEndpoint>> candidates = new HashMap<>();
+        for (var candidate : actual.getDecodeCandidates(null)) {
+            candidates.put(candidate.getKey(), candidate);
         }
-        DecodeEndpoint.DecodeRoutingView stale = views.get("127.0.0.1:8080");
-        DecodeEndpoint.DecodeRoutingView replacement =
-                views.get("127.0.0.2:8080");
-        DecodeEndpoint replacementEndpoint = decodeEndpoint(registry, replacement.address());
+        var stale = candidates.get("127.0.0.1:8080");
+        var replacement = candidates.get("127.0.0.2:8080");
+        DecodeEndpoint replacementEndpoint = replacement.getValue();
         WorkerDirectory racing = Mockito.mock(WorkerDirectory.class);
         Mockito.when(racing.getDecodeCandidates(null)).thenReturn(List.of(stale)).thenReturn(List.of(replacement));
         Mockito.when(racing.findDecodeEndpoint(stale)).thenReturn(null);

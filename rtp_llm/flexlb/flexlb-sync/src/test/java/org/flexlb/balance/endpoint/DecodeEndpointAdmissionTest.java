@@ -1103,16 +1103,16 @@ class DecodeEndpointAdmissionTest {
                 capacity.evaluate(usage, 100L, 200L));
         assertEquals(new DecodeEndpoint.CapacityDeficit(0L, 100L, 0L),
                 capacity.evaluate(usage, 100L, 200L, new DecodeEndpoint.CapacityRelease(1L, 50L, 200L)));
-        assertTrue(capacity.evaluate(usage, 100L, 200L,
-                new DecodeEndpoint.CapacityRelease(2L, 150L, 250L)).fits());
+        assertTrue(
+                capacity.evaluate(usage, 100L, 200L, new DecodeEndpoint.CapacityRelease(2L, 150L, 250L)).hasCapacity());
     }
 
     @Test
     void removingEveryVictimCannotMakeAnOversizedOutputAllowanceFit() {
         var capacity = new DecodeEndpoint.CapacityLimit(0L, 90L);
         var usage = new DecodeEndpoint.CapacityUsage(1L, 1000L, 500L, 0L, 500L);
-        assertFalse(capacity.evaluate(usage, 100L, 901L,
-                new DecodeEndpoint.CapacityRelease(1L, 500L, 500L)).fits());
+        assertFalse(
+                capacity.evaluate(usage, 100L, 901L, new DecodeEndpoint.CapacityRelease(1L, 500L, 500L)).hasCapacity());
     }
 
     @Test
@@ -1130,9 +1130,11 @@ class DecodeEndpointAdmissionTest {
         var usage = new DecodeEndpoint.CapacityUsage(0L, 0L, 0L, 0L, 0L);
         for (long percent : new long[]{1L, 90L, 100L}) {
             var capacity = new DecodeEndpoint.CapacityLimit(0L, percent);
-            assertTrue(capacity.evaluate(usage, 100L, 200L).fits());
+            assertTrue(capacity.evaluate(usage, 100L, 200L).hasCapacity());
+            assertTrue(capacity.hasCapacity(0L, 0L, 0L, 0L, 0L, 100L, 200L));
             assertEquals(percent, capacity.kvBudget(100L));
         }
+        assertFalse(new DecodeEndpoint.CapacityLimit(1L, 90L).hasCapacity(1L, 0L, 0L, 0L, 0L, 100L, 200L));
     }
 
 }

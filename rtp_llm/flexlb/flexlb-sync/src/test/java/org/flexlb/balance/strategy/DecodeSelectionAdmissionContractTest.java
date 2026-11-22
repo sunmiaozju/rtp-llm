@@ -174,10 +174,14 @@ class DecodeSelectionAdmissionContractTest {
         }
 
         private void assertPlacementAndDispatchDisagree() {
-            assertTrue(limits.evaluate(queued.routingView().dispatchUsage(), PROMPT_TOKENS, EXPECTED_TOKENS).fits());
-            assertFalse(limits.evaluate(queued.routingView().placementUsage(), PROMPT_TOKENS, EXPECTED_TOKENS).fits());
-            assertTrue(limits.evaluate(free.routingView().dispatchUsage(), PROMPT_TOKENS, EXPECTED_TOKENS).fits());
-            assertTrue(limits.evaluate(free.routingView().placementUsage(), PROMPT_TOKENS, EXPECTED_TOKENS).fits());
+            assertTrue(limits.evaluate(queued.routingView().dispatchUsage(), PROMPT_TOKENS, EXPECTED_TOKENS)
+                    .hasCapacity());
+            assertFalse(limits.evaluate(queued.routingView().placementUsage(), PROMPT_TOKENS, EXPECTED_TOKENS)
+                    .hasCapacity());
+            assertTrue(
+                    limits.evaluate(free.routingView().dispatchUsage(), PROMPT_TOKENS, EXPECTED_TOKENS).hasCapacity());
+            assertTrue(
+                    limits.evaluate(free.routingView().placementUsage(), PROMPT_TOKENS, EXPECTED_TOKENS).hasCapacity());
         }
 
         private void assertSelectionHasNoReservation(long requestId,

@@ -1,5 +1,6 @@
 package org.flexlb.sync.status;
 
+import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.cache.match.CacheAwareService;
@@ -132,36 +133,50 @@ class WorkerDirectoryTest {
     }
 
     @Test
-    void decodeSnapshotReusesTheReadOnlyListWhenEveryNodeMatches() {
+    void decodeCandidatesReuseTheDirectoryWhenEveryNodeMatches() {
         publishDecode(decodeMember("routing-a", "10.0.0.1", 0, 2, 8450));
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 2, 8451));
-        var snapshots = registry.decodeRoutingSnapshot();
-        EndpointRegistry fixedRegistry = Mockito.mock(EndpointRegistry.class);
-        Mockito.when(fixedRegistry.decodeRoutingSnapshot()).thenReturn(snapshots);
-        WorkerDirectory directory = new WorkerDirectory(fixedRegistry);
-
-        assertSame(snapshots, directory.getDecodeCandidates("routing-a"));
-        assertSame(snapshots, directory.getDecodeCandidates(null));
-        assertThrows(UnsupportedOperationException.class, () -> snapshots.removeFirst());
+        var entries = registry.decodeRoutingEntries();
+        assertSame(entries, workerDirectory.getDecodeCandidates("routing-a"));
+        assertSame(entries, workerDirectory.getDecodeCandidates(null));
     }
 
     @ParameterizedTest
     @ValueSource(ints = {0, 1, 2})
-    void filteredDecodeSnapshotPreservesOrderAndRemainsReadOnly(int excludedIndex) {
+    void filteredDecodeCandidatesPreserveOrderAndRemainReadOnly(int excludedIndex) {
         for (int index = 0; index < 3; index++) {
             publishDecode(decodeMember(index == excludedIndex ? "routing-b" : "routing-a", null, 0, 1,
                     8460 + index));
         }
-        var expected = registry.decodeRoutingSnapshot().stream()
-                .filter(view -> "routing-a".equals(view.topology().group())).toList();
-        var snapshots = workerDirectory.getDecodeCandidates("routing-a");
+        var expected = registry.decodeRoutingEntries()
+                .stream()
+                .filter(entry -> "routing-a".equals(entry.getValue().getStatus().topologySnapshot().group()))
+                .toList();
+        var candidates = workerDirectory.getDecodeCandidates("routing-a");
 
-        assertEquals(expected, snapshots);
-        assertThrows(UnsupportedOperationException.class, () -> snapshots.removeFirst());
+        assertEquals(expected, candidates);
+        assertThrows(UnsupportedOperationException.class, () -> candidates.removeFirst());
         publishDecode(decodeMember("routing-a", null, 0, 1, 8463));
-        assertEquals(expected, snapshots);
+        assertEquals(expected, candidates);
         assertEquals(3, workerDirectory.getDecodeCandidates("routing-a").size());
         assertTrue(workerDirectory.getDecodeCandidates("missing-group").isEmpty());
+    }
+
+    @Test
+    void decodeCandidateIsSkippedWhenItsDpAddressChangesBetweenPasses() {
+        var firstRead = Mockito.mock(WorkerStatus.EngineObservation.class);
+        Mockito.when(firstRead.dpMasterAddress()).thenReturn("10.0.0.1");
+        Mockito.when(firstRead.dpSize()).thenReturn(1L);
+        var secondRead = Mockito.mock(WorkerStatus.EngineObservation.class);
+        Mockito.when(secondRead.dpMasterAddress()).thenReturn("10.0.0.2");
+        var status = Mockito.mock(WorkerStatus.class);
+        Mockito.when(status.committedEngineObservation()).thenReturn(firstRead, secondRead);
+        var endpoint = Mockito.mock(DecodeEndpoint.class);
+        Mockito.when(endpoint.getStatus()).thenReturn(status);
+        var fixedRegistry = Mockito.mock(EndpointRegistry.class);
+        Mockito.when(fixedRegistry.decodeRoutingEntries()).thenReturn(List.of(Map.entry("decode", endpoint)));
+
+        assertTrue(new WorkerDirectory(fixedRegistry).getDecodeCandidates(null).isEmpty());
     }
 
     @Test
@@ -185,7 +200,7 @@ class WorkerDirectoryTest {
         detached.retireAndAwait();
 
         assertEquals(List.of(independent.status().getLogicalIpPort()),
-                workerDirectory.getDecodeCandidates("routing-a").stream().map(view -> view.address()).toList());
+                workerDirectory.getDecodeCandidates("routing-a").stream().map(Map.Entry::getKey).toList());
         assertEquals(3, workerDirectory.getWorkerStatuses(RoleType.DECODE, "routing-a").size());
         assertSame(rankOne.status(), workerDirectory.getStatusBy(RoleType.DECODE)
                 .get(rankOne.status().getLogicalIpPort()));
@@ -203,7 +218,7 @@ class WorkerDirectoryTest {
         publishDecode(otherPolicy);
 
         List<String> eligibleAddresses =
-                workerDirectory.getDecodeCandidates("routing-a").stream().map(view -> view.address()).sorted().toList();
+                workerDirectory.getDecodeCandidates("routing-a").stream().map(Map.Entry::getKey).sorted().toList();
         assertEquals(List.of(completeZero.status().getLogicalIpPort(), completeOne.status().getLogicalIpPort())
                 .stream().sorted().toList(), eligibleAddresses);
         assertEquals(3, workerDirectory.getDecodeCandidates(null).size());

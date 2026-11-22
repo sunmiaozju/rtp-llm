@@ -123,14 +123,8 @@ final class DecodeState {
     private final AtomicLong admissionVersion = new AtomicLong();
 
     /**
-     * Generation-local, non-authoritative cache for bulk routing traversal.
-     *
-     * <p>Both key components are required: local admission mutations advance
-     * {@link #admissionVersion}, while a committed Engine observation is
-     * replaced by holder identity. The cache owns no endpoint or registry-map
-     * reference and therefore disappears with this endpoint generation.</p>
+     * Reuses the priority summary for capacity failure diagnostics while endpoint counts and status are unchanged.
      */
-    private volatile DecodeRoutingView routingViewCache;
     private volatile DecodeEndpoint.AdmissionSummary admissionSummaryCache;
 
     // Reservation: acquire and release exact ownership.
@@ -241,7 +235,7 @@ final class DecodeState {
     }
 
     private boolean queuedPlacementIsFullLocked(long requiredKvTokens, long kvBudgetTokens, CapacityLimit capacity) {
-        return !capacity.evaluate(routingViewLocked().placementUsage(), requiredKvTokens, kvBudgetTokens).fits();
+        return !capacity.evaluate(routingViewLocked().placementUsage(), requiredKvTokens, kvBudgetTokens).hasCapacity();
     }
 
     boolean isAcceptedByEngine(ReservationHandle handle) {
@@ -759,7 +753,8 @@ final class DecodeState {
         if (candidate.returnedPreemptionToken != 0L) {
             return false;
         }
-        return !capacity.evaluate(dispatchCapacityUsage(fields), candidate.kvTokens(), candidate.kvBudgetTokens()).fits();
+        return !capacity.evaluate(dispatchCapacityUsage(fields), candidate.kvTokens(), candidate.kvBudgetTokens())
+                .hasCapacity();
     }
 
     private int engineDispatchHardGateUsageLocked() {
@@ -769,22 +764,56 @@ final class DecodeState {
                 + activeEngineDispatchPermitCount;
     }
 
-    private CapacityUsage dispatchCapacityUsage(WorkerStatus.EngineObservation fields) {
-        long heldRequiredKv = priorityPreemptionHeldRequiredKv.get();
-        long dispatchInputKv = saturatedAddNonNegative(
-                saturatedAddNonNegative(Math.max(0L, inputKvReservedTotal.get() - queuedInputKvReservedTotal.get()),
-                        engineDispatchPermitRequiredKvReservedTotal.get()), heldRequiredKv);
-        return new CapacityUsage(
-                getEngineLoad() + Math.max(0, activeEngineDispatchPermitCount),
-                Math.max(0L, fields.totalKvCacheTokens()), Math.max(0L, fields.availableKvCacheTokens()),
-                dispatchInputKv, engineFacingKvUsed(fields));
+    boolean hasCapacityForSelection(WorkerStatus.EngineObservation engine,
+                                    CapacityLimit limit,
+                                    boolean immediate,
+                                    long inputKv,
+                                    long budgetKv) {
+        long occupiedRequests = immediate ? dispatchOccupiedRequests() : getTotalLoad();
+        long reservedInputKv =
+                immediate ? dispatchReservedInputKv() : placementReservedInputKv(inputKvReservedTotal.get());
+        long usedBudgetKv = immediate ? engineFacingKvUsed(engine) : placementKvUsed(engine);
+        return limit.hasCapacity(occupiedRequests, Math.max(0L, engine.totalKvCacheTokens()),
+                Math.max(0L, engine.availableKvCacheTokens()), reservedInputKv, usedBudgetKv, inputKv, budgetKv);
     }
 
-    private long engineFacingKvUsed(
-            WorkerStatus.EngineObservation fields) {
-        long totalCap = fields.totalKvCacheTokens();
-        long avail = fields.availableKvCacheTokens();
-        long reportedUsed = totalCap > 0 ? Math.max(0, totalCap - avail) : 0;
+    long placementKvUsed(WorkerStatus.EngineObservation engine) {
+        return placementKvUsed(engine, inputAndMaxOutputKvReservedTotal.get());
+    }
+
+    private long placementKvUsed(WorkerStatus.EngineObservation engine, long reservedBudgetKv) {
+        return saturatedAddNonNegative(saturatedAddNonNegative(reportedKvUsed(engine), reservedBudgetKv),
+                priorityPreemptionHeldKvBudget.get());
+    }
+
+    private long placementReservedInputKv(long reservedInputKv) {
+        return saturatedAddNonNegative(reservedInputKv, priorityPreemptionHeldRequiredKv.get());
+    }
+
+    private CapacityUsage dispatchCapacityUsage(WorkerStatus.EngineObservation fields) {
+        return new CapacityUsage(dispatchOccupiedRequests(), Math.max(0L, fields.totalKvCacheTokens()),
+                Math.max(0L, fields.availableKvCacheTokens()), dispatchReservedInputKv(), engineFacingKvUsed(fields));
+    }
+
+    private int dispatchOccupiedRequests() {
+        return getEngineLoad() + Math.max(0, activeEngineDispatchPermitCount);
+    }
+
+    private long dispatchReservedInputKv() {
+        long heldRequiredKv = priorityPreemptionHeldRequiredKv.get();
+        return saturatedAddNonNegative(
+                saturatedAddNonNegative(Math.max(0L, inputKvReservedTotal.get() - queuedInputKvReservedTotal.get()),
+                        engineDispatchPermitRequiredKvReservedTotal.get()),
+                heldRequiredKv);
+    }
+
+    private static long reportedKvUsed(WorkerStatus.EngineObservation fields) {
+        long totalKv = fields.totalKvCacheTokens();
+        return totalKv > 0L ? Math.max(0L, totalKv - fields.availableKvCacheTokens()) : 0L;
+    }
+
+    private long engineFacingKvUsed(WorkerStatus.EngineObservation fields) {
+        long reportedUsed = reportedKvUsed(fields);
         long localEngineFacing = Math.max(0L,
                 inputAndMaxOutputKvReservedTotal.get() - queuedInputAndMaxOutputKvReservedTotal.get())
                 + engineDispatchPermitKvBudgetReservedTotal.get();
@@ -885,7 +914,8 @@ final class DecodeState {
                                                            long requiredKvTokens,
                                                            long kvBudgetTokens,
                                                            CapacityRelease released) {
-        return capacity.evaluate(routingViewLocked().placementUsage(), requiredKvTokens, kvBudgetTokens, released).fits();
+        return capacity.evaluate(routingViewLocked().placementUsage(), requiredKvTokens, kvBudgetTokens, released)
+                .hasCapacity();
     }
 
     PreemptionBeginResult beginReturnedPreemption(long attemptToken,
@@ -1695,89 +1725,22 @@ final class DecodeState {
     }
 
     private DecodeRoutingView routingViewLocked() {
-        WorkerStatus status = this.status;
-        return routingViewLocked(
-                status.getIpPort(),
-                status.topologySnapshot(),
-                status.committedWorkerStatus(),
-                admissionVersion.get());
-    }
-
-    private DecodeRoutingView routingViewLocked(
-            String address,
-            WorkerStatus.TopologySnapshot topology,
-            WorkerStatus.CommittedWorkerStatus committed,
-            long version) {
+        WorkerStatus.TopologySnapshot topology = status.topologySnapshot();
+        WorkerStatus.CommittedWorkerStatus committed = status.committedWorkerStatus();
+        long version = admissionVersion.get();
         WorkerStatus.EngineObservation fields = committed.fields();
         int inflight = reservedRequestCount.get();
         int queued = Math.max(0, Math.min(queuedPhaseCount.get(), inflight));
         int totalLoad = confirmedEngineOwnedCount + inflight;
         int engineLoad = confirmedEngineOwnedCount + Math.max(0, inflight - queued);
-        long reportedUsed = fields.totalKvCacheTokens() > 0
-                ? Math.max(0L, fields.totalKvCacheTokens()
-                        - fields.availableKvCacheTokens())
-                : 0L;
         long reservedInputKv = inputKvReservedTotal.get();
         long reservedInputAndMaxOutputKv = inputAndMaxOutputKvReservedTotal.get();
-        long used = saturatedAddNonNegative(
-                saturatedAddNonNegative(reportedUsed, reservedInputAndMaxOutputKv),
-                priorityPreemptionHeldKvBudget.get());
-        long heldRequiredKv = priorityPreemptionHeldRequiredKv.get();
-        long placementInputKv = saturatedAddNonNegative(reservedInputKv, heldRequiredKv);
-        CapacityUsage placementUsage = new CapacityUsage(totalLoad,
-                Math.max(0L, fields.totalKvCacheTokens()), Math.max(0L, fields.availableKvCacheTokens()),
-                placementInputKv, used);
+        CapacityUsage placementUsage = new CapacityUsage(totalLoad, Math.max(0L, fields.totalKvCacheTokens()),
+                Math.max(0L, fields.availableKvCacheTokens()), placementReservedInputKv(reservedInputKv),
+                placementKvUsed(fields, reservedInputAndMaxOutputKv));
         CapacityUsage dispatchUsage = dispatchCapacityUsage(fields);
-        return new DecodeRoutingView(
-                address,
-                status.getGenerationId(),
-                topology,
-                committed,
-                version,
-                totalLoad,
-                engineLoad,
-                placementUsage,
-                dispatchUsage,
-                reservedInputKv,
-                reservedInputAndMaxOutputKv);
-    }
-
-    DecodeRoutingView routingViewSnapshot(String address) {
-        long version = admissionVersion.get();
-        WorkerStatus status = this.status;
-        WorkerStatus.TopologySnapshot topology = status.topologySnapshot();
-        DecodeRoutingView cached = routingViewCache;
-        if (routingViewMatches(cached, address, version, topology)) {
-            return cached;
-        }
-        lock.lock();
-        try {
-            WorkerStatus.CommittedWorkerStatus committed =
-                    status.committedWorkerStatus();
-            topology = status.topologySnapshot();
-            version = admissionVersion.get();
-            cached = routingViewCache;
-            if (routingViewMatches(cached, address, version, topology)) {
-                return cached;
-            }
-            DecodeRoutingView routing = routingViewLocked(
-                    address, topology, committed, version);
-            routingViewCache = routing;
-            return routing;
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    private static boolean routingViewMatches(
-            DecodeRoutingView cached,
-            String address,
-            long version,
-            WorkerStatus.TopologySnapshot topology) {
-        return cached != null
-                && cached.address().equals(address)
-                && cached.admissionVersion() == version
-                && cached.topology() == topology;
+        return new DecodeRoutingView(status.getIpPort(), status.getGenerationId(), topology, committed, version,
+                totalLoad, engineLoad, placementUsage, dispatchUsage, reservedInputKv, reservedInputAndMaxOutputKv);
     }
 
     long realKvAvailable() {

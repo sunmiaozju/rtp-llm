@@ -3,7 +3,6 @@ package org.flexlb.balance.strategy;
 import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
-import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRoutingView;
 import org.flexlb.balance.scheduler.decode.DecodeMode;
 import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.dao.BalanceContext;
@@ -44,25 +43,35 @@ public class DecodeSelector {
     public PlacementResult<DecodeEndpoint, RoleType> select(BalanceContext context,
                                                             DecodeRequirement request,
                                                             String group) {
+        boolean immediate = request.mode() == DecodeMode.IMMEDIATE;
         for (int attempt = 0; attempt < MAX_SELECTION_ATTEMPTS; attempt++) {
-            List<DecodeRoutingView> decodeWorkerViews = workerDirectory.getDecodeCandidates(group);
-            if (decodeWorkerViews.isEmpty()) {
+            List<Map.Entry<String, DecodeEndpoint>> candidates = workerDirectory.getDecodeCandidates(group);
+            if (candidates.isEmpty()) {
                 return PlacementResult.blocked(RoleType.DECODE);
             }
-            Availability[] availabilityByWorker = new Availability[decodeWorkerViews.size()];
+            Availability[] availabilityByWorker = new Availability[candidates.size()];
             Availability preferredAvailability = Availability.IMPOSSIBLE;
             boolean allWorkersTooSmall = true;
             long largestKvBudget = 0L;
-            for (int index = 0; index < decodeWorkerViews.size(); index++) {
-                DecodeRoutingView view = decodeWorkerViews.get(index);
-                Availability availability = availability(request, view);
+            for (int index = 0; index < candidates.size(); index++) {
+                DecodeEndpoint endpoint = candidates.get(index).getValue();
+                var engine = endpoint.getStatus().committedEngineObservation();
+                long totalKv = Math.max(0L, engine.totalKvCacheTokens());
+                long kvBudget = request.capacity().kvBudget(totalKv);
+                Availability availability;
+                if (totalKv > 0L && request.inputAndMaxOutputKvTokens() > kvBudget) {
+                    availability = Availability.IMPOSSIBLE;
+                } else {
+                    availability = endpoint.hasCapacityForSelection(engine, request.capacity(), immediate,
+                            request.inputKvTokens(), request.inputAndMaxOutputKvTokens())
+                                    ? Availability.READY
+                                    : Availability.BUSY;
+                }
                 availabilityByWorker[index] = availability;
                 allWorkersTooSmall &= availability == Availability.IMPOSSIBLE;
-                largestKvBudget = Math.max(largestKvBudget, request.capacity().kvBudget(view.totalKv()));
-                if (availability == Availability.READY
-                        || availability == Availability.BUSY
-                            && preferredAvailability == Availability.IMPOSSIBLE
-                            && request.mode() != DecodeMode.IMMEDIATE) {
+                largestKvBudget = Math.max(largestKvBudget, kvBudget);
+                if (availability == Availability.READY || availability == Availability.BUSY
+                        && preferredAvailability == Availability.IMPOSSIBLE && !immediate) {
                     preferredAvailability = availability;
                 }
             }
@@ -71,17 +80,19 @@ public class DecodeSelector {
                         request.inputAndMaxOutputKvTokens(), largestKvBudget));
             }
             if (preferredAvailability == Availability.IMPOSSIBLE) {
-                return classifyCapacityFailure(request, decodeWorkerViews);
+                return classifyCapacityFailure(request, candidates);
             }
             Availability selectedAvailability = preferredAvailability;
-            double[] costByWorker = new double[decodeWorkerViews.size()];
+            double[] costByWorker = new double[candidates.size()];
             double minimumCost = Double.POSITIVE_INFINITY;
             int minimumCostCandidateCount = 0;
-            for (int index = 0; index < decodeWorkerViews.size(); index++) {
+            for (int index = 0; index < candidates.size(); index++) {
                 if (availabilityByWorker[index] == selectedAvailability) {
-                    DecodeRoutingView view = decodeWorkerViews.get(index);
-                    double cost = request.costFormula().evaluate(view.totalLoad(),
-                            request.capacity().maxEngineRequests(), view.realKvUsed(), view.totalKv());
+                    DecodeEndpoint endpoint = candidates.get(index).getValue();
+                    var engine = endpoint.getStatus().committedEngineObservation();
+                    double cost = request.costFormula()
+                            .evaluate(endpoint.totalLoad(), request.capacity().maxEngineRequests(),
+                                    endpoint.placementKvUsed(engine), Math.max(0L, engine.totalKvCacheTokens()));
                     costByWorker[index] = cost;
                     if (Double.isFinite(cost)) {
                         if (cost < minimumCost) {
@@ -98,12 +109,13 @@ public class DecodeSelector {
                         + request.costFormula().expression());
             }
             double selectedCost = minimumCost;
-            int selectedIndex = rotation.next(RoleType.DECODE, group, decodeWorkerViews.size(),
+            int selectedIndex = rotation.next(RoleType.DECODE, group, candidates.size(),
                     i -> availabilityByWorker[i] == selectedAvailability && costByWorker[i] == selectedCost,
-                    i -> decodeWorkerViews.get(i).address());
-            if (selectedIndex < 0) { throw new IllegalStateException("Decode snapshot candidate disappeared"); }
-            DecodeRoutingView selected = decodeWorkerViews.get(selectedIndex);
-            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(selected);
+                    i -> candidates.get(i).getKey());
+            if (selectedIndex < 0) {
+                throw new IllegalStateException("No Decode candidate matched the selected cost and availability");
+            }
+            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(candidates.get(selectedIndex));
             if (endpoint != null) {
                 if (context != null) {
                     context.recordSelectionReason(RoleType.DECODE,
@@ -117,19 +129,19 @@ public class DecodeSelector {
         return PlacementResult.blocked(RoleType.DECODE);
     }
 
-    private PlacementResult<DecodeEndpoint, RoleType> classifyCapacityFailure(DecodeRequirement request,
-                                                                              List<DecodeRoutingView> views) {
+    private PlacementResult<DecodeEndpoint, RoleType> classifyCapacityFailure(
+            DecodeRequirement request, List<Map.Entry<String, DecodeEndpoint>> candidates) {
         Response failure = null;
         boolean uniformFailure = true;
-        List<Map<String, Object>> evidence = new ArrayList<>(views.size());
-        for (DecodeRoutingView view : views) {
+        List<Map<String, Object>> evidence = new ArrayList<>(candidates.size());
+        for (Map.Entry<String, DecodeEndpoint> candidate : candidates) {
             Response workerFailure;
-            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(view);
+            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(candidate);
             if (endpoint == null) {
                 workerFailure = Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
             } else {
                 var snapshot = endpoint.admissionSummary();
-                evidence.add(Map.of("endpoint", view.address(), "version", snapshot.routing().admissionVersion(),
+                evidence.add(Map.of("endpoint", candidate.getKey(), "version", snapshot.routing().admissionVersion(),
                         "engineLoad", snapshot.routing().engineLoad(), "totalLoad", snapshot.routing().totalLoad(),
                         "kvTotal", snapshot.routing().totalKv(), "kvAvailable",
                         snapshot.routing().placementUsage().availableKvAfterReservations()));
@@ -178,7 +190,7 @@ public class DecodeSelector {
         // Removing lower-priority occupancy is a counterfactual for attribution,
         // not an authorization to preempt its owners.
         var residual = request.capacity().evaluate(usage, request.inputKvTokens(), request.inputAndMaxOutputKvTokens(), lower);
-        if (residual.fits()) {
+        if (residual.hasCapacity()) {
             return Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
         }
         CapacityRelease attributed = higher.plus(same);
@@ -192,18 +204,6 @@ public class DecodeSelector {
                 || residual.kvBudgetTokens() > 0 && higher.kvBudgetTokens() > 0;
         return Response.error(StrategyErrorType.PRIORITY_ADMISSION_REJECTED,
                 higherBlocks ? RejectReason.HIGHER_PRIORITY_AHEAD : RejectReason.SAME_PRIORITY_AHEAD);
-    }
-
-    private static Availability availability(DecodeRequirement request, DecodeRoutingView view) {
-        if (view.totalKv() > 0L && request.inputAndMaxOutputKvTokens() > request.capacity().kvBudget(view.totalKv())) {
-            return Availability.IMPOSSIBLE;
-        }
-        var usage = switch (request.mode()) {
-            case IMMEDIATE -> view.dispatchUsage();
-            case WAIT_AT_PLACEMENT, PREEMPT_AT_PLACEMENT -> view.placementUsage();
-        };
-        return request.capacity().evaluate(usage, request.inputKvTokens(), request.inputAndMaxOutputKvTokens()).fits()
-                ? Availability.READY : Availability.BUSY;
     }
 
     private static Response oversizedRequestFailure(long required, long maximum) {

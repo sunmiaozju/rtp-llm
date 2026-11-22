@@ -16,6 +16,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -143,7 +144,7 @@ class DpGroupHealthTest {
 
     private List<String> candidates(WorkerDirectory directory, RoleType role) {
         if (role == RoleType.DECODE) {
-            return directory.getDecodeCandidates("default").stream().map(view -> view.address()).toList();
+            return directory.getDecodeCandidates("default").stream().map(Map.Entry::getKey).toList();
         }
         return directory.getPrefillCandidates(role)
                 .stream()

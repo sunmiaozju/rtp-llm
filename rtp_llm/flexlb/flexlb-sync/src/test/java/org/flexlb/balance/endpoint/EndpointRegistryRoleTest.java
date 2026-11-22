@@ -12,6 +12,7 @@ import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.service.grpc.WorkerStatusPBs;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
+import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -187,7 +188,7 @@ class EndpointRegistryRoleTest {
     }
 
     @Test
-    void decode_routing_view_refreshes_discovery_topology_without_status_commit() {
+    void decode_candidates_use_updated_discovery_group_without_status_commit() {
         String address = "decode-route-alias";
         WorkerStatus status = EndpointTestSupport.workerStatus(
                 RoleType.DECODE,
@@ -196,14 +197,10 @@ class EndpointRegistryRoleTest {
                 8010,
                 8011,
                 "site-a");
-        EndpointTestSupport.publishEndpoint(
-                registry, RoleType.DECODE, address, status);
-
-        DecodeEndpoint.DecodeRoutingView before =
-                registry.decodeRoutingSnapshot().getFirst();
-        assertEquals(address, before.address());
-        assertEquals("group-a", before.topology().group());
-        assertEquals("site-a", before.topology().site());
+        var endpoint = EndpointTestSupport.publishEndpoint(registry, RoleType.DECODE, address, status);
+        var directory = new WorkerDirectory(registry);
+        var entries = directory.getDecodeCandidates("group-a");
+        assertEquals(List.of(Map.entry(address, endpoint)), entries);
 
         status.lock.lock();
         try {
@@ -212,44 +209,36 @@ class EndpointRegistryRoleTest {
             status.lock.unlock();
         }
 
-        DecodeEndpoint.DecodeRoutingView after =
-                registry.decodeRoutingSnapshot().getFirst();
-        assertNotSame(before, after,
-                "topology is an independent routing-cache generation");
-        assertSame(before.workerStatus(), after.workerStatus());
-        assertEquals(before.admissionVersion(), after.admissionVersion());
-        assertEquals(address, after.address());
-        assertEquals("group-b", after.topology().group());
-        assertEquals("site-b", after.topology().site());
+        assertTrue(directory.getDecodeCandidates("group-a").isEmpty());
+        assertSame(entries, directory.getDecodeCandidates("group-b"));
     }
 
     @Test
-    void decode_routing_snapshot_stays_read_only_across_registry_changes() {
+    void decode_routing_entries_stay_read_only_across_registry_changes() {
         String address = "127.0.0.1:8030";
         WorkerStatus first = status(RoleType.DECODE, 8030);
         EndpointTestSupport.publishEndpoint(registry, RoleType.DECODE, address, first);
-        var snapshots = registry.decodeRoutingSnapshot();
-        var firstView = snapshots.getFirst();
+        var entries = registry.decodeRoutingEntries();
+        var firstEntry = entries.getFirst();
 
-        assertThrows(UnsupportedOperationException.class, () -> snapshots.removeFirst());
+        assertThrows(UnsupportedOperationException.class, () -> entries.removeFirst());
         EndpointTestSupport.publishEndpoint(registry, RoleType.DECODE, "127.0.0.1:8031",
                 status(RoleType.DECODE, 8031));
         retire(RoleType.DECODE, address, first);
 
-        assertEquals(List.of(firstView), snapshots);
-        assertNull(registry.findDecodeEndpoint(firstView));
+        assertEquals(List.of(firstEntry), entries);
+        assertNull(new WorkerDirectory(registry).findDecodeEndpoint(firstEntry));
         assertEquals(List.of("127.0.0.1:8031"),
-                registry.decodeRoutingSnapshot().stream().map(view -> view.address()).toList());
+                registry.decodeRoutingEntries().stream().map(Map.Entry::getKey).toList());
     }
 
     @Test
-    void decode_routing_view_captures_only_its_exact_same_address_generation() {
+    void decode_routing_entry_resolves_only_its_exact_same_address_generation() {
         String address = "decode-replacement-alias";
         WorkerStatus oldStatus = status(RoleType.DECODE, 8020);
         EndpointTestSupport.publishEndpoint(
                 registry, RoleType.DECODE, address, oldStatus);
-        DecodeEndpoint.DecodeRoutingView oldView =
-                registry.decodeRoutingSnapshot().getFirst();
+        var oldEntry = registry.decodeRoutingEntries().getFirst();
 
         retire(RoleType.DECODE, address, oldStatus);
         WorkerStatus replacementStatus = status(RoleType.DECODE, 8020);
@@ -260,12 +249,12 @@ class EndpointRegistryRoleTest {
                         address,
                         replacementStatus);
 
-        assertNull(registry.findDecodeEndpoint(oldView), "an old view must not resolve a same-address replacement");
-        DecodeEndpoint.DecodeRoutingView replacementView =
-                registry.decodeRoutingSnapshot().getFirst();
-        assertEquals(address, replacementView.address());
-        assertTrue(oldView.generationId() != replacementView.generationId());
-        assertSame(replacement, registry.findDecodeEndpoint(replacementView));
+        var directory = new WorkerDirectory(registry);
+        assertNull(directory.findDecodeEndpoint(oldEntry), "an old entry must not resolve a same-address replacement");
+        var replacementEntry = registry.decodeRoutingEntries().getFirst();
+        assertEquals(address, replacementEntry.getKey());
+        assertNotSame(oldEntry.getValue(), replacementEntry.getValue());
+        assertSame(replacement, directory.findDecodeEndpoint(replacementEntry));
     }
 
     @Test

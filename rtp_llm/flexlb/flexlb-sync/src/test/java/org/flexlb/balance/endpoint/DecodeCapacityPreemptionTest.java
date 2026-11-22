@@ -39,7 +39,7 @@ class DecodeCapacityPreemptionTest {
         endpoint.release(reservation, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
         var view = endpoint.routingView();
         assertTrue(view.realKvAvailable() >= requiredKvTokens);
-        assertFalse(policy.evaluate(view.dispatchUsage(), requiredKvTokens, kvBudgetTokens).fits());
+        assertFalse(policy.evaluate(view.dispatchUsage(), requiredKvTokens, kvBudgetTokens).hasCapacity());
         DecodeEvictionProposal proposal = plan(endpoint, requiredKvTokens, kvBudgetTokens, policy, VictimStage.DECODE_ENGINE_OWNED);
         assertEquals(DecodeEvictionProposal.CASE_KV, proposal.evictionCase());
         assertEquals(List.of("1"), proposal.victims().stream().map(DecodeEndpoint.DecodeRequestView::requestId).toList());
@@ -64,7 +64,8 @@ class DecodeCapacityPreemptionTest {
         victim = endpoint.reserve("1", 100L, 200L, 30);
         assertNull(endpoint.reserve("9", requiredKvTokens, kvBudgetTokens, 70, policy));
         // The same queued reservation remains soft for ordinary Engine dispatch.
-        assertTrue(policy.evaluate(endpoint.routingView().dispatchUsage(), requiredKvTokens, kvBudgetTokens).fits());
+        assertTrue(policy.evaluate(endpoint.routingView().dispatchUsage(), requiredKvTokens, kvBudgetTokens)
+                .hasCapacity());
         DecodeEvictionProposal proposal = plan(endpoint, requiredKvTokens, kvBudgetTokens, policy, VictimStage.DECODE_RESERVED);
         assertEquals(DecodeEvictionProposal.CASE_SLOT, proposal.evictionCase());
         assertTrue(endpoint.replaceQueuedRequests(List.of(victim), "9", requiredKvTokens, kvBudgetTokens, 70, policy));

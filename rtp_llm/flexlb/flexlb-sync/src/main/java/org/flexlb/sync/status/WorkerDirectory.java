@@ -297,35 +297,37 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     /**
      * Decode candidates whose reported DP group has every rank available for routing.
      */
-    public List<DecodeEndpoint.DecodeRoutingView> getDecodeCandidates(String group) {
-        List<DecodeEndpoint.DecodeRoutingView> snapshots = endpointRegistry.decodeRoutingSnapshot();
-        if (snapshots.isEmpty()) {
-            return snapshots;
+    public List<Map.Entry<String, DecodeEndpoint>> getDecodeCandidates(String group) {
+        List<Map.Entry<String, DecodeEndpoint>> directory = endpointRegistry.decodeRoutingEntries();
+        if (directory.isEmpty()) {
+            return directory;
         }
         Map<String, DpGroupMembers> dpGroups = new HashMap<>();
         // 先统计完整目录的 DP ranks，再过滤流量 group，避免把同一 DP 组的其他 rank 提前排除。
-        for (DecodeEndpoint.DecodeRoutingView snapshot : snapshots) {
-            WorkerStatus.EngineObservation engine = snapshot.workerStatus().fields();
+        for (Map.Entry<String, DecodeEndpoint> entry : directory) {
+            WorkerStatus.EngineObservation engine = entry.getValue().getStatus().committedEngineObservation();
             if (engine.dpMasterAddress() != null) {
                 dpGroups.computeIfAbsent(engine.dpMasterAddress(), ignored -> new DpGroupMembers())
                         .add(engine.dpSize(), engine.dpRank());
             }
         }
         if (group == null && dpGroups.isEmpty()) {
-            return snapshots;
+            return directory;
         }
-        ReadOnlyListFilter<DecodeEndpoint.DecodeRoutingView> matching = new ReadOnlyListFilter<>(snapshots);
-        for (int index = 0; index < snapshots.size(); index++) {
-            DecodeEndpoint.DecodeRoutingView snapshot = snapshots.get(index);
-            String masterAddress = snapshot.workerStatus().fields().dpMasterAddress();
-            matching.keepIf(index, (group == null || group.equals(snapshot.topology().group()))
-                    && (masterAddress == null || dpGroups.get(masterAddress).hasAllRanks()));
+        var matching = new ReadOnlyListFilter<>(directory);
+        for (int index = 0; index < directory.size(); index++) {
+            WorkerStatus status = directory.get(index).getValue().getStatus();
+            String masterAddress = status.committedEngineObservation().dpMasterAddress();
+            DpGroupMembers members = dpGroups.get(masterAddress);
+            matching.keepIf(index, (group == null || group.equals(status.topologySnapshot().group()))
+                    && (masterAddress == null || (members != null && members.hasAllRanks())));
         }
         return matching.toList();
     }
 
-    public DecodeEndpoint findDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
-        return endpointRegistry.findDecodeEndpoint(expected);
+    public DecodeEndpoint findDecodeEndpoint(Map.Entry<String, DecodeEndpoint> expected) {
+        DecodeEndpoint endpoint = expected.getValue();
+        return findEndpoint(RoleType.DECODE, expected.getKey()) == endpoint ? endpoint : null;
     }
 
 }

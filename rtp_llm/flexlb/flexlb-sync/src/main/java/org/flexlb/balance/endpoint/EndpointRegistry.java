@@ -208,32 +208,8 @@ public class EndpointRegistry {
         };
     }
 
-    /**
-     * Return immutable routing values for the Decode generations observed
-     * during this traversal.
-     *
-     * <p>The registry is intentionally not locked while an endpoint takes its
-     * admission lock.</p>
-     */
-    public List<DecodeEndpoint.DecodeRoutingView> decodeRoutingSnapshot() {
-        List<Map.Entry<String, DecodeEndpoint>> directory = decodeDirectory;
-        if (directory.isEmpty()) {
-            return List.of();
-        }
-        List<DecodeEndpoint.DecodeRoutingView> snapshot = new ArrayList<>(directory.size());
-        for (Map.Entry<String, DecodeEndpoint> entry : directory) {
-            snapshot.add(entry.getValue().routingViewSnapshot(entry.getKey()));
-        }
-        return Collections.unmodifiableList(snapshot);
-    }
-
-    public DecodeEndpoint findDecodeEndpoint(DecodeEndpoint.DecodeRoutingView expected) {
-        WorkerEndpoint current = get(RoleType.DECODE, expected.address());
-        if (current instanceof DecodeEndpoint endpoint && !endpoint.isRetired()
-                && endpoint.getStatus().getGenerationId() == expected.generationId()) {
-            return endpoint;
-        }
-        return null;
+    public List<Map.Entry<String, DecodeEndpoint>> decodeRoutingEntries() {
+        return decodeDirectory;
     }
 
     /** Return the endpoint only when it belongs to the expected status generation. */

@@ -44,7 +44,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -105,12 +104,11 @@ class DecodeQueueConsumerTest {
         when(configService.loadBalanceConfig()).thenReturn(config);
         when(prefillCheck.isAvailable(any())).thenReturn(true);
         when(selector.select(any(), any(), any())).thenAnswer(call -> success(decode));
-        when(endpointRegistry.decodeRoutingSnapshot())
+        when(endpointRegistry.decodeRoutingEntries())
                 .thenAnswer(call -> EndpointRegistry.getEndpointsByRole(RoleType.DECODE)
                         .entrySet()
                         .stream()
-                        .map(entry -> ReflectionTestUtils.<DecodeEndpoint.DecodeRoutingView>invokeMethod(
-                                entry.getValue(), "routingViewSnapshot", entry.getKey()))
+                        .map(entry -> Map.entry(entry.getKey(), (DecodeEndpoint) entry.getValue()))
                         .toList());
     }
 
@@ -312,7 +310,6 @@ class DecodeQueueConsumerTest {
         updateDecodeStatus(decode, Map.of(), Map.of(), false);
         updateDecodeStatus(otherDecode, Map.of(), Map.of(), false);
         register(decode);
-        when(endpointRegistry.findDecodeEndpoint(any())).thenCallRealMethod();
         when(endpointRegistry.get(eq(RoleType.DECODE), any()))
                 .thenAnswer(call -> EndpointRegistry.getEndpointsByRole(RoleType.DECODE).get(call.getArgument(1)));
         DecodeSelector realSelector = new DecodeSelector(workerDirectory, new EndpointRoundRobin());
