@@ -59,13 +59,13 @@ class TrafficPolicyConfigTest {
 
     @Test
     void rejects_duplicate_shapes_and_invalid_rules() {
-        assertEquals("blue", parseGroupSelector("""
+        assertThrows(ConfigValidationException.class, () -> parseGroupSelector("""
                 {
                   "defaultGroup":"blue",
                   "defaultTargets":[{"group":"blue","weight":1}],
                   "rules":[]
                 }
-                """).resolveTargetGroup(request(1, "key-a", 1)).orElseThrow());
+                """));
         assertThrows(ConfigValidationException.class, () -> parseGroupSelector("""
                 {
                   "rules":[{
