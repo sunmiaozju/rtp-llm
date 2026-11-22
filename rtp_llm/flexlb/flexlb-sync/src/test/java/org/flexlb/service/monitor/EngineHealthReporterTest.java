@@ -751,14 +751,6 @@ class EngineHealthReporterTest {
     }
 
     @Test
-    void shouldReportSelectedKvcmGlobalMatchDetails() {
-        reporter.reportKvcmSelectedMatch(RoleType.PREFILL, "10.0.0.1:8080@0", 40, 100, 200);
-
-        verify(cacheMetricsReporter).reportKvcmSelectedMatch(
-                RoleType.PREFILL, "10.0.0.1:8080@0", 40, 100, 200);
-    }
-
-    @Test
     void shouldNotReportLocalStandbyMetricsWhenPredictionIsUnavailable() {
         CacheHitComparisonResult comparison = new CacheHitComparisonResult(
                 "cache_hit_comparison", "request-1", "LOCAL_SYNC", "PREFILL", "test-group",
@@ -798,14 +790,9 @@ class EngineHealthReporterTest {
 
     @Test
     void shouldReportKvcmLocalAndGlobalDeltasWhenAvailable() {
-        CacheHitComparisonResult comparison = new CacheHitComparisonResult(
-                "cache_hit_comparison", "request-1", "KVCM", "PREFILL", "test-group",
-                new WorkerIdentity("10.0.0.1", 8080, 0),
-                "running", 200,
-                120, null,
-                new CacheHitComparisonResult.CachePrediction(60, 40, 100),
-                null,
-                null);
+        CacheHitComparisonResult comparison = new CacheHitComparisonResult("cache_hit_comparison", "request-1", "KVCM",
+                "PREFILL", "test-group", new WorkerIdentity("10.0.0.1", 8080, 0), "running", 200, 120, null,
+                new CacheHitComparisonResult.CachePrediction(60, 40, 100, 160), null, null);
 
         reporter.reportCacheHitComparisonMetrics(null, comparison);
 
@@ -815,6 +802,7 @@ class EngineHealthReporterTest {
                 "taskState", "running",
                 "cacheMatchSource", "KVCM");
         verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_KVCM_LOCAL_DELTA_TOKENS, expectedTags, 80.0);
+        verify(cacheMetricsReporter).reportKvcmMatchTokens(RoleType.PREFILL, comparison.kvcmPrediction(), 200);
         verify(monitor).report(MetricConstant.CACHE_HIT_COMPARISON_KVCM_GLOBAL_MATCH_DELTA_TOKENS, expectedTags, 20.0);
     }
 

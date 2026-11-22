@@ -420,6 +420,11 @@ public class MetricConstant {
             "app.cache.kvcm.selected.global.match.tokens";
 
     /**
+     * Sum of the largest local match in each request's KVCM response.
+     */
+    public static final String CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS = "app.cache.kvcm.best.local.match.tokens";
+
+    /**
      * Accumulated input tokens for the same KVCM-selected requests.
      */
     public static final String CACHE_KVCM_SELECTED_INPUT_TOKENS =

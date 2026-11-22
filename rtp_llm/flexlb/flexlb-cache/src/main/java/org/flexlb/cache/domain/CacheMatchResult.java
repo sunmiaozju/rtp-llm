@@ -13,12 +13,22 @@ import java.util.Map;
  * and has one {@link HostCacheMatch} containing the raw local/global block counts. KVCM responses
  * from legacy single-engine deployments can use the physical {@code ip:port} identity.
  */
-public record CacheMatchResult(
-        Map<String, HostCacheMatch> hostMatches,
-        CacheMatchSource source,
-        long queryTimeUs,
-        long blockSize,
-        boolean querySucceeded) {
+public record CacheMatchResult(Map<String, HostCacheMatch> hostMatches,
+                               CacheMatchSource source,
+                               long queryTimeUs,
+                               long blockSize,
+                               boolean querySucceeded) {
+
+    public long bestLocalMatchTokens(long inputTokens) {
+        if (source != CacheMatchSource.KVCM || !querySucceeded) {
+            return -1;
+        }
+        long bestLocalBlocks = 0;
+        for (HostCacheMatch match : hostMatches.values()) {
+            bestLocalBlocks = Math.max(bestLocalBlocks, match.localMatchBlocks());
+        }
+        return matchedTokens(bestLocalBlocks, blockSize, inputTokens);
+    }
 
     public CacheMatchResult(Map<String, HostCacheMatch> hostMatches, CacheMatchSource source,
                             long queryTimeUs, long blockSize) {
@@ -33,11 +43,11 @@ public record CacheMatchResult(
         return new CacheMatchResult(Collections.emptyMap(), source, queryTimeUs, 0, false);
     }
 
-    public static long matchedTokens(double matchBlocks, long blockSize, long inputTokens) {
+    public static long matchedTokens(long matchBlocks, long blockSize, long inputTokens) {
         if (matchBlocks <= 0 || blockSize <= 0) {
             return 0;
         }
-        long matchedTokens = Math.round(blockSize * matchBlocks);
+        long matchedTokens = matchBlocks * blockSize;
         return inputTokens > 0 ? Math.min(inputTokens, matchedTokens) : matchedTokens;
     }
 

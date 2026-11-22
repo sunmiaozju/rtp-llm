@@ -3,6 +3,7 @@ package org.flexlb.cache.telemetry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.micrometer.prometheus.PrometheusConfig;
 import io.micrometer.prometheus.PrometheusMeterRegistry;
+import org.flexlb.cache.domain.CacheHitComparisonResult.CachePrediction;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.FlexMetricType;
 import org.flexlb.enums.FlexPriorityType;
@@ -26,6 +27,7 @@ import static org.flexlb.constant.MetricConstant.CACHE_ENGINE_LOCAL_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_FIND_MATCHING_ENGINES_RT;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_INPUT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS;
@@ -44,6 +46,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class CacheMetricsReporterTest {
@@ -86,8 +89,10 @@ class CacheMetricsReporterTest {
     }
 
     @Test
-    void selectedKvcmMatchWithoutRoleDoesNotReport() {
-        reporter.reportKvcmSelectedMatch(null, "10.0.0.1:8080", 20L, 30L, 100L);
+    void kvcmMatchWithoutRoleOrPositiveInputDoesNotReport() {
+        CachePrediction prediction = new CachePrediction(20, 20, 30, 60);
+        reporter.reportKvcmMatchTokens(null, prediction, 100L);
+        reporter.reportKvcmMatchTokens(RoleType.PREFILL, prediction, 0L);
 
         verifyNoInteractions(monitor);
     }
@@ -232,19 +237,33 @@ class CacheMetricsReporterTest {
     }
 
     @Test
-    void should_report_kvcm_selected_match_with_its_input_tokens() {
+    void shouldReportSelectedAndBestKvcmMatchesWithTheSameInputTokens() {
         reporter.init();
-        reporter.reportKvcmSelectedMatch(RoleType.PREFILL, "10.0.0.1:8080", 64L, 128L, 256L);
-        reporter.reportKvcmSelectedMatch(RoleType.PREFILL, "10.0.0.1:8080", 0L, 0L, 512L);
+        reporter.reportKvcmMatchTokens(RoleType.PREFILL, new CachePrediction(64, 64, 128, 192), 256L);
+        reporter.reportKvcmMatchTokens(RoleType.PREFILL, new CachePrediction(0, 0, 0, 0), 512L);
 
         FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL");
         verify(monitor).register(CACHE_KVCM_SELECTED_LOCAL_MATCH_TOKENS, FlexMetricType.COUNTER);
         verify(monitor).register(CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS, FlexMetricType.COUNTER);
+        verify(monitor).register(CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS, FlexMetricType.COUNTER);
         verify(monitor).register(CACHE_KVCM_SELECTED_INPUT_TOKENS, FlexMetricType.COUNTER);
         verify(monitor).report(CACHE_KVCM_SELECTED_LOCAL_MATCH_TOKENS, tags, 64L);
         verify(monitor).report(CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS, tags, 128L);
+        verify(monitor).report(CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS, tags, 192L);
+        verify(monitor).report(CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS, tags, 0L);
         verify(monitor).report(CACHE_KVCM_SELECTED_INPUT_TOKENS, tags, 256L);
         verify(monitor).report(CACHE_KVCM_SELECTED_INPUT_TOKENS, tags, 512L);
+    }
+
+    @Test
+    void unknownBestMatchStillCountsSelectedMatchesAndInput() {
+        reporter.reportKvcmMatchTokens(RoleType.PREFILL, new CachePrediction(64, 64, 128, -1), 256L);
+
+        FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL");
+        verify(monitor).report(CACHE_KVCM_SELECTED_LOCAL_MATCH_TOKENS, tags, 64L);
+        verify(monitor).report(CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS, tags, 128L);
+        verify(monitor).report(CACHE_KVCM_SELECTED_INPUT_TOKENS, tags, 256L);
+        verifyNoMoreInteractions(monitor);
     }
 
     @Test

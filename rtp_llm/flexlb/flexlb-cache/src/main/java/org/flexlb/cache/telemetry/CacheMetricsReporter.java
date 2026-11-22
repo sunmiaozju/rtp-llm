@@ -1,6 +1,7 @@
 package org.flexlb.cache.telemetry;
 
 import lombok.extern.slf4j.Slf4j;
+import org.flexlb.cache.domain.CacheHitComparisonResult.CachePrediction;
 import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.FlexMetricType;
@@ -26,6 +27,7 @@ import static org.flexlb.constant.MetricConstant.CACHE_GLOBAL_TOTAL_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COUNT;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_INPUT_TOKENS;
+import static org.flexlb.constant.MetricConstant.CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_PREDICTED_TOKENS;
 import static org.flexlb.constant.MetricConstant.CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS;
@@ -113,6 +115,7 @@ public class CacheMetricsReporter {
         monitor.register(CACHE_INPUT_TOKENS, FlexMetricType.COUNTER);
         monitor.register(CACHE_KVCM_SELECTED_LOCAL_MATCH_TOKENS, FlexMetricType.COUNTER);
         monitor.register(CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS, FlexMetricType.COUNTER);
+        monitor.register(CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS, FlexMetricType.COUNTER);
         monitor.register(CACHE_KVCM_SELECTED_INPUT_TOKENS, FlexMetricType.COUNTER);
         monitor.register(CACHE_THEORY_HIT_COUNT, FlexMetricType.COUNTER);
         monitor.register(CACHE_THEORY_TOTAL_COUNT, FlexMetricType.COUNTER);
@@ -231,27 +234,18 @@ public class CacheMetricsReporter {
     }
 
     /**
-     * Count the selected worker's KVCM local and global matches against its input tokens.
-     *
-     * @param roleType          selected role
-     * @param ipIndex           logical engine address
-     * @param localMatchTokens  tokens matched in the selected worker's local cache
-     * @param globalMatchTokens tokens matched across local and remote caches
-     * @param inputTokens       request input tokens
+     * Count the selected worker's matches and the highest local match against the same input tokens.
      */
-    public void reportKvcmSelectedMatch(RoleType roleType,
-                                        String ipIndex,
-                                        long localMatchTokens,
-                                        long globalMatchTokens,
-                                        long inputTokens) {
-        if (roleType == null) {
+    public void reportKvcmMatchTokens(RoleType roleType, CachePrediction kvcmPrediction, long inputTokens) {
+        if (roleType == null || inputTokens <= 0L) {
             return;
         }
         FlexMetricTags tags = FlexMetricTags.of("role", roleType.name());
-        if (inputTokens > 0L) {
-            monitor.report(CACHE_KVCM_SELECTED_LOCAL_MATCH_TOKENS, tags, localMatchTokens);
-            monitor.report(CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS, tags, globalMatchTokens);
-            monitor.report(CACHE_KVCM_SELECTED_INPUT_TOKENS, tags, inputTokens);
+        monitor.report(CACHE_KVCM_SELECTED_LOCAL_MATCH_TOKENS, tags, kvcmPrediction.localPredictionTokens());
+        monitor.report(CACHE_KVCM_SELECTED_GLOBAL_MATCH_TOKENS, tags, kvcmPrediction.globalPredictionTokens());
+        monitor.report(CACHE_KVCM_SELECTED_INPUT_TOKENS, tags, inputTokens);
+        if (kvcmPrediction.bestLocalMatchTokens() >= 0) {
+            monitor.report(CACHE_KVCM_BEST_LOCAL_MATCH_TOKENS, tags, kvcmPrediction.bestLocalMatchTokens());
         }
     }
 

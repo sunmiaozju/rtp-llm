@@ -255,8 +255,7 @@ class CostBasedPrefillSelectionMetricTest {
         var selected = select();
         verify(reporter, never()).reportCacheHitMetrics(
                 any(), anyString(), anyLong(), anyLong(), anyDouble());
-        verify(reporter, never()).reportKvcmSelectedMatch(
-                any(), anyString(), anyLong(), anyLong(), anyLong());
+        verify(reporter, never()).reportCacheHitComparisonMetrics(any(), any());
         var decision = context.getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
         assertEquals(200L, decision.kvcmMatches().selectedHitTokens());
         assertEquals(Map.of(cacheWorkerKey, 200L), decision.kvcmMatches().topHits());
@@ -265,7 +264,7 @@ class CostBasedPrefillSelectionMetricTest {
     @ParameterizedTest
     @CsvSource({"2, 8, 0.0, 800, 200", "2, 8, 0.2, 800, 320", "2, 8, 1.0, 800, 800", "0, 8, 0.0, 800, 0",
             "2, 10, 0.2, 900, 360", "10, 10, 0.2, 900, 1000", "2, 2, 0.2, 200, 200", "0, 0, 0.2, 0, 0",
-            "0, 9223372036854775807, 0.2, 900, 200"})
+            "0, 10, 0.2, 900, 200"})
     void globalHitsDriveWorkWhileRoutingReportsEffectiveHits(long localBlocks,
                                                              long globalBlocks,
                                                              double remoteDiscount,

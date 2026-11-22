@@ -70,6 +70,27 @@ class CacheMatchResultTest {
     }
 
     @Test
+    void shouldUseTheBestLocalMatchAndCapItAtInputLength() {
+        CacheMatchResult result =
+                new CacheMatchResult(Map.of("worker-a", new HostCacheMatch(4, 5), "worker-b", new HostCacheMatch(2, 7)),
+                        CacheMatchSource.KVCM, 0, 100);
+
+        assertEquals(400, result.bestLocalMatchTokens(1000));
+        assertEquals(350, result.bestLocalMatchTokens(350));
+    }
+
+    @Test
+    void shouldDistinguishNoLocalKvcmHitsFromUnavailableKvcmResults() {
+        CacheMatchResult remoteOnly =
+                new CacheMatchResult(Map.of("worker-a", new HostCacheMatch(0, 7)), CacheMatchSource.KVCM, 0, 100);
+
+        assertEquals(0, remoteOnly.bestLocalMatchTokens(1000));
+        assertEquals(0, CacheMatchResult.empty(CacheMatchSource.KVCM).bestLocalMatchTokens(1000));
+        assertEquals(-1, CacheMatchResult.failed(CacheMatchSource.KVCM, 0).bestLocalMatchTokens(1000));
+        assertEquals(-1, CacheMatchResult.empty(CacheMatchSource.LOCAL_STANDBY).bestLocalMatchTokens(1000));
+    }
+
+    @Test
     void shouldUseLocalMatchForLocalOnlyHosts() {
         CacheMatchResult result = new CacheMatchResult(
                 Map.of("10.0.0.1:8080", HostCacheMatch.local(2)), CacheMatchSource.KVCM, 0, 1000);

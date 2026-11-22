@@ -657,24 +657,6 @@ public class EngineHealthReporter {
         cacheMetricsReporter.reportCacheAffinityOverCap(roleType, engineIp, overCapMs);
     }
 
-    /**
-     * Report KVCM matches only when KVCM supplied a result for the selected worker.
-     *
-     * @param roleType          selected role
-     * @param engineIp          selected worker address
-     * @param localMatchTokens  tokens matched in the worker's local cache
-     * @param globalMatchTokens tokens matched across local and remote caches
-     * @param inputTokens       request input tokens
-     */
-    public void reportKvcmSelectedMatch(RoleType roleType,
-                                         String engineIp,
-                                         long localMatchTokens,
-                                         long globalMatchTokens,
-                                         long inputTokens) {
-        cacheMetricsReporter.reportKvcmSelectedMatch(
-                roleType, engineIp, localMatchTokens, globalMatchTokens, inputTokens);
-    }
-
     public void reportCacheHitComparisonMetrics(WorkerStatus worker, CacheHitComparisonResult comparison) {
         if (comparison == null) {
             return;
@@ -707,8 +689,7 @@ public class EngineHealthReporter {
         if (kvcmPrediction != null) {
             cacheMetricsReporter.reportKvcmPrediction(role, metricIp, kvcmPrediction.predictedHitTokens(), inputTokens);
             if (kvcmPrediction.localPredictionTokens() >= 0) {
-                reportKvcmSelectedMatch(role, metricIp,
-                        kvcmPrediction.localPredictionTokens(), kvcmPrediction.globalPredictionTokens(), inputTokens);
+                cacheMetricsReporter.reportKvcmMatchTokens(role, kvcmPrediction, inputTokens);
             }
             if (inputTokens > 0) {
                 monitor.report(CACHE_HIT_COMPARISON_KVCM_PREDICTED_TOKENS,

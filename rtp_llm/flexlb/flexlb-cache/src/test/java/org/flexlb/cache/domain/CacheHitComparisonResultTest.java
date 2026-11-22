@@ -16,7 +16,7 @@ class CacheHitComparisonResultTest {
                 "cache_hit_comparison", "request-1", "KVCM", "PREFILL", "default",
                 new WorkerIdentity("127.0.0.1", 8080, 0), "running", 200,
                 120, null,
-                new CacheHitComparisonResult.CachePrediction(100, 60, 110),
+                new CacheHitComparisonResult.CachePrediction(100, 60, 110, 180),
                 null,
                 new CacheHitComparisonResult.CachePrediction(70, -1, -1));
 
@@ -29,10 +29,10 @@ class CacheHitComparisonResultTest {
         assertTrue(json.contains("\"actualHitTokens\":120"));
         assertTrue(json.contains(
                 "\"kvcmPrediction\":{\"predictedHitTokens\":100,"
-                        + "\"localPredictionTokens\":60,\"globalPredictionTokens\":110}"));
+                        + "\"localPredictionTokens\":60,\"globalPredictionTokens\":110,\"bestLocalMatchTokens\":180}"));
         assertTrue(json.contains(
                 "\"localStandbyPrediction\":{\"predictedHitTokens\":70,"
-                        + "\"localPredictionTokens\":-1,\"globalPredictionTokens\":-1}"));
+                        + "\"localPredictionTokens\":-1,\"globalPredictionTokens\":-1,\"bestLocalMatchTokens\":-1}"));
         assertEquals(100, comparison.kvcmPrediction().predictedHitTokens());
         assertEquals(20, comparison.actualHitTokens() - comparison.kvcmPrediction().predictedHitTokens());
         assertFalse(json.contains("\"routing\""));

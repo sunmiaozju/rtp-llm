@@ -433,7 +433,8 @@ public class CostBasedPrefillStrategy {
                 maxGlobalHitBlocks = Math.max(maxGlobalHitBlocks, match.globalMatchBlocks());
             }
         }
-        balanceContext.setGlobalHitTokens(CacheMatchResult.matchedTokens(maxGlobalHitBlocks, blockSize, request.getSeqLen()));
+        balanceContext
+                .setGlobalHitTokens(CacheMatchResult.matchedTokens(maxGlobalHitBlocks, blockSize, request.getSeqLen()));
         balanceContext.recordCacheQuery(observed.source().name(), observed.queryTimeUs());
         return observed;
     }

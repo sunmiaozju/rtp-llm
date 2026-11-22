@@ -45,9 +45,14 @@ public record CacheHitComparisonResult(
     /**
      * Prediction tokens used for one cache-match source. Local and global prediction tokens are
      * {@code -1} when that source does not calculate separate local and global values.
+     * The largest local match reported by any worker in the KVCM query is {@code -1} when unavailable.
      */
     public record CachePrediction(long predictedHitTokens,
                                   long localPredictionTokens,
-                                  long globalPredictionTokens) {
+                                  long globalPredictionTokens,
+                                  long bestLocalMatchTokens) {
+        public CachePrediction(long predictedHitTokens, long localPredictionTokens, long globalPredictionTokens) {
+            this(predictedHitTokens, localPredictionTokens, globalPredictionTokens, -1);
+        }
     }
 }

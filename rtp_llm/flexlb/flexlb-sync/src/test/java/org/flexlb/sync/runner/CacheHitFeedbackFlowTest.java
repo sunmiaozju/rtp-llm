@@ -334,9 +334,9 @@ class CacheHitFeedbackFlowTest {
     void feedbackPreservesLogicalEngineIdentityAndExactCachePrediction() throws Exception {
         WorkerStatus engine = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "10.0.0.1",
                 8080, 8081, "test", null, 1, 2);
-        CacheMatchResult matches = new CacheMatchResult(Map.of(
-                "10.0.0.1:8080@0", HostCacheMatch.local(1),
-                "10.0.0.1:8080@1", HostCacheMatch.local(4)), CacheMatchSource.KVCM, 1, 100);
+        CacheMatchResult matches = new CacheMatchResult(
+                Map.of("10.0.0.1:8080@0", new HostCacheMatch(5, 6), "10.0.0.1:8080@1", new HostCacheMatch(4, 6)),
+                CacheMatchSource.KVCM, 1, 100);
         cache.trackRoutingPrediction("1010", RoleType.PREFILL, "group", engine, 1000, 400, matches, CompletableFuture.completedFuture(null));
         var observation = org.flexlb.service.grpc.EngineStatusConverter.convertToStatusObservation(engine,
                 response(task("1010", true, 500), true, 2));
@@ -345,6 +345,8 @@ class CacheHitFeedbackFlowTest {
         var comparison = results.getFirst().get();
         assertEquals("10.0.0.1:8080@1", comparison.worker());
         assertEquals(400, comparison.kvcmPrediction().localPredictionTokens());
+        assertEquals(600, comparison.kvcmPrediction().globalPredictionTokens());
+        assertEquals(500, comparison.kvcmPrediction().bestLocalMatchTokens());
         assertEquals(100, comparison.actualHitTokens()
                 - comparison.kvcmPrediction().localPredictionTokens());
         assertTrue(cache.observeCacheHitFeedback(engine, observation).isEmpty());

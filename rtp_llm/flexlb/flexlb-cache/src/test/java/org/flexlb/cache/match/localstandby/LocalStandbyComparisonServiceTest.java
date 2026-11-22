@@ -7,6 +7,7 @@ import org.flexlb.cache.domain.CacheMatchSource;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.cache.HostCacheMatch;
 import org.flexlb.dao.master.CacheHitFeedback;
+import org.flexlb.dao.master.WorkerIdentity;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.KvcmConfig;
 import org.flexlb.dao.route.RoleType;
@@ -41,10 +42,9 @@ class LocalStandbyComparisonServiceTest {
         when(provider.asyncLocalStandbyMatch(query)).thenReturn(pendingMatch);
         comparisonService.trackLocalStandbyPrediction(query);
 
-        CacheHitFeedback feedback = new CacheHitFeedback(
-                "cache_hit_comparison", "request-pending", "KVCM", "PREFILL", "default",
-                "10.0.0.1", 8080, "running", 8000, 2192, 4384,
-                true, 4000, 10000, 6000, 1616);
+        CacheHitFeedback feedback = new CacheHitFeedback("cache_hit_comparison", "request-pending", "KVCM", "PREFILL",
+                "default", new WorkerIdentity("10.0.0.1", 8080, 0), "running", 8000, 2192, 4384, true, 4000, 10000, -1,
+                6000, 1616);
         CompletableFuture<CacheHitComparisonResult> comparison =
                 comparisonService.captureComparison(feedback.requestId(), RoleType.PREFILL).apply(feedback);
 
@@ -79,10 +79,8 @@ class LocalStandbyComparisonServiceTest {
                 10,
                 2192));
 
-        CacheHitFeedback feedback = new CacheHitFeedback(
-                "cache_hit_comparison", "request-1", "KVCM", "PREFILL", "default",
-                "10.0.0.1", 8080, "running", 8000, 2192, 4384,
-                true, 4000, 10000,
+        CacheHitFeedback feedback = new CacheHitFeedback("cache_hit_comparison", "request-1", "KVCM", "PREFILL",
+                "default", new WorkerIdentity("10.0.0.1", 8080, 0), "running", 8000, 2192, 4384, true, 4000, 10000, -1,
                 6000, 1616);
         CacheHitComparisonResult result =
                 comparisonService.captureComparison(feedback.requestId(), RoleType.valueOf(feedback.role())).apply(feedback).get(1, TimeUnit.SECONDS);
@@ -113,11 +111,9 @@ class LocalStandbyComparisonServiceTest {
                 2192));
         verify(provider, never()).asyncLocalStandbyMatch(query);
 
-        CacheHitFeedback feedback = new CacheHitFeedback(
-                "cache_hit_comparison", "request-1", "LOCAL_STANDBY", "PREFILL", "default",
-                "10.0.0.1", 8080, "running", 8000, 2192, 2192,
-                false, 0, 0,
-                6000, 3808);
+        CacheHitFeedback feedback = new CacheHitFeedback("cache_hit_comparison", "request-1", "LOCAL_STANDBY",
+                "PREFILL", "default", new WorkerIdentity("10.0.0.1", 8080, 0), "running", 8000, 2192, 2192, false, 0, 0,
+                -1, 6000, 3808);
         CacheHitComparisonResult result =
                 comparisonService.captureComparison(feedback.requestId(), RoleType.valueOf(feedback.role())).apply(feedback).get(1, TimeUnit.SECONDS);
 
@@ -146,11 +142,9 @@ class LocalStandbyComparisonServiceTest {
                 10,
                 1024));
 
-        CacheHitFeedback feedback = new CacheHitFeedback(
-                "cache_hit_comparison", "request-index-1", "KVCM", "PREFILL", "default",
-                "10.0.0.1", 8080, 1, "running", 12000, 1024, 1024,
-                false, 0, 0,
-                9000, 7976);
+        CacheHitFeedback feedback = new CacheHitFeedback("cache_hit_comparison", "request-index-1", "KVCM", "PREFILL",
+                "default", new WorkerIdentity("10.0.0.1", 8080, 1), "running", 12000, 1024, 1024, false, 0, 0, -1, 9000,
+                7976);
 
         CacheHitComparisonResult result =
                 comparisonService.captureComparison(feedback.requestId(), RoleType.valueOf(feedback.role())).apply(feedback).get(1, TimeUnit.SECONDS);
@@ -177,11 +171,9 @@ class LocalStandbyComparisonServiceTest {
                 10,
                 1024));
 
-        CacheHitFeedback feedback = new CacheHitFeedback(
-                "cache_hit_comparison", "request-miss-1", "KVCM", "PREFILL", "default",
-                "10.0.0.1", 8080, 1, "running", 12000, 1024, 1024,
-                false, 0, 0,
-                9000, 7976);
+        CacheHitFeedback feedback = new CacheHitFeedback("cache_hit_comparison", "request-miss-1", "KVCM", "PREFILL",
+                "default", new WorkerIdentity("10.0.0.1", 8080, 1), "running", 12000, 1024, 1024, false, 0, 0, -1, 9000,
+                7976);
 
         CacheHitComparisonResult result =
                 comparisonService.captureComparison(feedback.requestId(), RoleType.valueOf(feedback.role())).apply(feedback).get(1, TimeUnit.SECONDS);
@@ -249,7 +241,7 @@ class LocalStandbyComparisonServiceTest {
 
     private static CacheHitFeedback feedback(WorkerStatus worker, long inputTokens) {
         return new CacheHitFeedback("cache_hit_comparison", "request-1", "KVCM", "PREFILL", "default",
-                worker.getWorkerIdentity(), "FINISHED", inputTokens, 2192, -1, false, 0, 0, 0, -1);
+                worker.getWorkerIdentity(), "FINISHED", inputTokens, 2192, -1, false, 0, 0, -1, 0, -1);
     }
 
     private ModelMetaConfig modelMetaConfig() {

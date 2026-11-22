@@ -87,6 +87,20 @@ Prometheus 导出为 `flexlb_app_cache_affinity_over_cap_ms_seconds` 的分布�
 `ip:port@engineIndex` 逻辑身份；`prefill_worker_status` 同时记录 `workerIp` 和 `engineIndex`。
 首次有效的 RUNNING 命中反馈或 FINISHED 反馈触发统一上报：理论命中、策略所选命中、
 KVCM 预测与本地/global 匹配、Local Standby 预测，以及实际命中。
+
+比较**选中节点的本地命中率**与 **KVCM 返回节点中的最高本地命中率**时，按相同角色和时间窗口取 Counter 增量之和：
+
+| 指标 | 每条请求累计的 token 数 |
+|---|---|
+| `app.cache.kvcm.selected.local.match.tokens` | 最终选中节点的 KVCM 本地命中 |
+| `app.cache.kvcm.selected.global.match.tokens` | 最终选中节点的 KVCM global 命中（已包含本地命中） |
+| `app.cache.kvcm.best.local.match.tokens` | 同一次 KVCM 查询中单个节点最多能在本地命中的 token 数，最多计入本次输入长度 |
+| `app.cache.kvcm.selected.input.tokens` | 同一批反馈样本的输入 token 数，作为上述三个指标的共同分母 |
+
+逐请求对照时，看 `cache_hit_comparison` PV 的 `kvcmPrediction.localPredictionTokens`（选中节点）和 `kvcmPrediction.bestLocalMatchTokens`（本次查询最高值）。`bestLocalMatchTokens` 为 `0` 表示没有本地命中，为 `-1` 表示没有可用的 KVCM 本地最高值。
+
+例如输入 1,000 tokens，两个节点的 global 命中都是 900，但本地命中分别是 400 和 800。选中前者时，选中节点的本地命中率是 40%，最佳本地命中率是 80%。跨请求先汇总 token 再相除；这个差距反映本地缓存利用机会，不能单独归因于 `OVER_CAP`。
+
 每项独立判断是否可用；有效的空匹配产生 0，查询失败不产生预测数据点。
 Engine 的 `prefixLengthValid` 表示实际命中值有效；有效的 0 表示零命中。
 FINISHED 缺少有效实际值时仍上报可用的理论和预测数据，实际值及其输入 Tokens Counter 不上报。

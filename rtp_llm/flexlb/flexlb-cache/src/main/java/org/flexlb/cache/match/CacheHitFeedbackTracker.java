@@ -72,9 +72,10 @@ public final class CacheHitFeedbackTracker {
         boolean kvcm = result.source() == CacheMatchSource.KVCM && result.querySucceeded();
         CacheHitFeedback seed = new CacheHitFeedback("cache_hit_comparison", requestId, result.source().name(),
                 role.name(), group, worker.getWorkerIdentity(), null, inputTokens, blockSize,
-                result.querySucceeded() ? predictedHitTokens : -1,
-                kvcm, match == null ? 0 : CacheMatchResult.matchedTokens(match.localMatchBlocks(), blockSize, inputTokens),
-                match == null ? 0 : CacheMatchResult.matchedTokens(match.globalMatchBlocks(), blockSize, inputTokens), 0, 0);
+                result.querySucceeded() ? predictedHitTokens : -1, kvcm,
+                match == null ? 0 : CacheMatchResult.matchedTokens(match.localMatchBlocks(), blockSize, inputTokens),
+                match == null ? 0 : CacheMatchResult.matchedTokens(match.globalMatchBlocks(), blockSize, inputTokens),
+                result.bestLocalMatchTokens(inputTokens), 0, 0);
         predictions.put(new Key(worker.getGenerationId(), role, requestId), new Prediction(seed,
                 comparisonService.captureComparison(requestId, role), theoryHitTokens));
     }
@@ -137,10 +138,11 @@ public final class CacheHitFeedbackTracker {
                 CacheHitFeedback feedback = new CacheHitFeedback(seed.eventType(), seed.requestId(),
                         seed.cacheMatchSource(), seed.role(), seed.group(), seed.workerIdentity(), state,
                         seed.inputTokens(), seed.blockSize(), seed.predictedHitTokens(), seed.kvcmMatchAvailable(),
-                        seed.kvcmLocalMatchTokens(), seed.kvcmGlobalMatchTokens(),
+                        seed.kvcmLocalMatchTokens(), seed.kvcmGlobalMatchTokens(), seed.kvcmBestLocalMatchTokens(),
                         actualAvailable ? task.prefixLength() : -1,
                         actualAvailable && seed.predictedHitTokens() >= 0
-                                ? task.prefixLength() - seed.predictedHitTokens() : -1);
+                                ? task.prefixLength() - seed.predictedHitTokens()
+                                : -1);
                 results.add(comparison.apply(feedback).thenCombine(
                         prediction.theoryHitTokens.copy().completeOnTimeout(null, 1, TimeUnit.SECONDS),
                         CacheHitComparisonResult::withTheoryHitTokens));

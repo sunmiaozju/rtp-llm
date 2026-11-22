@@ -136,11 +136,11 @@ public class LocalStandbyComparisonService {
         CacheMatchSource source = CacheMatchSource.valueOf(feedback.cacheMatchSource());
         CacheHitComparisonResult.CachePrediction kvcmPrediction =
                 source == CacheMatchSource.KVCM && selectedSourcePrediction != null
-                ? new CacheHitComparisonResult.CachePrediction(
-                        selectedSourcePrediction.predictedHitTokens(),
-                        feedback.kvcmMatchAvailable() ? feedback.kvcmLocalMatchTokens() : -1,
-                        feedback.kvcmMatchAvailable() ? feedback.kvcmGlobalMatchTokens() : -1)
-                : null;
+                        ? new CacheHitComparisonResult.CachePrediction(selectedSourcePrediction.predictedHitTokens(),
+                                feedback.kvcmMatchAvailable() ? feedback.kvcmLocalMatchTokens() : -1,
+                                feedback.kvcmMatchAvailable() ? feedback.kvcmGlobalMatchTokens() : -1,
+                                feedback.kvcmBestLocalMatchTokens())
+                        : null;
         CacheHitComparisonResult.CachePrediction localSyncPrediction = source == CacheMatchSource.LOCAL_SYNC
                 ? selectedSourcePrediction
                 : null;
