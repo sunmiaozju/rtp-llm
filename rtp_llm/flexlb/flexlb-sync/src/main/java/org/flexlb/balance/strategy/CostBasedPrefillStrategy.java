@@ -83,28 +83,27 @@ public class CostBasedPrefillStrategy {
                                           RequestWorkLoadEstimateResult inputs,
                                           ToLongFunction<PrefillCandidateWork> ttft) {
         List<PrefillCandidateWork> preparedCandidates = inputs.candidates();
-        PrefillCandidateSet candidates = new PrefillCandidateSet();
-        candidates.reset(preparedCandidates.size());
+        PrefillCandidateSet candidates = new PrefillCandidateSet(preparedCandidates.size());
         for (PrefillCandidateWork candidate : preparedCandidates) {
             long estimatedMs = ttft.applyAsLong(candidate);
-            candidates.addCandidate(candidate.address(), candidate.endpoint(), estimatedMs, candidate.predictedMs(),
-                    candidate.cacheHitTokens(), candidate.localHitTokens(),
-                    candidate.endpoint().prefillQueue().statusVersion());
+            candidates.addCandidate(new PrefillCandidateInfo(candidate.address(), candidate.endpoint(), estimatedMs,
+                    candidate.predictedMs(), candidate.cacheHitTokens(), candidate.localHitTokens(),
+                    candidate.endpoint().prefillQueue().statusVersion()));
         }
         CacheMatchResult cacheMatch = inputs.cacheMatch();
         int selectedIndex = selectPrefillIndex(context, role, group, cacheMatch, candidates);
-        PrefillEndpoint endpoint = candidates.endpoint(selectedIndex);
-        long hitCacheTokens = candidates.cacheHit(selectedIndex);
-        ServerStatus status = buildPrefillStatus(endpoint, role, context.getRequestId(),
-                candidates.estimatedTtftMs(selectedIndex), hitCacheTokens);
+        PrefillCandidateInfo selected = candidates.get(selectedIndex);
+        PrefillEndpoint endpoint = selected.endpoint();
+        long hitCacheTokens = selected.effectiveCacheHitTokens();
+        ServerStatus status =
+                buildPrefillStatus(endpoint, role, context.getRequestId(), selected.estimatedTtftMs(), hitCacheTokens);
 
-        recordSelectedPrefill(context, role, group, null, cacheMatch, candidates, selectedIndex);
-        recordV2PrefillMetrics(context, candidates, selectedIndex);
+        recordSelectedPrefill(context, role, group, null, cacheMatch, candidates, selected);
+        recordV2PrefillMetrics(context, candidates, selected);
 
         long seqLen = context.getRequest().getSeqLen();
         return new SelectedPrefill(endpoint, status, Math.max(0L, Math.min(seqLen, hitCacheTokens)),
-                candidates.prefillMs(selectedIndex),
-                preparedCandidates.get(selectedIndex).estimatedPrefillComputeTokens());
+                selected.prefillMs(), preparedCandidates.get(selectedIndex).estimatedPrefillComputeTokens());
     }
 
     private int selectPrefillIndex(BalanceContext context,
@@ -115,14 +114,15 @@ public class CostBasedPrefillStrategy {
         long seqLen = context.getRequest().getSeqLen();
         int selectedIndex =
                 selectBestCandidate(candidates, candidates.minimumTtftRank, role, group, seqLen, context.getConfig());
-        if ("NO_CACHE_ANYWHERE".equals(candidates.affinityDecision())) {
+        if (candidates.affinityDecision() == CacheAffinityDecision.NO_CACHE_ANYWHERE) {
             if (seqLen < cacheMatch.blockSize()) {
-                candidates.recordAffinityDecision("NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE");
+                candidates.recordAffinityDecision(CacheAffinityDecision.NO_CACHE_ANYWHERE_BELOW_BLOCK_SIZE);
             } else if (cacheMatch.source() == CacheMatchSource.KVCM && cacheMatch.querySucceeded()) {
                 boolean kvcmHasHit =
                         cacheMatch.hostMatches().values().stream().anyMatch(match -> match.globalMatchBlocks() > 0L);
-                candidates.recordAffinityDecision(
-                        kvcmHasHit ? "NO_CACHE_ANYWHERE_BUT_KVCM_HAS_HIT" : "NO_CACHE_ANYWHERE_KVCM");
+                candidates.recordAffinityDecision(kvcmHasHit
+                        ? CacheAffinityDecision.NO_CACHE_ANYWHERE_BUT_KVCM_HAS_HIT
+                        : CacheAffinityDecision.NO_CACHE_ANYWHERE_KVCM);
             }
         }
         return selectedIndex;
@@ -134,9 +134,9 @@ public class CostBasedPrefillStrategy {
                                        Integer totalWorkerCount,
                                        CacheMatchResult cacheMatchResult,
                                        PrefillCandidateSet candidates,
-                                       int selectedIndex) {
-        PrefillEndpoint best = candidates.endpoint(selectedIndex);
-        long bestCacheHit = candidates.cacheHit(selectedIndex);
+                                       PrefillCandidateInfo selected) {
+        PrefillEndpoint best = selected.endpoint();
+        long bestCacheHit = selected.effectiveCacheHitTokens();
         if (balanceContext.selectionReason(roleType) == null) {
             balanceContext.recordSelectionReason(roleType, "COST_BASED");
         }
@@ -144,24 +144,25 @@ public class CostBasedPrefillStrategy {
                 balanceContext.getRequest().getSeqLen(), bestCacheHit, cacheMatchResult,
                 balanceContext.getTheoryHitTokens());
         balanceContext.recordCacheSelection(roleType, best.getIp(), bestCacheHit);
-        recordDecision(balanceContext, roleType, group, totalWorkerCount, candidates, selectedIndex,
+        recordDecision(balanceContext, roleType, group, totalWorkerCount, candidates, selected,
                 balanceContext.selectionReason(roleType), cacheMatchResult);
-        long selectedTtft = candidates.estimatedTtftMs(selectedIndex);
+        long selectedTtft = selected.estimatedTtftMs();
         if (selectedTtft >= 0L) {
-            reportSelectedEstimates(roleType, best, balanceContext.getConfig(), selectedTtft,
-                    candidates.prefillMs(selectedIndex));
+            reportSelectedEstimates(roleType, best, balanceContext.getConfig(), selectedTtft, selected.prefillMs());
         }
     }
 
-    private void recordV2PrefillMetrics(BalanceContext context, PrefillCandidateSet candidates, int selectedIndex) {
-        String decision = candidates.affinityDecision();
-        Long overCapMs = "OVER_CAP".equals(decision) ? candidates.cacheAffinity().overCapMs() : null;
-        if (decision != null && candidates.endpoint(selectedIndex).getStatus().getMetricIpPort() == null) {
+    private void recordV2PrefillMetrics(BalanceContext context,
+                                        PrefillCandidateSet candidates,
+                                        PrefillCandidateInfo selected) {
+        CacheAffinityDecision decision = candidates.affinityDecision();
+        Long overCapMs = decision == CacheAffinityDecision.OVER_CAP ? candidates.cacheAffinity().overCapMs() : null;
+        if (decision != null && selected.endpoint().getStatus().getMetricIpPort() == null) {
             decision = null;
         }
         context.getMetrics()
-                .setPrefillRouteMetrics(new PrefillRouteMetrics(candidates.cacheHit(selectedIndex),
-                        candidates.maximumCacheHit, decision, overCapMs));
+                .setPrefillRouteMetrics(new PrefillRouteMetrics(selected.effectiveCacheHitTokens(),
+                        candidates.maxEffectiveCacheHitTokens, decision == null ? null : decision.name(), overCapMs));
     }
 
     private void recordDecision(BalanceContext context,
@@ -169,25 +170,24 @@ public class CostBasedPrefillStrategy {
                                 String group,
                                 Integer totalWorkerCount,
                                 PrefillCandidateSet candidates,
-                                int selectedIndex,
+                                PrefillCandidateInfo selected,
                                 String reason,
                                 CacheMatchResult cacheMatchResult) {
         List<RoutingDecision.Candidate> snapshot = new ArrayList<>(Math.min(5, candidates.size()));
-        if (selectedIndex >= 0) {
-            snapshot.add(snapshotCandidate(candidates, selectedIndex, true));
-        }
+        snapshot.add(snapshotCandidate(selected, true));
         for (int index = 0; index < candidates.size() && snapshot.size() < 5; index++) {
-            if (index != selectedIndex) {
-                snapshot.add(snapshotCandidate(candidates, index, false));
+            PrefillCandidateInfo candidate = candidates.get(index);
+            if (candidate != selected) {
+                snapshot.add(snapshotCandidate(candidate, false));
             }
         }
+        CacheAffinityDecision decision = candidates.affinityDecision();
         context.recordRoutingDecision(
                 new RoutingDecision(role, group, "CostBasedPrefill", reason == null ? "COST_BASED" : reason,
-                        selectedIndex < 0 ? null : candidates.affinityDecision(), candidates.cacheAffinity(),
+                        decision == null ? null : decision.name(), candidates.cacheAffinity(),
                         kvcmMatches(cacheMatchResult, context.getRequest().getSeqLen(),
-                                selectedIndex < 0 ? null : candidates.endpoint(selectedIndex).getStatus()),
-                        System.currentTimeMillis(), context.routingAttempt(role),
-                        selectedIndex < 0 ? null : candidates.endpointAddress(selectedIndex), totalWorkerCount,
+                                selected.endpoint().getStatus()),
+                        System.currentTimeMillis(), context.routingAttempt(role), selected.address(), totalWorkerCount,
                         candidates.size(), candidates.size() > snapshot.size(), Map.of(), snapshot, null));
     }
 
@@ -231,22 +231,12 @@ public class CostBasedPrefillStrategy {
         return new RoutingDecision.KvcmMatches(result.hostMatches().size(), topHits, selectedHitTokens);
     }
 
-    private static RoutingDecision.Candidate snapshotCandidate(
-            PrefillCandidateSet candidates, int index, boolean selected) {
-        long estimatedTtftMs = candidates.estimatedTtftMs(index);
-        return new RoutingDecision.Candidate(
-                candidates.endpointAddress(index),
-                selected,
-                estimatedTtftMs < 0L ? null : estimatedTtftMs,
-                null,
-                candidates.prefillMs(index),
-                candidates.cacheHit(index),
-                0L,
-                null,
-                null,
-                null,
-                estimatedTtftMs < 0L ? "UNMODELED_ENGINE_WORK" : "MODELED",
-                candidates.ownershipVersion(index));
+    private static RoutingDecision.Candidate snapshotCandidate(PrefillCandidateInfo candidate, boolean selected) {
+        long estimatedTtftMs = candidate.estimatedTtftMs();
+        return new RoutingDecision.Candidate(candidate.address(), selected,
+                estimatedTtftMs < 0L ? null : estimatedTtftMs, null, candidate.prefillMs(),
+                candidate.effectiveCacheHitTokens(), 0L, null, null, null,
+                estimatedTtftMs < 0L ? "UNMODELED_ENGINE_WORK" : "MODELED", candidate.statusVersion());
     }
 
     /**
@@ -262,29 +252,30 @@ public class CostBasedPrefillStrategy {
                 .getRoles().getPrefill().getCacheAffinity();
         BitSet preferredCandidates = new BitSet(survivors.size());
         long affinityCutoffMs = 0L;
-        String affinityReason = null;
+        CacheAffinityDecision affinityReason = null;
         if (cacheAffinity != null && survivors.hasKnownTtft) {
             long referenceHitTokens = 0L;
-            long maxHitTokens = survivors.maximumCacheHit;
+            long maxHitTokens = survivors.maxEffectiveCacheHitTokens;
             long maxExtraTtftMs = Math.max(0L, cacheAffinity.getMaxExtraTtftMs());
             double minimumHitRate = normalizedHitRate(cacheAffinity.getMinPrefixHitPercent());
-            int fastestHigherHitIndex = -1;
+            PrefillCandidateInfo fastestHigherHit = null;
             affinityCutoffMs = saturatingAdd(
                     minEstimatedTtftMs,
                     maxExtraTtftMs);
-            affinityReason = maxHitTokens > 0L ? "FASTEST_IS_CACHE_BEST" : "NO_CACHE_ANYWHERE";
+            affinityReason = maxHitTokens > 0L
+                    ? CacheAffinityDecision.FASTEST_IS_CACHE_BEST
+                    : CacheAffinityDecision.NO_CACHE_ANYWHERE;
             for (int i = 0; i < survivors.size(); i++) {
-                if (survivors.ttftRank(i)
-                        == minEstimatedTtftMs) {
-                    referenceHitTokens = Math.max(
-                            referenceHitTokens,
-                            survivors.cacheHit(i));
+                PrefillCandidateInfo candidate = survivors.get(i);
+                if (candidate.ttftRank() == minEstimatedTtftMs) {
+                    referenceHitTokens = Math.max(referenceHitTokens, candidate.effectiveCacheHitTokens());
                 }
             }
             if (maxHitTokens > referenceHitTokens) {
                 boolean minimumHitRateMet = false;
                 for (int i = 0; i < survivors.size(); i++) {
-                    long hitTokens = survivors.cacheHit(i);
+                    PrefillCandidateInfo candidate = survivors.get(i);
+                    long hitTokens = candidate.effectiveCacheHitTokens();
                     if (hitTokens <= referenceHitTokens
                             || minimumHitRate > 0.0
                                     && (seqLen <= 0L
@@ -295,28 +286,28 @@ public class CostBasedPrefillStrategy {
                         continue;
                     }
                     minimumHitRateMet = true;
-                    if (survivors.estimatedTtftMs(i) >= 0L
-                            && (fastestHigherHitIndex < 0
-                                || survivors.ttftRank(i) < survivors.ttftRank(fastestHigherHitIndex))) {
-                        fastestHigherHitIndex = i;
+                    if (candidate.estimatedTtftMs() < 0L) {
+                        continue;
                     }
-                    if (survivors.estimatedTtftMs(i) >= 0L && survivors.ttftRank(i) <= affinityCutoffMs) {
+                    if (fastestHigherHit == null || candidate.estimatedTtftMs() < fastestHigherHit.estimatedTtftMs()) {
+                        fastestHigherHit = candidate;
+                    }
+                    if (candidate.estimatedTtftMs() <= affinityCutoffMs) {
                         preferredCandidates.set(i);
                     }
                 }
                 affinityReason = !preferredCandidates.isEmpty()
-                        ? "CACHE_LEADER"
-                        : minimumHitRateMet ? "OVER_CAP" : "LOW_CACHE_HIT";
+                        ? CacheAffinityDecision.CACHE_LEADER
+                        : minimumHitRateMet ? CacheAffinityDecision.OVER_CAP : CacheAffinityDecision.LOW_CACHE_HIT;
             }
-            Long fastestHigherHitTtftMs = fastestHigherHitIndex < 0
-                    ? null : survivors.estimatedTtftMs(fastestHigherHitIndex);
-            survivors.recordCacheAffinity(new RoutingDecision.CacheAffinity(
-                    minEstimatedTtftMs, maxExtraTtftMs, minimumHitRate, affinityCutoffMs,
-                    fastestHigherHitIndex < 0 ? null : survivors.endpointAddress(fastestHigherHitIndex),
+            Long fastestHigherHitTtftMs = fastestHigherHit == null ? null : fastestHigherHit.estimatedTtftMs();
+            survivors.recordCacheAffinity(new RoutingDecision.CacheAffinity(minEstimatedTtftMs, maxExtraTtftMs,
+                    minimumHitRate, affinityCutoffMs, fastestHigherHit == null ? null : fastestHigherHit.address(),
                     fastestHigherHitTtftMs,
-                    fastestHigherHitIndex < 0 ? null : survivors.cacheHit(fastestHigherHitIndex),
-                    "OVER_CAP".equals(affinityReason) && fastestHigherHitTtftMs != null
-                            ? fastestHigherHitTtftMs - affinityCutoffMs : null));
+                    fastestHigherHit == null ? null : fastestHigherHit.effectiveCacheHitTokens(),
+                    affinityReason == CacheAffinityDecision.OVER_CAP && fastestHigherHitTtftMs != null
+                            ? fastestHigherHitTtftMs - affinityCutoffMs
+                            : null));
         }
 
         int selectedIndex;
@@ -330,19 +321,13 @@ public class CostBasedPrefillStrategy {
         if (affinityReason != null) {
             survivors.recordAffinityDecision(affinityReason);
             if (Logger.isDebugEnabled()) {
+                PrefillCandidateInfo selected = survivors.get(selectedIndex);
                 Logger.debug(
                         "CostBasedPrefill cache-affinity decision - role: {}, group: {}, "
                                 + "selected: {}, minEstimatedTtftMs: {}, "
-                                + "selectedEstimatedTtftMs: {}, ttftCutoffMs: {}, "
-                                + "hitTokens: {}, reason: {}",
-                        roleType,
-                        group,
-                        survivors.endpointAddress(selectedIndex),
-                        minEstimatedTtftMs,
-                        survivors.ttftRank(selectedIndex),
-                        affinityCutoffMs,
-                        survivors.cacheHit(selectedIndex),
-                        affinityReason);
+                                + "selectedEstimatedTtftMs: {}, ttftCutoffMs: {}, " + "hitTokens: {}, reason: {}",
+                        roleType, group, selected.address(), minEstimatedTtftMs, selected.ttftRank(), affinityCutoffMs,
+                        selected.effectiveCacheHitTokens(), affinityReason);
             }
         }
         return selectedIndex;
@@ -365,11 +350,12 @@ public class CostBasedPrefillStrategy {
                                         long minimumTtftMs,
                                         RoleType role,
                                         String group) {
-        return tieRotation.next(role, group, survivors.size(),
-                i -> survivors.ttftRank(i) == minimumTtftMs
-                        && (!survivors.hasKnownTtft || (survivors.estimatedTtftMs(i) >= 0L
-                                && survivors.localHitTokens(i) == survivors.maxLocalHitTokensAtMinTtft)),
-                survivors::endpointAddress);
+        return tieRotation.next(role, group, survivors.size(), i -> {
+            PrefillCandidateInfo candidate = survivors.get(i);
+            return candidate.ttftRank() == minimumTtftMs
+                    && (!survivors.hasKnownTtft || (candidate.estimatedTtftMs() >= 0L
+                            && candidate.localHitTokens() == survivors.maxLocalHitTokensAtMinTtft));
+        }, i -> survivors.get(i).address());
     }
 
     /**
@@ -387,9 +373,10 @@ public class CostBasedPrefillStrategy {
             if (!contains(preferredCandidates, candidateIndex)) {
                 continue;
             }
-            long hit = survivors.cacheHit(candidateIndex);
-            long estimatedTtftMs = survivors.ttftRank(candidateIndex);
-            long localHitTokens = survivors.localHitTokens(candidateIndex);
+            PrefillCandidateInfo candidate = survivors.get(candidateIndex);
+            long hit = candidate.effectiveCacheHitTokens();
+            long estimatedTtftMs = candidate.ttftRank();
+            long localHitTokens = candidate.localHitTokens();
             if (hit > bestHit || hit == bestHit && (estimatedTtftMs < bestEstimatedTtftMs
                     || estimatedTtftMs == bestEstimatedTtftMs && localHitTokens > bestLocalHitTokens)) {
                 bestHit = hit;
@@ -400,11 +387,11 @@ public class CostBasedPrefillStrategy {
         long selectedHit = bestHit;
         long selectedTtft = bestEstimatedTtftMs;
         long selectedLocalHitTokens = bestLocalHitTokens;
-        return tieRotation.next(role, group, survivors.size(),
-                i -> contains(preferredCandidates, i) && survivors.cacheHit(i) == selectedHit
-                        && survivors.ttftRank(i) == selectedTtft
-                        && survivors.localHitTokens(i) == selectedLocalHitTokens,
-                survivors::endpointAddress);
+        return tieRotation.next(role, group, survivors.size(), i -> {
+            PrefillCandidateInfo candidate = survivors.get(i);
+            return contains(preferredCandidates, i) && candidate.effectiveCacheHitTokens() == selectedHit
+                    && candidate.ttftRank() == selectedTtft && candidate.localHitTokens() == selectedLocalHitTokens;
+        }, i -> survivors.get(i).address());
     }
 
     private static boolean contains(BitSet candidates, int index) {

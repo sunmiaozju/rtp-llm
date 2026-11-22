@@ -48,6 +48,7 @@ class PreparedPrefillSelectionTest {
     private final CacheAwareService cache = mock(CacheAwareService.class);
     private final EndpointRegistry registry;
     private final PrefillQueueRegistry queues;
+    private final CostBasedPrefillStrategy strategy;
     private final PrefillPicker picker;
     private final PrefillEndpoint first;
     private final PrefillEndpoint second;
@@ -111,6 +112,64 @@ class PreparedPrefillSelectionTest {
         assertSame(second, b.selectedPrefill().endpoint());
         assertEquals(15L, b.selectedPrefill().serverStatus().getPrefillTime());
         verify(cache, times(2)).findMatchingEngines(any());
+    }
+
+    @Test
+    void interleavedSelectionsKeepEachRequestsWinnerAndTelemetry() {
+        Request a = request("1");
+        Request b = request("2");
+        a.ctx().getRequest().setSeqLen(1_000L);
+        b.ctx().getRequest().setSeqLen(1_000L);
+        when(cache.findMatchingEngines(any())).thenReturn(
+                new CacheMatchResult(Map.of(first.ipPort(), HostCacheMatch.local(2L)), CacheMatchSource.KVCM, 0L, 100L),
+                new CacheMatchResult(Map.of(second.ipPort(), HostCacheMatch.local(8L)), CacheMatchSource.KVCM, 0L,
+                        100L));
+        var aInputs = strategy.prepare(a.ctx(), RoleType.PREFILL, "g");
+        var bInputs = strategy.prepare(b.ctx(), RoleType.PREFILL, "g");
+
+        var aChoice = strategy.selectPrepared(a.ctx(), RoleType.PREFILL, "g", aInputs, candidate -> {
+            // Score B after A has scored one worker but before A picks its winner.
+            if (candidate == aInputs.candidates().getLast()) {
+                var bChoice = strategy.selectPrepared(b.ctx(), RoleType.PREFILL, "g", bInputs, ignored -> 30L);
+                assertSame(second, bChoice.endpoint());
+                assertEquals(800L, bChoice.hitCacheTokens());
+            }
+            return 10L;
+        });
+
+        assertSame(first, aChoice.endpoint());
+        assertEquals(200L, aChoice.hitCacheTokens());
+        var aDecision = a.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
+        var bDecision = b.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
+        assertEquals("10.0.0.1:8080", aDecision.selectedEndpoint());
+        assertEquals("10.0.0.2:8080", bDecision.selectedEndpoint());
+        assertEquals(2, aDecision.candidateWorkerCount());
+        assertEquals(2, bDecision.candidateWorkerCount());
+        assertEquals(10L, aDecision.candidates().getFirst().estimatedTtftMs());
+        assertEquals(30L, bDecision.candidates().getFirst().estimatedTtftMs());
+        assertEquals(200L, a.ctx().getMetrics().getPrefillRouteMetrics().candidateMaxHitTokens());
+        assertEquals(800L, b.ctx().getMetrics().getPrefillRouteMetrics().candidateMaxHitTokens());
+        verify(cache, times(2)).findMatchingEngines(any());
+    }
+
+    @Test
+    void samePreparedInputsChooseAgainUsingUpdatedTtft() {
+        Request request = request("1");
+        var inputs = strategy.prepare(request.ctx(), RoleType.PREFILL, "g");
+
+        var initial = strategy.selectPrepared(request.ctx(), RoleType.PREFILL, "g", inputs,
+                candidate -> candidate.endpoint() == first ? 10L : 15L);
+        assertSame(first, initial.endpoint());
+
+        var retried = strategy.selectPrepared(request.ctx(), RoleType.PREFILL, "g", inputs,
+                candidate -> candidate.endpoint() == first ? 50L : 20L);
+        assertSame(second, retried.endpoint());
+        assertEquals(20L, retried.serverStatus().getPrefillTime());
+        var decision = request.ctx().getRoutingTelemetry().routingDecisions().get(RoleType.PREFILL);
+        assertEquals("10.0.0.2:8080", decision.selectedEndpoint());
+        assertEquals(20L, decision.candidates().getFirst().estimatedTtftMs());
+        assertEquals(50L, decision.candidates().getLast().estimatedTtftMs());
+        verify(cache).findMatchingEngines(any());
     }
 
     @Test

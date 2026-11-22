@@ -1,71 +1,77 @@
 package org.flexlb.balance.strategy;
 
-import org.flexlb.balance.endpoint.PrefillEndpoint;
 import org.flexlb.dao.pv.RoutingDecision;
 
-import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
 
-/** Reusable columns for modeled Prefill candidates from one fleet snapshot. */
+/**
+ * 一次 Prefill 选路的候选列表和评分统计。同一请求再次选路时也会新建一份。
+ */
 final class PrefillCandidateSet {
 
-    private static final int INITIAL_CAPACITY = 16;
-    private String[] endpointAddresses = new String[0];
-    private PrefillEndpoint[] endpoints = new PrefillEndpoint[0];
-    private long[] estimatedTtftMs = new long[0];
-    private long[] incomingPrefillMs = new long[0];
-    private long[] cacheHitTokens = new long[0];
-    private long[] localHitTokens = new long[0];
-    private long[] ownershipVersions = new long[0];
-    private int size;
-    long minimumTtftRank;
+    /**
+     * 本次参与评分的全部候选，按加入顺序保存；轮询和路由快照均使用这份列表。
+     */
+    private final List<PrefillCandidateInfo> candidates;
+
+    /**
+     * 已知 TTFT 中的最小值（毫秒）；尚无已知估算时为 {@link Long#MAX_VALUE}。
+     */
+    long minimumTtftRank = Long.MAX_VALUE;
+
+    /**
+     * 仅在达到最低已知 TTFT 的候选中统计的最大本地命中 token 数；遇到更低的 TTFT 时重新计数。
+     */
     long maxLocalHitTokensAtMinTtft;
+
+    /**
+     * 是否有候选给出了非负 TTFT，用于区分没有估算和估算值恰为 {@link Long#MAX_VALUE}。
+     */
     boolean hasKnownTtft;
-    long maximumCacheHit;
-    private String affinityDecision;
+
+    /**
+     * 全部候选中最高的有效缓存命中 token 数，包括 TTFT 未知的候选。
+     */
+    long maxEffectiveCacheHitTokens;
+
+    /**
+     * 缓存亲和选路的结果原因，例如 CACHE_LEADER 或 OVER_CAP；未评估缓存亲和时为 null。
+     */
+    private CacheAffinityDecision affinityDecision;
+
+    /**
+     * 本次缓存亲和判断使用的 TTFT 基准、门槛和更高命中节点的比较结果；未评估时为 null。
+     */
     private RoutingDecision.CacheAffinity cacheAffinity;
 
-    void reset(int expectedCapacity) {
-        Arrays.fill(endpointAddresses, 0, size, null);
-        Arrays.fill(endpoints, 0, size, null);
-        ensureCapacityForReset(expectedCapacity);
-        size = 0;
-        minimumTtftRank = Long.MAX_VALUE;
-        maxLocalHitTokensAtMinTtft = 0L;
-        hasKnownTtft = false;
-        maximumCacheHit = 0L;
-        affinityDecision = null;
-        cacheAffinity = null;
+    PrefillCandidateSet(int expectedSize) {
+        candidates = new ArrayList<>(expectedSize);
     }
 
-    void addCandidate(String address,
-                      PrefillEndpoint endpoint,
-                      long estimatedMs,
-                      long incomingMs,
-                      long effectiveHitTokens,
-                      long localHitTokens,
-                      long ownershipVersion) {
-        endpointAddresses[size] = address;
-        endpoints[size] = endpoint;
-        estimatedTtftMs[size] = estimatedMs;
-        incomingPrefillMs[size] = incomingMs;
-        cacheHitTokens[size] = effectiveHitTokens;
-        this.localHitTokens[size] = localHitTokens;
-        ownershipVersions[size] = ownershipVersion;
+    void addCandidate(PrefillCandidateInfo candidate) {
+        candidates.add(candidate);
+        long estimatedMs = candidate.estimatedTtftMs();
         if (estimatedMs >= 0L) {
             if (!hasKnownTtft || estimatedMs < minimumTtftRank) {
                 minimumTtftRank = estimatedMs;
-                maxLocalHitTokensAtMinTtft = localHitTokens;
+                maxLocalHitTokensAtMinTtft = candidate.localHitTokens();
             } else if (estimatedMs == minimumTtftRank) {
-                maxLocalHitTokensAtMinTtft = Math.max(maxLocalHitTokensAtMinTtft, localHitTokens);
+                maxLocalHitTokensAtMinTtft = Math.max(maxLocalHitTokensAtMinTtft, candidate.localHitTokens());
             }
             hasKnownTtft = true;
         }
-        maximumCacheHit = Math.max(maximumCacheHit, cacheHitTokens[size]);
-        size++;
+        maxEffectiveCacheHitTokens = Math.max(maxEffectiveCacheHitTokens, candidate.effectiveCacheHitTokens());
     }
 
-    String affinityDecision() { return affinityDecision; }
-    void recordAffinityDecision(String decision) { affinityDecision = decision; }
+    CacheAffinityDecision affinityDecision() {
+        return affinityDecision;
+    }
+
+    void recordAffinityDecision(CacheAffinityDecision decision) {
+        affinityDecision = decision;
+    }
+
     RoutingDecision.CacheAffinity cacheAffinity() {
         return cacheAffinity;
     }
@@ -73,33 +79,12 @@ final class PrefillCandidateSet {
     void recordCacheAffinity(RoutingDecision.CacheAffinity details) {
         cacheAffinity = details;
     }
-    PrefillEndpoint endpoint(int index) { return endpoints[index]; }
-    String endpointAddress(int index) { return endpointAddresses[index]; }
-    long cacheHit(int index) { return cacheHitTokens[index]; }
 
-    long localHitTokens(int index) {
-        return localHitTokens[index];
+    PrefillCandidateInfo get(int index) {
+        return candidates.get(index);
     }
 
-    long ttftRank(int index) { return estimatedTtftMs[index] < 0L ? Long.MAX_VALUE : estimatedTtftMs[index]; }
-    long estimatedTtftMs(int index) { return estimatedTtftMs[index]; }
-    long prefillMs(int index) { return incomingPrefillMs[index]; }
-    long ownershipVersion(int index) { return ownershipVersions[index]; }
-    int size() { return size; }
-
-    private void ensureCapacityForReset(int expectedCapacity) {
-        if (endpoints.length >= expectedCapacity) {
-            return;
-        }
-        int capacity = Math.max(expectedCapacity,
-                Math.max(INITIAL_CAPACITY, endpoints.length << 1));
-        endpointAddresses = new String[capacity];
-        endpoints = new PrefillEndpoint[capacity];
-        estimatedTtftMs = new long[capacity];
-        incomingPrefillMs = new long[capacity];
-        cacheHitTokens = new long[capacity];
-        localHitTokens = new long[capacity];
-        ownershipVersions = new long[capacity];
+    int size() {
+        return candidates.size();
     }
-
 }

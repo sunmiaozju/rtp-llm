@@ -606,11 +606,9 @@ class CostBasedPrefillSelectionMetricTest {
         assertEquals(0, strategy.selectBestCandidate(
                 candidates, 100L, RoleType.PREFILL, null, 1_000L, config));
 
-        assertEquals("OVER_CAP", candidates.affinityDecision());
+        assertEquals(CacheAffinityDecision.OVER_CAP, candidates.affinityDecision());
         assertEquals("10.1.0.5:8080", candidates.cacheAffinity().fastestHigherHitEndpoint());
         assertEquals(20L, candidates.cacheAffinity().overCapMs());
-        candidates.reset(1);
-        assertTrue(candidates.cacheAffinity() == null);
     }
 
     @ParameterizedTest
@@ -633,7 +631,7 @@ class CostBasedPrefillSelectionMetricTest {
 
         strategy.selectBestCandidate(candidates, 100L, RoleType.PREFILL, null, 1_000L, config);
 
-        assertEquals("OVER_CAP", candidates.affinityDecision());
+        assertEquals(CacheAffinityDecision.OVER_CAP, candidates.affinityDecision());
         assertTrue(candidates.cacheAffinity().fastestHigherHitTtftMs() == null);
         assertTrue(candidates.cacheAffinity().overCapMs() == null);
     }
@@ -647,7 +645,7 @@ class CostBasedPrefillSelectionMetricTest {
 
         strategy.selectBestCandidate(candidates, 100L, RoleType.PREFILL, null, 1_000L, config);
 
-        assertEquals("CACHE_LEADER", candidates.affinityDecision());
+        assertEquals(CacheAffinityDecision.CACHE_LEADER, candidates.affinityDecision());
         assertEquals(Long.MAX_VALUE, candidates.cacheAffinity().ttftCutoffMs());
         assertTrue(candidates.cacheAffinity().overCapMs() == null);
     }
@@ -693,7 +691,7 @@ class CostBasedPrefillSelectionMetricTest {
 
         assertEquals(0, selectedIndex,
                 "equal cache hit must preserve the minimum-TTFT baseline");
-        assertEquals("FASTEST_IS_CACHE_BEST", candidates.affinityDecision());
+        assertEquals(CacheAffinityDecision.FASTEST_IS_CACHE_BEST, candidates.affinityDecision());
         verify(reporter, never()).reportCacheAffinityDecision(any(), anyString(), anyString());
     }
 
@@ -708,7 +706,7 @@ class CostBasedPrefillSelectionMetricTest {
                 candidates, 100L, RoleType.PREFILL, null, 1_000L, config);
 
         assertEquals(0, selectedIndex);
-        assertEquals("NO_CACHE_ANYWHERE", candidates.affinityDecision());
+        assertEquals(CacheAffinityDecision.NO_CACHE_ANYWHERE, candidates.affinityDecision());
     }
 
     @Test
@@ -722,7 +720,7 @@ class CostBasedPrefillSelectionMetricTest {
                 candidates, 100L, RoleType.PREFILL, null, 1_000L, config);
 
         assertEquals(1, selectedIndex);
-        assertEquals("CACHE_LEADER", candidates.affinityDecision());
+        assertEquals(CacheAffinityDecision.CACHE_LEADER, candidates.affinityDecision());
     }
 
     @Test
@@ -784,8 +782,7 @@ class CostBasedPrefillSelectionMetricTest {
 
     private PrefillCandidateSet candidates(long[] ttftMs, long[] hitTokens) {
         assertEquals(ttftMs.length, hitTokens.length);
-        PrefillCandidateSet candidates = new PrefillCandidateSet();
-        candidates.reset(ttftMs.length);
+        PrefillCandidateSet candidates = new PrefillCandidateSet(ttftMs.length);
         for (int i = 0; i < ttftMs.length; i++) {
             String ip = "10.1.0." + (i + 1);
             PrefillEndpoint endpoint = mock(PrefillEndpoint.class);
@@ -793,8 +790,8 @@ class CostBasedPrefillSelectionMetricTest {
             WorkerStatus status = mock(WorkerStatus.class);
             when(status.getMetricIpPort()).thenReturn(ip + ":8080");
             when(endpoint.getStatus()).thenReturn(status);
-            candidates.addCandidate(ip + ":8080", endpoint, ttftMs[i], Math.max(0L, ttftMs[i]), hitTokens[i], 0L,
-                    i + 1L);
+            candidates.addCandidate(new PrefillCandidateInfo(ip + ":8080", endpoint, ttftMs[i], Math.max(0L, ttftMs[i]),
+                    hitTokens[i], 0L, i + 1L));
         }
         return candidates;
     }
