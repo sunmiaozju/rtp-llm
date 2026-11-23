@@ -2,8 +2,6 @@ package org.flexlb.balance.strategy;
 
 import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
-import org.flexlb.balance.scheduler.decode.DecodeMode;
 import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.RejectReason;
@@ -11,10 +9,8 @@ import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.sync.status.WorkerDirectory;
-import org.flexlb.util.PriorityNormalizer;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -43,7 +39,6 @@ public class DecodeSelector {
     public PlacementResult<DecodeEndpoint, RoleType> select(BalanceContext context,
                                                             DecodeRequirement request,
                                                             String group) {
-        boolean immediate = request.mode() == DecodeMode.IMMEDIATE;
         for (int attempt = 0; attempt < MAX_SELECTION_ATTEMPTS; attempt++) {
             List<Map.Entry<String, DecodeEndpoint>> candidates = workerDirectory.getDecodeCandidates(group);
             if (candidates.isEmpty()) {
@@ -62,25 +57,20 @@ public class DecodeSelector {
                 if (totalKv > 0L && request.inputAndMaxOutputKvTokens() > kvBudget) {
                     availability = Availability.IMPOSSIBLE;
                 } else {
-                    availability = endpoint.hasCapacityForSelection(engine, request.capacity(), immediate,
-                            request.inputKvTokens(), request.inputAndMaxOutputKvTokens())
-                                    ? Availability.READY
-                                    : Availability.BUSY;
+                    availability = endpoint.hasCapacityForSelection(engine, request.capacity(), request.inputKvTokens(),
+                            request.inputAndMaxOutputKvTokens()) ? Availability.READY : Availability.BUSY;
                 }
                 availabilityByWorker[index] = availability;
                 allWorkersTooSmall &= availability == Availability.IMPOSSIBLE;
                 largestKvBudget = Math.max(largestKvBudget, kvBudget);
-                if (availability == Availability.READY || availability == Availability.BUSY
-                        && preferredAvailability == Availability.IMPOSSIBLE && !immediate) {
+                if (availability == Availability.READY
+                        || availability == Availability.BUSY && preferredAvailability == Availability.IMPOSSIBLE) {
                     preferredAvailability = availability;
                 }
             }
             if (allWorkersTooSmall) {
                 return PlacementResult.rejected(oversizedRequestFailure(
                         request.inputAndMaxOutputKvTokens(), largestKvBudget));
-            }
-            if (preferredAvailability == Availability.IMPOSSIBLE) {
-                return classifyCapacityFailure(request, candidates);
             }
             Availability selectedAvailability = preferredAvailability;
             double[] costByWorker = new double[candidates.size()];
@@ -127,83 +117,6 @@ public class DecodeSelector {
             }
         }
         return PlacementResult.blocked(RoleType.DECODE);
-    }
-
-    private PlacementResult<DecodeEndpoint, RoleType> classifyCapacityFailure(
-            DecodeRequirement request, List<Map.Entry<String, DecodeEndpoint>> candidates) {
-        Response failure = null;
-        boolean uniformFailure = true;
-        List<Map<String, Object>> evidence = new ArrayList<>(candidates.size());
-        for (Map.Entry<String, DecodeEndpoint> candidate : candidates) {
-            Response workerFailure;
-            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(candidate);
-            if (endpoint == null) {
-                workerFailure = Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
-            } else {
-                var snapshot = endpoint.admissionSummary();
-                evidence.add(Map.of("endpoint", candidate.getKey(), "version", snapshot.routing().admissionVersion(),
-                        "engineLoad", snapshot.routing().engineLoad(), "totalLoad", snapshot.routing().totalLoad(),
-                        "kvTotal", snapshot.routing().totalKv(), "kvAvailable",
-                        snapshot.routing().placementUsage().availableKvAfterReservations()));
-                workerFailure = classifyCapacityFailure(request, snapshot);
-            }
-            if (failure == null) {
-                failure = workerFailure;
-            } else if (failure.getCode() != workerFailure.getCode()
-                    || failure.getAdmissionRejectReason() != workerFailure.getAdmissionRejectReason()) {
-                uniformFailure = false;
-            }
-            if (workerFailure.getCode() == StrategyErrorType.ADMISSION_UNAVAILABLE.getErrorCode()) {
-                failure = workerFailure;
-            }
-        }
-        if (failure == null || !uniformFailure && failure.getCode() != StrategyErrorType.ADMISSION_UNAVAILABLE.getErrorCode()) {
-            failure = Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
-        }
-        return PlacementResult.blocked(RoleType.DECODE, failure, Map.of("cause", "Decode capacity exhausted",
-                "capturedAtMs", System.currentTimeMillis(), "decode", List.copyOf(evidence)));
-    }
-
-    /** Classify only the dimensions that prevent this request from fitting. */
-    static Response classifyCapacityFailure(DecodeRequirement request, DecodeEndpoint.AdmissionSummary snapshot) {
-        boolean dispatch = request.mode() == DecodeMode.IMMEDIATE;
-        var routing = snapshot.routing();
-        var usage = dispatch ? routing.dispatchUsage() : routing.placementUsage();
-        if (usage.totalKvTokens() > 0
-                && request.inputAndMaxOutputKvTokens() > request.capacity().kvBudget(usage.totalKvTokens())) {
-            return Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
-        }
-        CapacityRelease lower = CapacityRelease.NONE;
-        CapacityRelease higher = CapacityRelease.NONE;
-        CapacityRelease same = CapacityRelease.NONE;
-        for (int priority = 1; priority <= PriorityNormalizer.MAX_PRIORITY; priority++) {
-            CapacityRelease occupied = dispatch ? snapshot.engineOccupancy(priority) : snapshot.placementOccupancy(priority);
-            if (occupied == CapacityRelease.NONE) { continue; }
-            if (priority < request.priority()) {
-                lower = lower.plus(occupied);
-            } else if (priority == request.priority()) {
-                same = occupied;
-            } else {
-                higher = higher.plus(occupied);
-            }
-        }
-        // Removing lower-priority occupancy is a counterfactual for attribution,
-        // not an authorization to preempt its owners.
-        var residual = request.capacity().evaluate(usage, request.inputKvTokens(), request.inputAndMaxOutputKvTokens(), lower);
-        if (residual.hasCapacity()) {
-            return Response.error(StrategyErrorType.RESOURCE_EXHAUSTED);
-        }
-        CapacityRelease attributed = higher.plus(same);
-        if (residual.requests() > attributed.requests()
-                || residual.requiredKvTokens() > attributed.requiredKvTokens()
-                || residual.kvBudgetTokens() > attributed.kvBudgetTokens()) {
-            return Response.error(StrategyErrorType.ADMISSION_UNAVAILABLE);
-        }
-        boolean higherBlocks = residual.requests() > 0 && higher.requests() > 0
-                || residual.requiredKvTokens() > 0 && higher.requiredKvTokens() > 0
-                || residual.kvBudgetTokens() > 0 && higher.kvBudgetTokens() > 0;
-        return Response.error(StrategyErrorType.PRIORITY_ADMISSION_REJECTED,
-                higherBlocks ? RejectReason.HIGHER_PRIORITY_AHEAD : RejectReason.SAME_PRIORITY_AHEAD);
     }
 
     private static Response oversizedRequestFailure(long required, long maximum) {

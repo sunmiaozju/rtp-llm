@@ -766,15 +766,12 @@ final class DecodeState {
 
     boolean hasCapacityForSelection(WorkerStatus.EngineObservation engine,
                                     CapacityLimit limit,
-                                    boolean immediate,
                                     long inputKv,
                                     long budgetKv) {
-        long occupiedRequests = immediate ? dispatchOccupiedRequests() : getTotalLoad();
-        long reservedInputKv =
-                immediate ? dispatchReservedInputKv() : placementReservedInputKv(inputKvReservedTotal.get());
-        long usedBudgetKv = immediate ? engineFacingKvUsed(engine) : placementKvUsed(engine);
-        return limit.hasCapacity(occupiedRequests, Math.max(0L, engine.totalKvCacheTokens()),
-                Math.max(0L, engine.availableKvCacheTokens()), reservedInputKv, usedBudgetKv, inputKv, budgetKv);
+        long reservedInputKv = placementReservedInputKv(inputKvReservedTotal.get());
+        return limit.hasCapacity(getTotalLoad(), Math.max(0L, engine.totalKvCacheTokens()),
+                Math.max(0L, engine.availableKvCacheTokens()), reservedInputKv, placementKvUsed(engine), inputKv,
+                budgetKv);
     }
 
     long placementKvUsed(WorkerStatus.EngineObservation engine) {

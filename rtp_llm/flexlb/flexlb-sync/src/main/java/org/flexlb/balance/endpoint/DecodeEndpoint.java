@@ -414,10 +414,9 @@ public class DecodeEndpoint extends WorkerEndpoint {
      */
     public boolean hasCapacityForSelection(WorkerStatus.EngineObservation engine,
                                            CapacityLimit limit,
-                                           boolean immediate,
                                            long inputKv,
                                            long budgetKv) {
-        return state.hasCapacityForSelection(engine, limit, immediate, inputKv, budgetKv);
+        return state.hasCapacityForSelection(engine, limit, inputKv, budgetKv);
     }
 
     public int getInflightCount() { return state.getInflightCount(); }
