@@ -25,7 +25,7 @@ public class KvcmMetaServiceClient {
     private final GrpcChannelPool<GrpcTarget> channelPool;
 
     public KvcmMetaServiceClient(GrpcChannelFactory channelFactory) {
-        this.channelPool = new GrpcChannelPool<>(channelFactory::create);
+        this.channelPool = new GrpcChannelPool<>(channelFactory::createKvcmChannel);
     }
 
     public GetClusterInfoResponse getClusterInfo(

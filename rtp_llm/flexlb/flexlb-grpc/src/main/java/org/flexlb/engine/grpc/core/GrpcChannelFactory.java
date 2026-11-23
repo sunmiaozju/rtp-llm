@@ -22,10 +22,9 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Creates gRPC channels with the shared FlexLB transport resources and options.
+ * Creates engine and KVCM channels with the same transport options but separate I/O thread groups.
  */
 @Slf4j
-@Getter
 @Component
 public class GrpcChannelFactory {
 
@@ -37,16 +36,23 @@ public class GrpcChannelFactory {
     private static final boolean DEFAULT_KEEP_ALIVE_WITHOUT_CALLS = true;
     private static final int DEFAULT_MAX_INBOUND_MESSAGE_BYTES = 16 * 1024 * 1024;
 
+    @Getter
     private final ThreadPoolExecutor executor;
-    private final EventLoopGroup eventLoopGroup;
+    @Getter
+    private final EventLoopGroup engineEventLoopGroup;
+    private final EventLoopGroup kvcmEventLoopGroup;
+    @Getter
     private final int connectTimeoutMillis;
+    @Getter
     private final long keepAliveTimeMillis;
+    @Getter
     private final boolean keepAliveWithoutCalls;
 
     @Autowired
     public GrpcChannelFactory(
             @Qualifier("managedChannelThreadPoolExecutor") ThreadPoolExecutor executor,
-            @Qualifier("managedChannelEventLoopGroup") EventLoopGroup eventLoopGroup,
+            @Qualifier("engineChannelEventLoopGroup") EventLoopGroup engineEventLoopGroup,
+            @Qualifier("kvcmChannelEventLoopGroup") EventLoopGroup kvcmEventLoopGroup,
             @Value("${" + CONNECT_TIMEOUT_PROPERTY + ":"
                     + DEFAULT_CONNECT_TIMEOUT_MILLIS + "}") int connectTimeoutMillis,
             @Value("${" + KEEP_ALIVE_TIME_PROPERTY + ":"
@@ -60,27 +66,22 @@ public class GrpcChannelFactory {
             throw new IllegalArgumentException("keepAliveTimeMillis must be positive");
         }
         this.executor = executor;
-        this.eventLoopGroup = eventLoopGroup;
+        this.engineEventLoopGroup = engineEventLoopGroup;
+        this.kvcmEventLoopGroup = kvcmEventLoopGroup;
         this.connectTimeoutMillis = connectTimeoutMillis;
         this.keepAliveTimeMillis = keepAliveTimeMillis;
         this.keepAliveWithoutCalls = keepAliveWithoutCalls;
     }
 
-    public GrpcChannelFactory(
-            ThreadPoolExecutor executor,
-            EventLoopGroup eventLoopGroup,
-            int connectTimeoutMillis) {
-        this(executor, eventLoopGroup, connectTimeoutMillis,
-                DEFAULT_KEEP_ALIVE_TIME_MILLIS, DEFAULT_KEEP_ALIVE_WITHOUT_CALLS);
+    public ManagedChannel createEngineChannel(GrpcTarget target) {
+        return createChannel(target, engineEventLoopGroup);
     }
 
-    public GrpcChannelFactory(
-            ThreadPoolExecutor executor,
-            EventLoopGroup eventLoopGroup) {
-        this(executor, eventLoopGroup, DEFAULT_CONNECT_TIMEOUT_MILLIS);
+    public ManagedChannel createKvcmChannel(GrpcTarget target) {
+        return createChannel(target, kvcmEventLoopGroup);
     }
 
-    public ManagedChannel create(GrpcTarget target) {
+    private ManagedChannel createChannel(GrpcTarget target, EventLoopGroup eventLoopGroup) {
         log.info("Creating gRPC channel: {}", target);
         return NettyChannelBuilder.forAddress(target.host(), target.port())
                 .channelType(channelType(eventLoopGroup))

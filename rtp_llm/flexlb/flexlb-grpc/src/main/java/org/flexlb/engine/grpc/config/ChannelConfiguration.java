@@ -9,6 +9,7 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.util.concurrent.DefaultEventExecutorChooserFactory;
 import io.netty.util.concurrent.DefaultThreadFactory;
 import io.netty.util.concurrent.RejectedExecutionHandlers;
+import io.netty.util.concurrent.ThreadPerTaskExecutor;
 import io.netty.util.internal.PlatformDependent;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
@@ -61,13 +62,32 @@ public class ChannelConfiguration {
         );
     }
 
-    @Bean
-    public EventLoopGroup managedChannelEventLoopGroup() {
-        int threads = config.getInternalRuntime().getGrpcClientEventLoopThreads();
+    @Bean(destroyMethod = "shutdownGracefully")
+    public EventLoopGroup engineChannelEventLoopGroup() {
+        return createClientEventLoopGroup(config.getInternalRuntime().getGrpcEngineClientEventLoopThreads(),
+                "grpc-client-engine-elg");
+    }
+
+    @Bean(destroyMethod = "shutdownGracefully")
+    public EventLoopGroup kvcmChannelEventLoopGroup() {
+        return createClientEventLoopGroup(config.getInternalRuntime().getGrpcKvcmClientEventLoopThreads(),
+                "grpc-client-kvcm-elg");
+    }
+
+    @Bean(destroyMethod = "")
+    public EventLoopGroup grpcServerEventLoopGroup() {
+        return new NioEventLoopGroup(
+                config.getInternalRuntime().getGrpcServerWorkerEventLoopThreads(),
+                new DefaultThreadFactory("grpc-server-elg")
+        );
+    }
+
+    private static EventLoopGroup createClientEventLoopGroup(int threads, String threadNamePrefix) {
+        var executor = new ThreadPerTaskExecutor(new DefaultThreadFactory(threadNamePrefix));
         if (Epoll.isAvailable()) {
             return new EpollEventLoopGroup(
                     threads,
-                    null,
+                    executor,
                     DefaultEventExecutorChooserFactory.INSTANCE,
                     DefaultSelectStrategyFactory.INSTANCE,
                     RejectedExecutionHandlers.reject(),
@@ -76,20 +96,12 @@ public class ChannelConfiguration {
         }
         return new NioEventLoopGroup(
                 threads,
-                null,
+                executor,
                 DefaultEventExecutorChooserFactory.INSTANCE,
                 SelectorProvider.provider(),
                 DefaultSelectStrategyFactory.INSTANCE,
                 RejectedExecutionHandlers.reject(),
                 PlatformDependent::newMpscQueue
-        );
-    }
-
-    @Bean(destroyMethod = "")
-    public EventLoopGroup grpcServerEventLoopGroup() {
-        return new NioEventLoopGroup(
-                config.getInternalRuntime().getGrpcServerWorkerEventLoopThreads(),
-                new DefaultThreadFactory("grpc-server-elg")
         );
     }
 }

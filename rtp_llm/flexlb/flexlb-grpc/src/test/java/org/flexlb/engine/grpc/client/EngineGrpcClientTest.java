@@ -50,7 +50,7 @@ class EngineGrpcClientTest {
         CacheMatchConfiguration cacheMatchConfiguration = mock(CacheMatchConfiguration.class);
         List<ManagedChannel> createdChannels = new ArrayList<>();
         when(cacheMatchConfiguration.isLocalSyncEnabled()).thenReturn(true);
-        when(channelFactory.create(any()))
+        when(channelFactory.createEngineChannel(any()))
                 .thenAnswer(invocation -> {
                     ManagedChannel channel = mock(ManagedChannel.class);
                     createdChannels.add(channel);
@@ -69,8 +69,8 @@ class EngineGrpcClientTest {
         listener.getValue().onAddressUpdate(List.of(host));
         listener.getValue().onAddressUpdate(List.of(host));
 
-        verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
-        verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18002));
+        verify(channelFactory).createEngineChannel(new GrpcTarget("10.0.0.1", 8081));
+        verify(channelFactory, times(4)).createEngineChannel(new GrpcTarget("10.0.0.1", 18002));
 
         listener.getValue().onAddressUpdate(List.of());
         for (ManagedChannel channel : createdChannels) {
@@ -94,7 +94,7 @@ class EngineGrpcClientTest {
         GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
         CacheMatchConfiguration cacheMatchConfiguration = new CacheMatchConfiguration(new ModelMetaConfig(route), config);
-        when(channelFactory.create(any())).thenReturn(mock(ManagedChannel.class));
+        when(channelFactory.createEngineChannel(any())).thenReturn(mock(ManagedChannel.class));
 
         EngineGrpcClient client = new EngineGrpcClient(
                 addressResolver, channelFactory, grpcReporter, cacheMatchConfiguration);
@@ -105,8 +105,8 @@ class EngineGrpcClientTest {
         listener.getValue().onAddressUpdate(List.of(new WorkerHost(
                 "10.0.0.1", 8080, 8081, 8085, 18002, "", "", "")));
 
-        verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
-        verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 18002));
+        verify(channelFactory).createEngineChannel(new GrpcTarget("10.0.0.1", 8081));
+        verify(channelFactory, times(2)).createEngineChannel(new GrpcTarget("10.0.0.1", 18002));
 
         client.shutdown();
     }
@@ -118,7 +118,7 @@ class EngineGrpcClientTest {
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
         CacheMatchConfiguration cacheMatchConfiguration = mock(CacheMatchConfiguration.class);
         when(cacheMatchConfiguration.isLocalSyncEnabled()).thenReturn(true);
-        when(channelFactory.create(any())).thenReturn(mock(ManagedChannel.class));
+        when(channelFactory.createEngineChannel(any())).thenReturn(mock(ManagedChannel.class));
         EngineGrpcClient client = new EngineGrpcClient(
                 addressResolver, channelFactory, grpcReporter, cacheMatchConfiguration);
         ArgumentCaptor<EngineAddressResolver.Listener> listener =
@@ -133,9 +133,9 @@ class EngineGrpcClientTest {
                         "10.0.0.1", 8080, 8081, 8085, 18003,
                         "", "", "", 1, 2)));
 
-        verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
-        verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18002));
-        verify(channelFactory, times(4)).create(new GrpcTarget("10.0.0.1", 18003));
+        verify(channelFactory).createEngineChannel(new GrpcTarget("10.0.0.1", 8081));
+        verify(channelFactory, times(4)).createEngineChannel(new GrpcTarget("10.0.0.1", 18002));
+        verify(channelFactory, times(4)).createEngineChannel(new GrpcTarget("10.0.0.1", 18003));
         client.shutdown();
     }
 
@@ -158,7 +158,7 @@ class EngineGrpcClientTest {
         GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
         CacheMatchConfiguration cacheMatchConfiguration = mock(CacheMatchConfiguration.class);
-        when(channelFactory.create(any())).thenAnswer(invocation ->
+        when(channelFactory.createEngineChannel(any())).thenAnswer(invocation ->
                 InProcessChannelBuilder.forName(serverName).directExecutor().build());
         EngineGrpcClient client = new EngineGrpcClient(
                 addressResolver, channelFactory, grpcReporter, cacheMatchConfiguration);
@@ -177,7 +177,7 @@ class EngineGrpcClientTest {
                             1000)
                     .get(2, TimeUnit.SECONDS)
                     .getAlive());
-            verify(channelFactory, times(2)).create(new GrpcTarget("10.0.0.1", 18002));
+            verify(channelFactory, times(2)).createEngineChannel(new GrpcTarget("10.0.0.1", 18002));
         } finally {
             client.shutdown();
             server.shutdownNow().awaitTermination(2, TimeUnit.SECONDS);
@@ -220,7 +220,7 @@ class EngineGrpcClientTest {
         EngineAddressResolver addressResolver = mock(EngineAddressResolver.class);
         GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
         GrpcReporter grpcReporter = mock(GrpcReporter.class);
-        when(channelFactory.create(any())).thenAnswer(invocation ->
+        when(channelFactory.createEngineChannel(any())).thenAnswer(invocation ->
                 InProcessChannelBuilder.forName(serverName).directExecutor().build());
         EngineGrpcClient client = new EngineGrpcClient(
                 addressResolver,
@@ -254,8 +254,8 @@ class EngineGrpcClientTest {
             verify(grpcReporter).reportConnectionDuration(eq("GetWorkerStatus"), anyLong());
             verify(grpcReporter).reportCallMetrics(
                     eq("GetWorkerStatus"), anyLong(), anyInt(), eq(true));
-            verify(channelFactory, times(3)).create(new GrpcTarget("10.0.0.1", 18002));
-            verify(channelFactory).create(new GrpcTarget("10.0.0.1", 8081));
+            verify(channelFactory, times(3)).createEngineChannel(new GrpcTarget("10.0.0.1", 18002));
+            verify(channelFactory).createEngineChannel(new GrpcTarget("10.0.0.1", 8081));
         } finally {
             client.shutdown();
             server.shutdownNow().awaitTermination(2, TimeUnit.SECONDS);

@@ -4,30 +4,44 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import io.grpc.ConnectivityState;
+import io.grpc.Deadline;
 import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.netty.NettyServerBuilder;
+import io.grpc.stub.StreamObserver;
 import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.MultithreadEventLoopGroup;
+import io.netty.util.concurrent.EventExecutor;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.FlexlbConfig;
+import org.flexlb.engine.grpc.EngineRpcService;
+import org.flexlb.engine.grpc.RpcServiceGrpc;
+import org.flexlb.engine.grpc.client.KvcmMetaServiceClient;
 import org.flexlb.engine.grpc.config.ChannelConfiguration;
+import org.flexlb.kvcm.grpc.GetHostCacheStateRequest;
+import org.flexlb.kvcm.grpc.GetHostCacheStateResponse;
+import org.flexlb.kvcm.grpc.MetaServiceGrpc;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.support.AbstractBeanDefinition;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.core.env.MapPropertySource;
 
 import java.net.InetSocketAddress;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -43,6 +57,65 @@ class GrpcChannelFactoryTest {
     }
 
     @Test
+    void grpcThreadCountsUseAvailableProcessors() {
+        int processors = Runtime.getRuntime().availableProcessors();
+        try (AnnotationConfigApplicationContext context = createChannelContext()) {
+            GrpcChannelFactory factory = context.getBean(GrpcChannelFactory.class);
+            var engine = (MultithreadEventLoopGroup) factory.getEngineEventLoopGroup();
+            var kvcm = context.getBean("kvcmChannelEventLoopGroup", MultithreadEventLoopGroup.class);
+            var server = context.getBean("grpcServerEventLoopGroup", MultithreadEventLoopGroup.class);
+            assertNotSame(engine, kvcm);
+            assertEquals(processors, engine.executorCount());
+            assertEquals(processors, kvcm.executorCount());
+            assertEquals(processors, server.executorCount());
+            assertEquals(processors, factory.getExecutor().getCorePoolSize());
+            assertEquals(processors, factory.getExecutor().getMaximumPoolSize());
+        }
+    }
+
+    @Test
+    void engineAndKvcmQueriesCanFinishWhileTheOtherEventLoopsAreBusy() throws Exception {
+        var cacheState = GetHostCacheStateResponse.getDefaultInstance();
+        var workerStatus = EngineRpcService.WorkerStatusPB.newBuilder().setAlive(true).build();
+        Server server = NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
+                .addService(new MetaServiceGrpc.MetaServiceImplBase() {
+                    @Override
+                    public void getHostCacheState(GetHostCacheStateRequest request,
+                                                  StreamObserver<GetHostCacheStateResponse> observer) {
+                        observer.onNext(cacheState);
+                        observer.onCompleted();
+                    }
+                })
+                .addService(new RpcServiceGrpc.RpcServiceImplBase() {
+                    @Override
+                    public void getWorkerStatus(EngineRpcService.StatusVersionPB request,
+                                                StreamObserver<EngineRpcService.WorkerStatusPB> observer) {
+                        observer.onNext(workerStatus);
+                        observer.onCompleted();
+                    }
+                }).build().start();
+        try (AnnotationConfigApplicationContext context = createChannelContext()) {
+            var engine = context.getBean("engineChannelEventLoopGroup", MultithreadEventLoopGroup.class);
+            var kvcm = context.getBean("kvcmChannelEventLoopGroup", MultithreadEventLoopGroup.class);
+            var target = new GrpcTarget("127.0.0.1", server.getPort());
+            var kvcmClient = context.getBean(KvcmMetaServiceClient.class);
+            assertEquals(cacheState, queryWhileEventLoopsAreBlocked(engine, () -> kvcmClient.getHostCacheState(target,
+                    GetHostCacheStateRequest.getDefaultInstance(), Deadline.after(3, TimeUnit.SECONDS))));
+
+            ManagedChannel engineChannel = context.getBean(GrpcChannelFactory.class).createEngineChannel(target);
+            try {
+                assertEquals(workerStatus, queryWhileEventLoopsAreBlocked(kvcm,
+                        () -> RpcServiceGrpc.newBlockingStub(engineChannel).withDeadlineAfter(3, TimeUnit.SECONDS)
+                                .getWorkerStatus(EngineRpcService.StatusVersionPB.getDefaultInstance())));
+            } finally {
+                engineChannel.shutdownNow();
+            }
+        } finally {
+            server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     @EnabledOnOs(OS.LINUX)
     void createsChannelWithoutTcpUserTimeoutWarning() throws InterruptedException {
         Logger bootstrapLogger = (Logger) LoggerFactory.getLogger(Bootstrap.class);
@@ -52,7 +125,7 @@ class GrpcChannelFactoryTest {
 
         try (AnnotationConfigApplicationContext context = createChannelContext()) {
             GrpcChannelFactory factory = context.getBean(GrpcChannelFactory.class);
-            ManagedChannel channel = factory.create(new GrpcTarget("127.0.0.1", 1));
+            ManagedChannel channel = factory.createEngineChannel(new GrpcTarget("127.0.0.1", 1));
             try {
                 CountDownLatch stateChanged = new CountDownLatch(1);
                 channel.notifyWhenStateChanged(ConnectivityState.IDLE, stateChanged::countDown);
@@ -114,8 +187,8 @@ class GrpcChannelFactoryTest {
              AnnotationConfigApplicationContext quietContext = createChannelContext(
                      Map.of(GrpcChannelFactory.KEEP_ALIVE_WITHOUT_CALLS_PROPERTY, "false"))) {
             GrpcTarget target = new GrpcTarget("127.0.0.1", server.getPort());
-            ManagedChannel pinging = pingingContext.getBean(GrpcChannelFactory.class).create(target);
-            ManagedChannel quiet = quietContext.getBean(GrpcChannelFactory.class).create(target);
+            ManagedChannel pinging = pingingContext.getBean(GrpcChannelFactory.class).createEngineChannel(target);
+            ManagedChannel quiet = quietContext.getBean(GrpcChannelFactory.class).createEngineChannel(target);
             try {
                 waitUntilReady(pinging);
                 waitUntilReady(quiet);
@@ -129,6 +202,31 @@ class GrpcChannelFactoryTest {
             }
         } finally {
             server.shutdownNow();
+        }
+    }
+
+    private static <T> T queryWhileEventLoopsAreBlocked(MultithreadEventLoopGroup eventLoops, Callable<T> query)
+            throws Exception {
+        CountDownLatch loopsBlocked = new CountDownLatch(eventLoops.executorCount());
+        CountDownLatch releaseLoops = new CountDownLatch(1);
+        try (var queryExecutor = Executors.newVirtualThreadPerTaskExecutor()) {
+            try {
+                for (EventExecutor eventLoop : eventLoops) {
+                    eventLoop.execute(() -> {
+                        loopsBlocked.countDown();
+                        try {
+                            releaseLoops.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    });
+                }
+                assertTrue(loopsBlocked.await(5, TimeUnit.SECONDS), "not all event loops were blocked");
+                // The RPC deadline itself may need one of the loops we blocked.
+                return queryExecutor.submit(query).get(5, TimeUnit.SECONDS);
+            } finally {
+                releaseLoops.countDown();
+            }
         }
     }
 
@@ -157,7 +255,13 @@ class GrpcChannelFactoryTest {
         AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
         context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("test", properties));
         context.getBeanFactory().registerSingleton("configService", configService);
-        context.register(ChannelConfiguration.class, GrpcChannelFactory.class);
+        context.register(ChannelConfiguration.class, GrpcChannelFactory.class, KvcmMetaServiceClient.class);
+        context.addBeanFactoryPostProcessor(beanFactory -> {
+            // This context has no FlexlbGrpcServer to shut down the server event loops.
+            var server = (AbstractBeanDefinition) beanFactory.getBeanDefinition("grpcServerEventLoopGroup");
+            server.setLazyInit(true);
+            server.setDestroyMethodName("shutdownGracefully");
+        });
         context.refresh();
         return context;
     }

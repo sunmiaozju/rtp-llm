@@ -60,7 +60,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
             CacheMatchConfiguration cacheMatchConfiguration,
             @Value("${flexlb.engine-grpc.enqueue-timeout-ms:5000}") long enqueueTimeoutMillis) {
         this.channelFactory = channelFactory;
-        this.channelPool = new GrpcChannelPool<>(key -> channelFactory.create(key.target()));
+        this.channelPool = new GrpcChannelPool<>(key -> channelFactory.createEngineChannel(key.target()));
         this.grpcReporter = grpcReporter;
         this.localSyncEnabled = cacheMatchConfiguration.isLocalSyncEnabled();
         if (enqueueTimeoutMillis <= 0L) {
@@ -309,7 +309,7 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
     }
 
     public EventLoopGroup getEventLoopGroup() {
-        return channelFactory.getEventLoopGroup();
+        return channelFactory.getEngineEventLoopGroup();
     }
 
     @Scheduled(fixedRate = 20000)

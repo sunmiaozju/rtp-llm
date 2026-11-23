@@ -52,7 +52,7 @@ public class FlexlbGrpcForwarder {
     public FlexlbGrpcForwarder(LBStatusConsistencyService lbStatusConsistencyService,
                                ConfigService configService,
                                EngineHealthReporter engineHealthReporter,
-                               @Qualifier("managedChannelEventLoopGroup") EventLoopGroup eventLoopGroup,
+                                @Qualifier("engineChannelEventLoopGroup") EventLoopGroup eventLoopGroup,
                                @Qualifier("forwarderChannelExecutor") Executor executor) {
         this.lbStatusConsistencyService = lbStatusConsistencyService;
         this.configService = configService;

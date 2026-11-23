@@ -37,6 +37,11 @@ native allocation 的实际占用仍取决于负载。
 使用 `FLEXLB_JVM_HEAP_SIZE=48g` 或 `64g` 可同时设置 Xms/Xmx，仍需通过容器预算校验。
 大堆 `gc.log` 同时记录 GC 和 safepoint 时间，按 20MiB 轮转并保留 5 个归档文件。
 
+KVCM 的缓存和集群信息查询使用独立的 gRPC 客户端 I/O 线程组，不与 `GetWorkerStatus` 等引擎 RPC
+共用；Master 转发仍使用引擎客户端的 I/O 线程组。两个客户端 I/O 线程组、客户端共享回调线程池和
+服务端 I/O 工作线程组的线程数，各自在启动时取 JVM 的 `Runtime.getRuntime().availableProcessors()`，
+不属于 `FLEXLB_CONFIG`。
+
 ## FlexlbConfig 加载与动态更新
 
 `ConfigService` 是统一读取入口。`ConfigSourceSelection` 在启动时根据 FlexLB 进程的

@@ -260,7 +260,7 @@ class VitCacheDirectoryTest {
                 }).build().start();
         var executor = (ThreadPoolExecutor) Executors.newFixedThreadPool(2);
         var eventLoop = new NioEventLoopGroup(1);
-        var channelFactory = new GrpcChannelFactory(executor, eventLoop, 1000);
+        var channelFactory = new GrpcChannelFactory(executor, eventLoop, eventLoop, 1000, 2_000L, true);
         var client = new EngineGrpcClient(mock(EngineAddressResolver.class), channelFactory,
                 mock(GrpcReporter.class), mock(CacheMatchConfiguration.class));
         try {

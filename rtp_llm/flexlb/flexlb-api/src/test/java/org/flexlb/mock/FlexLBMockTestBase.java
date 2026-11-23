@@ -143,7 +143,7 @@ public abstract class FlexLBMockTestBase {
 
         // 3. Create gRPC infrastructure
         InternalRuntimeSettings runtime = config.getInternalRuntime();
-        eventLoopGroup = new NioEventLoopGroup(runtime.getGrpcClientEventLoopThreads());
+        eventLoopGroup = new NioEventLoopGroup(runtime.getGrpcEngineClientEventLoopThreads());
         grpcExecutor = new ThreadPoolExecutor(
                 runtime.getGrpcClientExecutorThreads(), runtime.getGrpcClientExecutorThreads(),
                 60L, TimeUnit.SECONDS,
@@ -152,7 +152,7 @@ public abstract class FlexLBMockTestBase {
         GrpcReporter grpcReporter = new GrpcReporter(new NoOpFlexMonitor());
         grpcClient = new EngineGrpcClient(
                 mock(EngineAddressResolver.class),
-                new GrpcChannelFactory(grpcExecutor, eventLoopGroup),
+                new GrpcChannelFactory(grpcExecutor, eventLoopGroup, eventLoopGroup, 20, 2_000L, true),
                 grpcReporter,
                 mock(CacheMatchConfiguration.class),
                 enqueueTimeoutMillis());
