@@ -42,6 +42,8 @@ class EngineHealthReporterSelectionMetricTest {
     @Mock
     private EventLoopGroup grpcEventLoop;
     @Mock
+    private EventLoopGroup kvcmEventLoopGroup;
+    @Mock
     private WorkerDirectory workerDirectory;
 
     private EngineHealthReporter reporter;
@@ -53,7 +55,7 @@ class EngineHealthReporterSelectionMetricTest {
         when(engineGrpcClient.getEventLoopGroup()).thenReturn(grpcEventLoop);
         reporter = new EngineHealthReporter(
                 monitor, cacheMetricsReporter, engineGrpcClient,
-                loopResources, workerDirectory);
+                loopResources, workerDirectory, kvcmEventLoopGroup);
     }
 
     @Test
