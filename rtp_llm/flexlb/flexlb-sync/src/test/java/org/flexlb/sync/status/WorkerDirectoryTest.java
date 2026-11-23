@@ -3,8 +3,12 @@ package org.flexlb.sync.status;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
+import org.flexlb.balance.scheduler.SchedulingTestConfig;
+import org.flexlb.balance.strategy.DecodeSelector;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
+import org.flexlb.dao.BalanceContext;
+import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.master.WorkerStatusProvider;
 import org.flexlb.dao.route.RoleType;
@@ -15,7 +19,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +30,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class WorkerDirectoryTest {
@@ -50,8 +52,7 @@ class WorkerDirectoryTest {
             }
         }
         ConfigService configService = Mockito.mock(ConfigService.class);
-        Mockito.when(configService.loadBalanceConfig())
-                .thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
+        Mockito.when(configService.loadBalanceConfig()).thenReturn(SchedulingTestConfig.newConfig());
         registry = RunnerTestSupport.endpointRegistry(configService);
         workerDirectory = new WorkerDirectory(registry);
     }
@@ -124,42 +125,20 @@ class WorkerDirectoryTest {
         DecodeMember rankOne = decodeMember("routing-a", "10.0.0.1", 1, 2, 8401);
         publishDecode(rankZero);
 
-        assertTrue(workerDirectory.getDecodeCandidates("routing-a").isEmpty());
+        assertNull(selectDecode(workerDirectory, "routing-a"));
         assertEquals(2, workerDirectory.getWorkerStatuses(RoleType.DECODE, "routing-a").size());
 
         publishDecode(rankOne);
 
-        assertEquals(2, workerDirectory.getDecodeCandidates("routing-a").size());
+        assertNotNull(selectDecode(workerDirectory, "routing-a"));
     }
 
     @Test
-    void decodeCandidatesReuseTheDirectoryWhenEveryNodeMatches() {
+    void decodeRoutingEntriesReuseTheRegistryDirectory() {
         publishDecode(decodeMember("routing-a", "10.0.0.1", 0, 2, 8450));
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 2, 8451));
         var entries = registry.decodeRoutingEntries();
-        assertSame(entries, workerDirectory.getDecodeCandidates("routing-a"));
-        assertSame(entries, workerDirectory.getDecodeCandidates(null));
-    }
-
-    @ParameterizedTest
-    @ValueSource(ints = {0, 1, 2})
-    void filteredDecodeCandidatesPreserveOrderAndRemainReadOnly(int excludedIndex) {
-        for (int index = 0; index < 3; index++) {
-            publishDecode(decodeMember(index == excludedIndex ? "routing-b" : "routing-a", null, 0, 1,
-                    8460 + index));
-        }
-        var expected = registry.decodeRoutingEntries()
-                .stream()
-                .filter(entry -> "routing-a".equals(entry.getValue().getStatus().topologySnapshot().group()))
-                .toList();
-        var candidates = workerDirectory.getDecodeCandidates("routing-a");
-
-        assertEquals(expected, candidates);
-        assertThrows(UnsupportedOperationException.class, () -> candidates.removeFirst());
-        publishDecode(decodeMember("routing-a", null, 0, 1, 8463));
-        assertEquals(expected, candidates);
-        assertEquals(3, workerDirectory.getDecodeCandidates("routing-a").size());
-        assertTrue(workerDirectory.getDecodeCandidates("missing-group").isEmpty());
+        assertSame(entries, workerDirectory.decodeRoutingEntries());
     }
 
     @Test
@@ -173,10 +152,11 @@ class WorkerDirectoryTest {
         Mockito.when(status.committedEngineObservation()).thenReturn(firstRead, secondRead);
         var endpoint = Mockito.mock(DecodeEndpoint.class);
         Mockito.when(endpoint.getStatus()).thenReturn(status);
+        Mockito.when(endpoint.isEmptyForSelection(firstRead)).thenReturn(true);
         var fixedRegistry = Mockito.mock(EndpointRegistry.class);
         Mockito.when(fixedRegistry.decodeRoutingEntries()).thenReturn(List.of(Map.entry("decode", endpoint)));
 
-        assertTrue(new WorkerDirectory(fixedRegistry).getDecodeCandidates(null).isEmpty());
+        assertNull(selectDecode(new WorkerDirectory(fixedRegistry), null));
     }
 
     @Test
@@ -199,8 +179,7 @@ class WorkerDirectoryTest {
         assertNotNull(detached);
         detached.retireAndAwait();
 
-        assertEquals(List.of(independent.status().getLogicalIpPort()),
-                workerDirectory.getDecodeCandidates("routing-a").stream().map(Map.Entry::getKey).toList());
+        assertSame(independent.status(), selectDecode(workerDirectory, "routing-a").getStatus());
         assertEquals(3, workerDirectory.getWorkerStatuses(RoleType.DECODE, "routing-a").size());
         assertSame(rankOne.status(), workerDirectory.getStatusBy(RoleType.DECODE)
                 .get(rankOne.status().getLogicalIpPort()));
@@ -217,11 +196,10 @@ class WorkerDirectoryTest {
         publishDecode(completeOne);
         publishDecode(otherPolicy);
 
-        List<String> eligibleAddresses =
-                workerDirectory.getDecodeCandidates("routing-a").stream().map(Map.Entry::getKey).sorted().toList();
-        assertEquals(List.of(completeZero.status().getLogicalIpPort(), completeOne.status().getLogicalIpPort())
-                .stream().sorted().toList(), eligibleAddresses);
-        assertEquals(3, workerDirectory.getDecodeCandidates(null).size());
+        assertTrue(List.of(completeZero.status(), completeOne.status())
+                .contains(selectDecode(workerDirectory, "routing-a").getStatus()));
+        assertSame(otherPolicy.status(), selectDecode(workerDirectory, "routing-b").getStatus());
+        assertNull(selectDecode(workerDirectory, "missing-group"));
     }
 
     @Test
@@ -230,7 +208,7 @@ class WorkerDirectoryTest {
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 2, 8431));
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 2, 8432));
 
-        assertTrue(workerDirectory.getDecodeCandidates("routing-a").isEmpty());
+        assertNull(selectDecode(workerDirectory, "routing-a"));
     }
 
     @Test
@@ -239,7 +217,16 @@ class WorkerDirectoryTest {
         publishDecode(decodeMember("routing-a", "10.0.0.1", 1, 3, 8441));
         publishDecode(decodeMember("routing-a", "10.0.0.1", 2, 3, 8442));
 
-        assertTrue(workerDirectory.getDecodeCandidates("routing-a").isEmpty());
+        assertNull(selectDecode(workerDirectory, "routing-a"));
+    }
+
+    private static DecodeEndpoint selectDecode(WorkerDirectory directory, String group) {
+        var request = new Request();
+        request.setRequestId("decode-directory-test");
+        var context = new BalanceContext(SchedulingTestConfig.newConfig());
+        context.setRequest(request);
+        var selection = new DecodeSelector(directory).select(context, group);
+        return selection == null ? null : selection.endpoint();
     }
 
     @Test

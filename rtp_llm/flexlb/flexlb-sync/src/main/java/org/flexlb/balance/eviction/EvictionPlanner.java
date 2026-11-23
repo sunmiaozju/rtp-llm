@@ -1,10 +1,10 @@
 package org.flexlb.balance.eviction;
 
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityDeficit;
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
+import org.flexlb.dao.route.CapacityDeficit;
+import org.flexlb.dao.route.CapacityRelease;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.util.PriorityNormalizer;
 

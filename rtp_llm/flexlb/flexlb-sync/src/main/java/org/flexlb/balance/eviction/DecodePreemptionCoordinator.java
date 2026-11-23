@@ -2,6 +2,7 @@ package org.flexlb.balance.eviction;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
+import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.util.Logger;
 import org.springframework.stereotype.Component;
@@ -22,7 +23,7 @@ public final class DecodePreemptionCoordinator {
                                     long incomingKvTokens,
                                     long incomingKvBudgetTokens,
                                     int incomingPriority,
-                                    DecodeEndpoint.CapacityLimit capacity,
+                                    CapacityLimit capacity,
                                     List<DecodeRequestView> victims) {
         public PreemptionCommand {
             if (endpoint == null || victims == null || victims.isEmpty()) {

@@ -1,9 +1,10 @@
 package org.flexlb.balance.eviction;
 
-import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
+import org.flexlb.dao.route.CapacityLimit;
+import org.flexlb.dao.route.CapacityUsage;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -55,8 +56,8 @@ class EvictionPlannerDecodeContractTest {
                                                    int engineLoad,
                                                    long concurrencyLimit,
                                                    List<DecodeRequestView> accepted) {
-        return new DecodeEndpointSnapshot(null, "decode-a", new DecodeEndpoint.CapacityLimit(concurrencyLimit, 100L),
-                new DecodeEndpoint.CapacityUsage(engineLoad, realKvTotal, realKvAvailable, 0L,
+        return new DecodeEndpointSnapshot(null, "decode-a", new CapacityLimit(concurrencyLimit, 100L),
+                new CapacityUsage(engineLoad, realKvTotal, realKvAvailable, 0L,
                         Math.max(0L, realKvTotal - realKvAvailable)),
                 List.of(), accepted, List.of());
     }

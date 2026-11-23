@@ -27,7 +27,6 @@ import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.service.monitor.V2QueueReporter;
-import org.flexlb.sync.status.WorkerDirectory;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -79,7 +78,6 @@ public class RequestSchedulerV2 {
                               PrefillQueueRegistry prefillQueues,
                               ModelMetaConfig modelMetaConfig,
                               DecodePreemptionCoordinator preemptionCoordinator,
-                              WorkerDirectory workerDirectory,
                               V2QueueReporter queueReporter) {
         this.queueReporter = queueReporter;
         this.endpointRegistry = endpointRegistry;
@@ -101,10 +99,10 @@ public class RequestSchedulerV2 {
                 endpointRegistry, placementAvailability, configService, router, prefillStrategy, prefillQueues,
                 prefillRole, queueReporter);
         Runnable capacityWake = decodeQueue::wake;
-        this.decodeQueueConsumerPoll = new DecodeQueueConsumerPoll(
-                configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(), decodeQueue,
-                placementAvailability, () -> new DecodeQueueConsumer(decodeQueue, cleanup, decodeSelector,
-                        workerDirectory, preemptionCoordinator, prefillCheck, queueReporter, capacityWake));
+        this.decodeQueueConsumerPoll =
+                new DecodeQueueConsumerPoll(configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(),
+                        decodeQueue, placementAvailability, () -> new DecodeQueueConsumer(decodeQueue, cleanup,
+                                decodeSelector, preemptionCoordinator, prefillCheck, queueReporter, capacityWake));
         this.deadlineTimer = new ScheduledThreadPoolExecutor(1, task -> {
             Thread thread = new Thread(task, "flexlb-v2-deadline");
             thread.setDaemon(true);

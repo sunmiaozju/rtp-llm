@@ -14,8 +14,11 @@ import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.pv.DecisionGroup;
 import org.flexlb.dao.pv.RoutingDecision;
+import org.flexlb.dao.route.CapacityLimit;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RequestPhase;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.enums.DecodeMode;
 
 import java.util.EnumMap;
 import java.util.Map;
@@ -61,6 +64,8 @@ public class BalanceContext {
      * Theory hit tokens calculated after routing; null means no theory sample is available.
      */
     private final CompletableFuture<Long> theoryHitTokens = new CompletableFuture<>();
+
+    private DecodeRequirement decodeRequirement;
 
     //======================== Meters =======================//
 
@@ -301,6 +306,27 @@ public class BalanceContext {
 
     public record CacheMatchSelection(
             RoleType role, String selectedIp, long hitCacheTokens) {
+    }
+
+    public DecodeRequirement getDecodeRequirement() {
+        if (decodeRequirement != null) {
+            return decodeRequirement;
+        }
+        var request = getRequest();
+        var config = getConfig();
+        var decode = config.getRouter().getRoles().getDecode();
+        var availability = decode.getAvailability();
+        long promptTokens = Math.max(0L, request.getSeqLen());
+        long maxOutputTokens = Math.max(0L, request.getMaxNewTokens());
+        long inputAndMaxOutputTokens =
+                promptTokens > Long.MAX_VALUE - maxOutputTokens ? Long.MAX_VALUE : promptTokens + maxOutputTokens;
+        decodeRequirement = new DecodeRequirement(request.getRequestId(), getPriority(), promptTokens,
+                inputAndMaxOutputTokens,
+                new CapacityLimit(
+                        availability.getMaxEngineRequests() == null ? 0L : availability.getMaxEngineRequests(),
+                        availability.getMaxKvUsagePercent()),
+                DecodeMode.from(config), decode.getCostEstimator().compiledFormula());
+        return decodeRequirement;
     }
 
 }

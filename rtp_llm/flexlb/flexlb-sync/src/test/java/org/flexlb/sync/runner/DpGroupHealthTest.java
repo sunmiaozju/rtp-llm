@@ -2,8 +2,11 @@ package org.flexlb.sync.runner;
 
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
+import org.flexlb.balance.strategy.DecodeSelector;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
+import org.flexlb.dao.BalanceContext;
+import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService;
@@ -64,11 +67,24 @@ class DpGroupHealthTest {
         }
         assertTrue(other.isActiveGeneration());
 
+        var context = new BalanceContext(SchedulingTestConfig.newConfig());
+        var request = new Request();
+        request.setRequestId("dp-recovery");
+        context.setRequest(request);
+        var decodeSelector = new DecodeSelector(directory);
         for (int rank = 0; rank < size; rank++) {
             WorkerStatus recovered = discover(directory, role, 9000 + rank);
             poll(directory, recovered,
                     CompletableFuture.completedFuture(response(recovered, "dp-a", rank, size, true, 1)));
-            assertEquals(rank == size - 1 ? size + 1 : 1, candidates(directory, role).size());
+            if (role == RoleType.DECODE) {
+                assertEquals(rank + 2, candidates(directory, role).size());
+                if (rank < size - 1) {
+                    assertEquals(other.getLogicalIpPort(),
+                            decodeSelector.select(context, "default").endpoint().ipPort());
+                }
+            } else {
+                assertEquals(rank == size - 1 ? size + 1 : 1, candidates(directory, role).size());
+            }
         }
     }
 
@@ -144,7 +160,7 @@ class DpGroupHealthTest {
 
     private List<String> candidates(WorkerDirectory directory, RoleType role) {
         if (role == RoleType.DECODE) {
-            return directory.getDecodeCandidates("default").stream().map(Map.Entry::getKey).toList();
+            return directory.decodeRoutingEntries().stream().map(Map.Entry::getKey).toList();
         }
         return directory.getPrefillCandidates(role)
                 .stream()

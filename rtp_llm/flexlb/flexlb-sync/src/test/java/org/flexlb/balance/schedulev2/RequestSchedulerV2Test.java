@@ -26,7 +26,6 @@ import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.monitor.V2QueueReporter;
-import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -81,7 +80,7 @@ class RequestSchedulerV2Test {
         when(prefillStrategy.selectPrepared(any(), any(), any(), any(), any())).thenReturn(choice);
         scheduler = new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, new PlacementAvailability(),
                 mock(DefaultRouter.class), prefillStrategy, mock(DecodeSelector.class), prefillQueues, modelMetaConfig,
-                mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class), mock(V2QueueReporter.class));
+                mock(DecodePreemptionCoordinator.class), mock(V2QueueReporter.class));
 
         BalanceContext context = context("1", 50, 60_000L);
         Response response = scheduler.submit(context).get(5, TimeUnit.SECONDS);
@@ -257,8 +256,7 @@ class RequestSchedulerV2Test {
         V2QueueReporter queueReporter = mock(V2QueueReporter.class);
         return new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, placementAvailability,
                 mock(DefaultRouter.class), mock(CostBasedPrefillStrategy.class), mock(DecodeSelector.class),
-                prefillQueues, modelMetaConfig, mock(DecodePreemptionCoordinator.class), mock(WorkerDirectory.class),
-                queueReporter);
+                prefillQueues, modelMetaConfig, mock(DecodePreemptionCoordinator.class), queueReporter);
     }
 
     private BalanceContext context(String requestId, int priority, long expiresInMs) {

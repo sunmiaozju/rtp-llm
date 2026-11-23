@@ -1,6 +1,5 @@
 package org.flexlb.balance.schedulev2.decode;
 
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.eviction.DecodePreemptionCoordinator;
@@ -10,7 +9,6 @@ import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.QueueCapacity;
 import org.flexlb.balance.scheduler.RequestRegistry;
 import org.flexlb.balance.scheduler.SchedulingTestConfig;
-import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.balance.schedulev2.PrefillPublishCheck;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
@@ -21,14 +19,16 @@ import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.RequestTable;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
-import org.flexlb.balance.strategy.EndpointRoundRobin;
+import org.flexlb.balance.strategy.SelectedDecode;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
 import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.QueueOrderingConfig;
+import org.flexlb.dao.BalanceContext;
 import org.flexlb.dao.loadbalance.Response;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
@@ -103,7 +103,7 @@ class DecodeQueueConsumerTest {
         config.getRouter().getRoles().getDecode().getAvailability().setMaxEngineRequests(1L);
         when(configService.loadBalanceConfig()).thenReturn(config);
         when(prefillCheck.isAvailable(any())).thenReturn(true);
-        when(selector.select(any(), any(), any())).thenAnswer(call -> success(decode));
+        when(selector.select(any(), any())).thenAnswer(call -> success(decode));
         when(endpointRegistry.decodeRoutingEntries())
                 .thenAnswer(call -> EndpointRegistry.getEndpointsByRole(RoleType.DECODE)
                         .entrySet()
@@ -150,10 +150,10 @@ class DecodeQueueConsumerTest {
         Request nextHigh = addWaiting("3", 80);
         List<String> selected = new ArrayList<>();
         doAnswer(call -> {
-            DecodeRequirement requirement = call.getArgument(1);
+            DecodeRequirement requirement = call.<BalanceContext>getArgument(0).getDecodeRequirement();
             selected.add(requirement.requestId());
             return success(decode);
-        }).when(selector).select(any(), any(), any());
+        }).when(selector).select(any(), any());
         start(1);
 
         assertTrue(response(low).isSuccess());
@@ -176,7 +176,7 @@ class DecodeQueueConsumerTest {
             selecting.countDown();
             assertTrue(releaseSelection.await(5, TimeUnit.SECONDS));
             return success(decode);
-        }).when(selector).select(any(), any(), any());
+        }).when(selector).select(any(), any());
         start(2);
         try {
             assertTrue(selecting.await(5, TimeUnit.SECONDS));
@@ -188,8 +188,8 @@ class DecodeQueueConsumerTest {
         assertTrue(response(second).isSuccess());
         pool.close();
         assertEquals(2, decode.getInflightCount());
-        verify(selector, times(1)).select(eq(first.ctx()), any(), any());
-        verify(selector, times(1)).select(eq(second.ctx()), any(), any());
+        verify(selector, times(1)).select(eq(first.ctx()), any());
+        verify(selector, times(1)).select(eq(second.ctx()), any());
         assertEquals(0, requestTable.size());
     }
 
@@ -206,7 +206,7 @@ class DecodeQueueConsumerTest {
             selecting.countDown();
             assertTrue(releaseSelection.await(5, TimeUnit.SECONDS));
             return success(decode);
-        }).when(selector).select(any(), any(), any());
+        }).when(selector).select(any(), any());
         start(2);
         try {
             assertTrue(selecting.await(5, TimeUnit.SECONDS));
@@ -229,8 +229,8 @@ class DecodeQueueConsumerTest {
         CountDownLatch selecting = new CountDownLatch(1);
         doAnswer(call -> {
             selecting.countDown();
-            return PlacementResult.blocked(RoleType.DECODE);
-        }).when(selector).select(any(), any(), any());
+            return null;
+        }).when(selector).select(any(), any());
         start(1);
         assertTrue(selecting.await(5, TimeUnit.SECONDS));
         assertEquals(1L, prefillQueue.inflightCount());
@@ -250,10 +250,8 @@ class DecodeQueueConsumerTest {
     void anotherConsumerCanPublishWhileLargeRequestWaits() throws Exception {
         Request large = addWaiting("1", 30);
         Request small = addWaiting("2", 30);
-        doAnswer(
-                call -> call.getArgument(0) == large.ctx() ? PlacementResult.blocked(RoleType.DECODE) : success(decode))
-                .when(selector)
-                .select(any(), any(), any());
+        doAnswer(call -> call.getArgument(0) == large.ctx() ? null : success(decode)).when(selector)
+                .select(any(), any());
         start(2);
 
         assertTrue(response(small).isSuccess());
@@ -287,12 +285,12 @@ class DecodeQueueConsumerTest {
         Request first = addWaiting("1", 30);
         CountDownLatch tried = new CountDownLatch(1);
         doAnswer(call -> {
-            DecodeRequirement requirement = call.getArgument(1);
+            DecodeRequirement requirement = call.<BalanceContext>getArgument(0).getDecodeRequirement();
             if ("2".equals(requirement.requestId())) {
                 tried.countDown();
             }
             return success(decode);
-        }).when(selector).select(any(), any(), any());
+        }).when(selector).select(any(), any());
         start(1);
         assertTrue(response(first).isSuccess());
         Request second = addWaiting("2", 30);
@@ -307,15 +305,20 @@ class DecodeQueueConsumerTest {
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
     void retirementKeepsSelectedRouteButNewRequestsUseAnotherDecode(boolean retireBeforeReserve) throws Exception {
-        updateDecodeStatus(decode, Map.of(), Map.of(), false);
-        updateDecodeStatus(otherDecode, Map.of(), Map.of(), false);
+        var running = WorkerStatusPB.newBuilder()
+                .setAlive(true)
+                .setStatusVersion(1L)
+                .setRoleType(WorkerStatusPBs.role(RoleType.DECODE))
+                .setTotalKvCache(1000L)
+                .setAvailableKvCache(1000L)
+                .setRunningQueryLen(1);
+        updateDecodeStatus(decode, running, false);
+        updateDecodeStatus(otherDecode, running, false);
         register(decode);
-        when(endpointRegistry.get(eq(RoleType.DECODE), any()))
-                .thenAnswer(call -> EndpointRegistry.getEndpointsByRole(RoleType.DECODE).get(call.getArgument(1)));
-        DecodeSelector realSelector = new DecodeSelector(workerDirectory, new EndpointRoundRobin());
-        when(selector.select(any(), any(), any())).thenAnswer(call -> {
-            var selection = realSelector.select(call.getArgument(0), call.getArgument(1), call.getArgument(2));
-            if (retireBeforeReserve && selection.value() == decode) {
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        when(selector.select(any(), any())).thenAnswer(call -> {
+            var selection = realSelector.select(call.getArgument(0), call.getArgument(1));
+            if (retireBeforeReserve && selection != null && selection.endpoint() == decode) {
                 retireSelectedDecode();
             }
             return selection;
@@ -367,7 +370,7 @@ class DecodeQueueConsumerTest {
         doAnswer(call -> {
             request.cancel(CancelReason.CLIENT_CANCELLED);
             return success(decode);
-        }).when(selector).select(eq(request.ctx()), any(), any());
+        }).when(selector).select(eq(request.ctx()), any());
         start(1);
 
         assertFalse(response(request).isSuccess());
@@ -398,7 +401,7 @@ class DecodeQueueConsumerTest {
         assertEquals(1, mainQueue.size());
         assertEquals(1L, queueCapacity.globalQueueAndEngineSubQueueCount());
         assertEquals(0, decode.getInflightCount());
-        verify(selector, never()).select(any(), any(), any());
+        verify(selector, never()).select(any(), any());
         verify(prefillCheck).release(request);
     }
 
@@ -409,8 +412,8 @@ class DecodeQueueConsumerTest {
         when(prefillCheck.isAvailable(request)).thenAnswer(call -> prefillAvailable.get());
         doAnswer(call -> {
             prefillAvailable.set(false);
-            return PlacementResult.blocked(RoleType.DECODE);
-        }).when(selector).select(eq(request.ctx()), any(), any());
+            return null;
+        }).when(selector).select(eq(request.ctx()), any());
         CountDownLatch returned = new CountDownLatch(1);
         doAnswer(call -> {
             Object result = call.callRealMethod();
@@ -425,7 +428,7 @@ class DecodeQueueConsumerTest {
         assertFalse(request.future().isDone());
         assertEquals(1, mainQueue.size());
         assertEquals(0, decode.getInflightCount());
-        verify(selector, times(1)).select(eq(request.ctx()), any(), any());
+        verify(selector, times(1)).select(eq(request.ctx()), any());
         verify(prefillCheck).release(request);
     }
 
@@ -446,24 +449,11 @@ class DecodeQueueConsumerTest {
     }
 
     @Test
-    void closedSelectionFailsDispatchAndReleasesPrefillSlot() throws Exception {
-        Request request = addWaiting("1", 30);
-        doReturn(PlacementResult.closed()).when(selector).select(any(), any(), any());
-        start(1);
-
-        assertEquals(StrategyErrorType.DISPATCH_FAILED.getErrorCode(), response(request).getCode());
-        pool.close();
-        assertEquals(Stage.FAILED, request.stage());
-        assertNull(decode.reservationHandle("1"));
-        verify(prefillCheck).release(request);
-    }
-
-    @Test
     void consumerContinuesAfterSelectionError() throws Exception {
         Request first = addWaiting("1", 30);
         doAnswer(call -> {
             throw new AssertionError("test selection failure");
-        }).when(selector).select(eq(first.ctx()), any(), any());
+        }).when(selector).select(eq(first.ctx()), any());
         start(1);
         assertEquals(StrategyErrorType.DISPATCH_FAILED.getErrorCode(), response(first).getCode());
 
@@ -476,12 +466,16 @@ class DecodeQueueConsumerTest {
     void requirementFailureFailsRequestWithoutReservation() throws Exception {
         config.getRouter().getRoles().getDecode().getAvailability().setMaxKvUsagePercent(0L);
         Request request = addWaiting("1", 30);
+        register(decode);
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        when(selector.select(any(), any()))
+                .thenAnswer(call -> realSelector.select(call.getArgument(0), call.getArgument(1)));
         start(1);
 
         assertEquals(StrategyErrorType.DISPATCH_FAILED.getErrorCode(), response(request).getCode());
         pool.close();
         assertNull(decode.reservationHandle("1"));
-        verify(selector, never()).select(any(), any(), any());
+        verify(selector).select(any(), any());
         verify(prefillCheck).release(request);
     }
 
@@ -525,8 +519,11 @@ class DecodeQueueConsumerTest {
     @Test
     void oversizedRequestCanUseEmptyDecodeWithoutPermit() throws Exception {
         Request request = addWaiting("1", 30);
-        doReturn(PlacementResult.rejected(Response.error(StrategyErrorType.RESOURCE_EXHAUSTED))).when(selector)
-                .select(any(), any(), any());
+        request.ctx().getRequest().setMaxNewTokens(2000);
+        updateDecodeStatus(otherDecode, Map.of(), Map.of(), false);
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        when(selector.select(any(), any()))
+                .thenAnswer(call -> realSelector.select(call.getArgument(0), call.getArgument(1)));
         register(otherDecode);
         start(1);
 
@@ -541,7 +538,9 @@ class DecodeQueueConsumerTest {
         updateDpStatus(decode, 0);
         updateDpStatus(otherDecode, 1);
         register(decode);
-        doReturn(PlacementResult.blocked(RoleType.DECODE)).when(selector).select(any(), any(), any());
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        when(selector.select(any(), any()))
+                .thenAnswer(call -> realSelector.select(call.getArgument(0), call.getArgument(1)));
         CountDownLatch blocked = new CountDownLatch(1);
         doAnswer(call -> {
             blocked.countDown();
@@ -568,8 +567,8 @@ class DecodeQueueConsumerTest {
         Request request = addWaiting("1", 30);
         AtomicBoolean prefillAvailable = new AtomicBoolean(true);
         when(prefillCheck.isAvailable(request)).thenAnswer(call -> prefillAvailable.get());
-        doReturn(PlacementResult.blocked(RoleType.DECODE)).when(selector).select(any(), any(), any());
         DecodeEndpoint emptyDecode = spy(otherDecode);
+        doReturn(new SelectedDecode(emptyDecode, true)).when(selector).select(any(), any());
         doAnswer(call -> {
             prefillAvailable.set(false);
             return call.callRealMethod();
@@ -587,8 +586,8 @@ class DecodeQueueConsumerTest {
     @Test
     void cancellationDuringEmptyReservationReleasesResources() throws Exception {
         Request request = addWaiting("1", 30);
-        doReturn(PlacementResult.blocked(RoleType.DECODE)).when(selector).select(any(), any(), any());
         DecodeEndpoint emptyDecode = spy(otherDecode);
+        doReturn(new SelectedDecode(emptyDecode, true)).when(selector).select(any(), any());
         doAnswer(call -> {
             Object result = call.callRealMethod();
             request.cancel(CancelReason.CLIENT_CANCELLED);
@@ -658,7 +657,7 @@ class DecodeQueueConsumerTest {
     void unchangedHeartbeatDoesNotExpireEmptyDecodeReservation() throws Exception {
         config.getRequestLifecycle().getRequest().setStatusUpdateTimeoutMs(1000L);
         Request request = addWaiting("1", 30);
-        doReturn(PlacementResult.blocked(RoleType.DECODE)).when(selector).select(any(), any(), any());
+        doReturn(new SelectedDecode(otherDecode, true)).when(selector).select(any(), any());
         register(otherDecode);
         start(1);
         assertTrue(response(request).isSuccess());
@@ -673,8 +672,8 @@ class DecodeQueueConsumerTest {
 
     private void start(int count) {
         pool = new DecodeQueueConsumerPoll(count, decodeQueue, availability,
-                () -> new DecodeQueueConsumer(decodeQueue, cleanup, selector, workerDirectory,
-                        new DecodePreemptionCoordinator(reporter), prefillCheck, queueReporter, decodeQueue::wake));
+                () -> new DecodeQueueConsumer(decodeQueue, cleanup, selector, new DecodePreemptionCoordinator(reporter),
+                        prefillCheck, queueReporter, decodeQueue::wake));
         pool.start();
     }
 
@@ -701,8 +700,8 @@ class DecodeQueueConsumerTest {
         return request.future().get(5, TimeUnit.SECONDS);
     }
 
-    private static PlacementResult<DecodeEndpoint, RoleType> success(DecodeEndpoint endpoint) {
-        return PlacementResult.success(endpoint);
+    private static SelectedDecode success(DecodeEndpoint endpoint) {
+        return new SelectedDecode(endpoint, false);
     }
 
     private static void register(DecodeEndpoint endpoint) {

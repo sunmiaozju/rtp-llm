@@ -1,8 +1,5 @@
 package org.flexlb.balance.endpoint;
 
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityLimit;
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityUsage;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRoutingView;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DispatchOutcome;
@@ -16,10 +13,14 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationReleaseResult;
 import org.flexlb.balance.schedulev2.RequestStatusTimeout;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.CapacityLimit;
+import org.flexlb.dao.route.CapacityRelease;
+import org.flexlb.dao.route.CapacityUsage;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.monitor.RequestSchedulerReporter;
+import org.flexlb.util.CommonUtils;
 import org.flexlb.util.PriorityNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -175,13 +176,17 @@ final class DecodeState {
 
     record ReservedDispatch(ReservationHandle reservation, DispatchLease permit) {}
 
+    boolean isEmpty(WorkerStatus.EngineObservation engine) {
+        return reservedRequestCount.get() == 0 && confirmedEngineOwnedCount == 0 && engine.runningQueryLen() == 0L
+                && engine.waitingQueryLen() == 0L;
+    }
+
     ReservationHandle reserveIfEmpty(String requestId, long requiredKv, long kvBudget, int priority) {
         lock.lock();
         try {
             WorkerStatus.EngineObservation engine = this.status.committedWorkerStatus().fields();
             // 1. 空机判定与本地预占共用节点锁，两个消费者不能同时按空机绕过容量限制。
-            if (reservedRequestCount.get() != 0 || confirmedEngineOwnedCount != 0 || engine.runningQueryLen() != 0L
-                    || engine.waitingQueryLen() != 0L || !requestIdAvailableForReservationLocked(requestId)) {
+            if (!isEmpty(engine) || !requestIdAvailableForReservationLocked(requestId)) {
                 return null;
             }
             // 2. 不检查大请求的 KV 额度，但仍计入节点账本，使后续消费者看到节点已非空。
@@ -764,27 +769,18 @@ final class DecodeState {
                 + activeEngineDispatchPermitCount;
     }
 
-    boolean hasCapacityForSelection(WorkerStatus.EngineObservation engine,
-                                    CapacityLimit limit,
-                                    long inputKv,
-                                    long budgetKv) {
-        long reservedInputKv = placementReservedInputKv(inputKvReservedTotal.get());
-        return limit.hasCapacity(getTotalLoad(), Math.max(0L, engine.totalKvCacheTokens()),
-                Math.max(0L, engine.availableKvCacheTokens()), reservedInputKv, placementKvUsed(engine), inputKv,
-                budgetKv);
-    }
-
     long placementKvUsed(WorkerStatus.EngineObservation engine) {
         return placementKvUsed(engine, inputAndMaxOutputKvReservedTotal.get());
     }
 
     private long placementKvUsed(WorkerStatus.EngineObservation engine, long reservedBudgetKv) {
-        return saturatedAddNonNegative(saturatedAddNonNegative(reportedKvUsed(engine), reservedBudgetKv),
+        return CommonUtils.saturatedAddNonNegative(
+                CommonUtils.saturatedAddNonNegative(reportedKvUsed(engine), reservedBudgetKv),
                 priorityPreemptionHeldKvBudget.get());
     }
 
     private long placementReservedInputKv(long reservedInputKv) {
-        return saturatedAddNonNegative(reservedInputKv, priorityPreemptionHeldRequiredKv.get());
+        return CommonUtils.saturatedAddNonNegative(reservedInputKv, priorityPreemptionHeldRequiredKv.get());
     }
 
     private CapacityUsage dispatchCapacityUsage(WorkerStatus.EngineObservation fields) {
@@ -798,10 +794,9 @@ final class DecodeState {
 
     private long dispatchReservedInputKv() {
         long heldRequiredKv = priorityPreemptionHeldRequiredKv.get();
-        return saturatedAddNonNegative(
-                saturatedAddNonNegative(Math.max(0L, inputKvReservedTotal.get() - queuedInputKvReservedTotal.get()),
-                        engineDispatchPermitRequiredKvReservedTotal.get()),
-                heldRequiredKv);
+        return CommonUtils.saturatedAddNonNegative(CommonUtils.saturatedAddNonNegative(
+                Math.max(0L, inputKvReservedTotal.get() - queuedInputKvReservedTotal.get()),
+                engineDispatchPermitRequiredKvReservedTotal.get()), heldRequiredKv);
     }
 
     private static long reportedKvUsed(WorkerStatus.EngineObservation fields) {
@@ -814,8 +809,7 @@ final class DecodeState {
         long localEngineFacing = Math.max(0L,
                 inputAndMaxOutputKvReservedTotal.get() - queuedInputAndMaxOutputKvReservedTotal.get())
                 + engineDispatchPermitKvBudgetReservedTotal.get();
-        return saturatedAddNonNegative(
-                saturatedAddNonNegative(reportedUsed, localEngineFacing),
+        return CommonUtils.saturatedAddNonNegative(CommonUtils.saturatedAddNonNegative(reportedUsed, localEngineFacing),
                 priorityPreemptionHeldKvBudget.get());
     }
 
@@ -1646,12 +1640,14 @@ final class DecodeState {
                 requests[priority]++;
                 long requiredTokens = task.confirmed() ? task.kvTokens() : task.releasableKvTokens();
                 long budgetTokens = task.confirmed() ? task.kvTokens() : task.kvBudgetTokens();
-                requiredKv[priority] = saturatedAddNonNegative(requiredKv[priority], requiredTokens);
-                kvBudget[priority] = saturatedAddNonNegative(kvBudget[priority], budgetTokens);
+                requiredKv[priority] = CommonUtils.saturatedAddNonNegative(requiredKv[priority], requiredTokens);
+                kvBudget[priority] = CommonUtils.saturatedAddNonNegative(kvBudget[priority], budgetTokens);
                 if (task.confirmed() || !task.queued() || task.dispatchPermit() != null) {
                     engineRequests[priority]++;
-                    engineRequiredKv[priority] = saturatedAddNonNegative(engineRequiredKv[priority], requiredTokens);
-                    engineKvBudget[priority] = saturatedAddNonNegative(engineKvBudget[priority], budgetTokens);
+                    engineRequiredKv[priority] =
+                            CommonUtils.saturatedAddNonNegative(engineRequiredKv[priority], requiredTokens);
+                    engineKvBudget[priority] =
+                            CommonUtils.saturatedAddNonNegative(engineKvBudget[priority], budgetTokens);
                 }
             }
             CapacityRelease[] placementOccupancy = new CapacityRelease[PriorityNormalizer.MAX_PRIORITY + 1];
@@ -1857,12 +1853,4 @@ final class DecodeState {
             decodeRequests.remove(requestId, state);
         }
     }
-
-    static long saturatedAddNonNegative(long left, long right) {
-        if (left < 0 || right < 0) {
-            throw new IllegalArgumentException("KV admission counters must be non-negative");
-        }
-        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
-    }
-
 }

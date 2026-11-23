@@ -3,9 +3,13 @@ package org.flexlb.balance.endpoint;
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.balance.scheduler.RequestRegistry;
+import org.flexlb.balance.scheduler.SchedulingTestConfig;
 import org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry;
+import org.flexlb.balance.strategy.DecodeSelector;
 import org.flexlb.config.ConfigService;
 import org.flexlb.config.DispatcherConfig;
+import org.flexlb.dao.BalanceContext;
+import org.flexlb.dao.loadbalance.Request;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
@@ -199,8 +203,14 @@ class EndpointRegistryRoleTest {
                 "site-a");
         var endpoint = EndpointTestSupport.publishEndpoint(registry, RoleType.DECODE, address, status);
         var directory = new WorkerDirectory(registry);
-        var entries = directory.getDecodeCandidates("group-a");
+        var entries = directory.decodeRoutingEntries();
         assertEquals(List.of(Map.entry(address, endpoint)), entries);
+        var selector = new DecodeSelector(directory);
+        var context = new BalanceContext(SchedulingTestConfig.newConfig());
+        var request = new Request();
+        request.setRequestId("decode-discovery-group");
+        context.setRequest(request);
+        assertSame(endpoint, selector.select(context, "group-a").endpoint());
 
         status.lock.lock();
         try {
@@ -209,8 +219,9 @@ class EndpointRegistryRoleTest {
             status.lock.unlock();
         }
 
-        assertTrue(directory.getDecodeCandidates("group-a").isEmpty());
-        assertSame(entries, directory.getDecodeCandidates("group-b"));
+        assertNull(selector.select(context, "group-a"));
+        assertSame(endpoint, selector.select(context, "group-b").endpoint());
+        assertSame(entries, directory.decodeRoutingEntries());
     }
 
     @Test
@@ -227,13 +238,13 @@ class EndpointRegistryRoleTest {
         retire(RoleType.DECODE, address, first);
 
         assertEquals(List.of(firstEntry), entries);
-        assertNull(new WorkerDirectory(registry).findDecodeEndpoint(firstEntry));
+        assertNull(registry.get(RoleType.DECODE, address));
         assertEquals(List.of("127.0.0.1:8031"),
                 registry.decodeRoutingEntries().stream().map(Map.Entry::getKey).toList());
     }
 
     @Test
-    void decode_routing_entry_resolves_only_its_exact_same_address_generation() {
+    void decode_routing_entry_retains_its_exact_same_address_generation() {
         String address = "decode-replacement-alias";
         WorkerStatus oldStatus = status(RoleType.DECODE, 8020);
         EndpointTestSupport.publishEndpoint(
@@ -249,12 +260,11 @@ class EndpointRegistryRoleTest {
                         address,
                         replacementStatus);
 
-        var directory = new WorkerDirectory(registry);
-        assertNull(directory.findDecodeEndpoint(oldEntry), "an old entry must not resolve a same-address replacement");
         var replacementEntry = registry.decodeRoutingEntries().getFirst();
         assertEquals(address, replacementEntry.getKey());
         assertNotSame(oldEntry.getValue(), replacementEntry.getValue());
-        assertSame(replacement, directory.findDecodeEndpoint(replacementEntry));
+        assertSame(oldStatus, oldEntry.getValue().getStatus());
+        assertSame(replacement, replacementEntry.getValue());
     }
 
     @Test

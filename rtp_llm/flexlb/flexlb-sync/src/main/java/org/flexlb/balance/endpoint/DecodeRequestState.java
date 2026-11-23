@@ -2,8 +2,8 @@ package org.flexlb.balance.endpoint;
 
 import lombok.Getter;
 import lombok.Setter;
-import org.flexlb.balance.endpoint.DecodeEndpoint.CapacityRelease;
 import org.flexlb.balance.endpoint.DecodeState.DispatchLease;
+import org.flexlb.dao.route.CapacityRelease;
 import org.flexlb.enums.DecodeTaskPhase;
 
 /**

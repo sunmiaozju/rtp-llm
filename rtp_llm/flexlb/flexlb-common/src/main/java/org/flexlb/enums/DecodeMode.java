@@ -1,4 +1,4 @@
-package org.flexlb.balance.scheduler.decode;
+package org.flexlb.enums;
 
 import org.flexlb.config.FlexlbConfig;
 

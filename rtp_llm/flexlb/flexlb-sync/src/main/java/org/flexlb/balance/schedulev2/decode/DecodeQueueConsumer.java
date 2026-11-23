@@ -1,16 +1,10 @@
 package org.flexlb.balance.schedulev2.decode;
 
-import org.flexlb.balance.PlacementResult;
-import org.flexlb.balance.PlacementResult.Status;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.endpoint.EndpointRegistry;
-import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.balance.eviction.DecodeEndpointSnapshot;
 import org.flexlb.balance.eviction.DecodeEvictionProposal;
 import org.flexlb.balance.eviction.DecodePreemptionCoordinator;
 import org.flexlb.balance.eviction.EvictionPlanner;
-import org.flexlb.balance.scheduler.decode.DecodeMode;
-import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.balance.schedulev2.PrefillPublishCheck;
 import org.flexlb.balance.schedulev2.QueueBlockReason;
 import org.flexlb.balance.schedulev2.RequestCleanup;
@@ -18,14 +12,16 @@ import org.flexlb.balance.schedulev2.request.DecodeChoice;
 import org.flexlb.balance.schedulev2.request.Request;
 import org.flexlb.balance.schedulev2.request.Stage;
 import org.flexlb.balance.strategy.DecodeSelector;
+import org.flexlb.balance.strategy.SelectedDecode;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
 import org.flexlb.dao.loadbalance.ServerStatus;
 import org.flexlb.dao.loadbalance.StrategyErrorType;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.enums.DecodeMode;
 import org.flexlb.service.monitor.V2QueueReporter;
-import org.flexlb.sync.status.WorkerDirectory;
 import org.flexlb.util.CommonUtils;
 import org.flexlb.util.Logger;
 import org.flexlb.util.PriorityNormalizer;
@@ -49,7 +45,6 @@ public final class DecodeQueueConsumer implements Runnable {
     private final DecodeQueue decodeQueue;
     private final RequestCleanup cleanup;
     private final DecodeSelector decodeSelector;
-    private final WorkerDirectory workerDirectory;
     private final DecodePreemptionCoordinator preemptionCoordinator;
     private final PrefillPublishCheck prefillCheck;
     private final V2QueueReporter queueReporter;
@@ -59,7 +54,6 @@ public final class DecodeQueueConsumer implements Runnable {
     public DecodeQueueConsumer(DecodeQueue decodeQueue,
                                RequestCleanup cleanup,
                                DecodeSelector decodeSelector,
-                               WorkerDirectory workerDirectory,
                                DecodePreemptionCoordinator preemptionCoordinator,
                                PrefillPublishCheck prefillCheck,
                                V2QueueReporter queueReporter,
@@ -67,7 +61,6 @@ public final class DecodeQueueConsumer implements Runnable {
         this.decodeQueue = decodeQueue;
         this.cleanup = cleanup;
         this.decodeSelector = decodeSelector;
-        this.workerDirectory = workerDirectory;
         this.preemptionCoordinator = preemptionCoordinator;
         this.prefillCheck = prefillCheck;
         this.queueReporter = queueReporter;
@@ -103,7 +96,6 @@ public final class DecodeQueueConsumer implements Runnable {
     private void process(Request request) throws InterruptedException {
         boolean returnToMain = false;
         try {
-            DecodeRequirement requirement = DecodeRequirement.capture(request.ctx());
             String group = request.selectedPrefill().serverStatus().getGroup();
             while (running.get()) {
                 if (request.stage() != Stage.DECODE_WAITING) {
@@ -115,7 +107,7 @@ public final class DecodeQueueConsumer implements Runnable {
                 }
                 // 尝试前记下通知版本；尝试期间的容量变化不应再睡眠。
                 long version = decodeQueue.changeVersion();
-                if (selectAndPublish(request, group, requirement)) { // 发布成功，本次处理完成
+                if (selectAndPublish(request, group)) { // 发布成功，本次处理完成
                     break;
                 }
                 // 恢复等待阶段，等待容量变化后重试，避免没有可用 Decode 时忙循环。
@@ -141,36 +133,24 @@ public final class DecodeQueueConsumer implements Runnable {
         }
     }
 
-    private boolean selectAndPublish(Request request, String group, DecodeRequirement requirement) {
-        PlacementResult<DecodeEndpoint, RoleType> result = decodeSelector.select(request.ctx(), requirement, group);
-
-        switch (result.status()) {
-            case SUCCESS -> {
-                return reserve(request, result.value(), requirement);
-            }
-            case BLOCKED, REJECTED -> { // 无可用节点或请求超过所有节点额度，仍可尝试空机放行
-                if (placeOnEmptyDecode(request, requirement, group)) {
-                    return true;
-                }
-                QueueBlockReason queueBlockReason = result.status() == Status.REJECTED
-                        ? QueueBlockReason.REQUEST_EXCEEDS_KV_BUDGET
-                        : QueueBlockReason.NO_AVAILABLE_DECODE;
-                queueReporter.blocked(request, Stage.DECODE_WAITING, queueBlockReason, "all");
-                return false;
-            }
-            default -> { // 选择器关闭等终态，重试无意义，直接失败请求
-                request.fail(StrategyErrorType.DISPATCH_FAILED, "decode selection " + result.status());
-                return false;
-            }
+    private boolean selectAndPublish(Request request, String group) {
+        SelectedDecode selected = decodeSelector.select(request.ctx(), group);
+        if (selected == null) {
+            queueReporter.blocked(request, Stage.DECODE_WAITING, QueueBlockReason.NO_AVAILABLE_DECODE, "all");
+            return false;
         }
+        return selected.selectedAsEmpty()
+                ? placeOnEmptyDecode(request, selected.endpoint())
+                : reserve(request, selected.endpoint());
     }
 
-    private boolean reserve(Request request, DecodeEndpoint endpoint, DecodeRequirement requirement) {
+    private boolean reserve(Request request, DecodeEndpoint endpoint) {
         if (endpoint.isRetired()) {
             return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING);
         }
         endpoint.addEngineDispatchCapacityListener(capacityWake);
         List<DecodeEndpoint.DecodeRequestView> preemptedRequests = new ArrayList<>();
+        DecodeRequirement requirement = request.ctx().getDecodeRequirement();
         DecodeEndpoint.DispatchReservation reserved =
                 endpoint.reserveForDispatch(request.requestId(), requirement.inputKvTokens(),
                         requirement.inputAndMaxOutputKvTokens(), requirement.priority(), requirement.capacity());
@@ -199,39 +179,19 @@ public final class DecodeQueueConsumer implements Runnable {
     /**
      * 空机放行不取 permit，预占仍记入节点账本；空机确认和预占在节点锁内完成。
      */
-    private boolean placeOnEmptyDecode(Request request, DecodeRequirement requirement, String group) {
-        DecodeChoice choice = reserveEmptyDecode(request, group, requirement);
-        if (choice == null) {
+    private boolean placeOnEmptyDecode(Request request, DecodeEndpoint endpoint) {
+        if (endpoint.isRetired()) {
             return false;
         }
+        DecodeRequirement requirement = request.ctx().getDecodeRequirement();
+        var reservation = endpoint.reserveIfEmpty(request.requestId(), requirement.inputKvTokens(),
+                requirement.inputAndMaxOutputKvTokens(), requirement.priority());
+        if (reservation == null) {
+            return false;
+        }
+        var choice = new DecodeChoice(endpoint, reservation);
         request.setDecodeChoice(choice);
         return publish(request, choice, null, Stage.DECODE_WAITING);
-    }
-
-    /**
-     * 逐台尝试原子预占 group 里的空 Decode，返回预占；没有成功时返回 null。
-     * 空的意思是引擎上报的 running 和 waiting 都是 0，且本地没有 reserve 或引擎已确认的请求；
-     * 引擎上报只筛候选，最终空机判定和预占在节点锁内完成，避免多个消费者同时放行。
-     */
-    private DecodeChoice reserveEmptyDecode(Request request, String group, DecodeRequirement requirement) {
-        var endpoints = EndpointRegistry.getEndpointsByRole(RoleType.DECODE);
-        for (var entry : workerDirectory.getDecodeCandidates(group)) {
-            WorkerEndpoint candidate = endpoints.get(entry.getKey());
-            if (!(candidate instanceof DecodeEndpoint endpoint) || endpoint.isRetired()) {
-                continue;
-            }
-            WorkerStatus worker = endpoint.getStatus();
-            WorkerStatus.EngineObservation engineObservation = worker.committedEngineObservation();
-            if (engineObservation.runningQueryLen() != 0L || engineObservation.waitingQueryLen() != 0L) {
-                continue;
-            }
-            DecodeEndpoint.ReservationHandle reservation = endpoint.reserveIfEmpty(request.requestId(),
-                    requirement.inputKvTokens(), requirement.inputAndMaxOutputKvTokens(), requirement.priority());
-            if (reservation != null) {
-                return new DecodeChoice(endpoint, reservation);
-            }
-        }
-        return null;
     }
 
     private boolean publish(Request request,

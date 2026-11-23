@@ -1,5 +1,6 @@
 package org.flexlb.balance.endpoint;
 
+import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.grpc.WorkerStatusPBs;
@@ -18,7 +19,7 @@ public final class DeliverySettlementTestSupport {
 
     public static void dispatchDecode(DecodeEndpoint endpoint, DecodeEndpoint.ReservationHandle reservation) {
         queueDecode(endpoint, reservation);
-        var permit = endpoint.acquireDispatchPermit(reservation, new DecodeEndpoint.CapacityLimit(0, 100L)).permit();
+        var permit = endpoint.acquireDispatchPermit(reservation, new CapacityLimit(0, 100L)).permit();
         assertNotNull(permit);
         assertEquals(DecodeEndpoint.EngineDispatchPermitTransferStatus.TRANSFERRED,
                 permit.dispatch());

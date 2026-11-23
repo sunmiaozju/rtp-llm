@@ -1,6 +1,7 @@
 package org.flexlb.balance.endpoint;
 
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
@@ -57,7 +58,7 @@ class DecodeRequestExpirationTest {
         DecodeEndpoint.ReservationHandle reservation = reserve(1L, 500, 700, 0);
         markQueued(1L);
         DecodeEndpoint.EngineDispatchPermitAcquisition acquired =
-                endpoint.acquireDispatchPermit(reservation, new DecodeEndpoint.CapacityLimit(1, 100L));
+                endpoint.acquireDispatchPermit(reservation, new CapacityLimit(1, 100L));
         assertEquals(DecodeEndpoint.EngineDispatchPermitAcquireStatus.SUCCESS, acquired.status());
         assertEquals(1, endpoint.resourceSnapshot().activeDispatchPermits());
 
@@ -73,7 +74,7 @@ class DecodeRequestExpirationTest {
         DecodeEndpoint.ReservationHandle reservation = reserve(1L, 500, 700, 0);
         markQueued(1L);
         DecodeEndpoint.EngineDispatchPermitAcquisition acquired =
-                endpoint.acquireDispatchPermit(reservation, new DecodeEndpoint.CapacityLimit(1, 100L));
+                endpoint.acquireDispatchPermit(reservation, new CapacityLimit(1, 100L));
         assertEquals(DecodeEndpoint.EngineDispatchPermitTransferStatus.TRANSFERRED,
                 acquired.permit().dispatch());
         assertEquals(1, endpoint.routingView().engineLoad());
@@ -204,7 +205,7 @@ class DecodeRequestExpirationTest {
                                                                  int priority) {
         return endpoint.beginReturnedPreemption(attemptToken, victimIds.stream().map(reservations::get).toList(),
                 Long.toString(incomingRequestId), requiredKv, kvBudget, priority,
-                new DecodeEndpoint.CapacityLimit(Math.max(1, endpoint.routingView().totalLoad()), 100));
+                new CapacityLimit(Math.max(1, endpoint.routingView().totalLoad()), 100));
     }
 
     private static TaskInfoPB.Builder task(long requestId, TaskPhase phase, long inputLength) {

@@ -3,6 +3,7 @@ package org.flexlb.balance.endpoint;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
@@ -41,7 +42,7 @@ class DecodeEndpointTest {
     @Test
     void reserveForDispatchAcquiresCapacityReservationAndPermitTogether() {
         updateStatus(null, null, 10000L);
-        DecodeEndpoint.CapacityLimit capacity = new DecodeEndpoint.CapacityLimit(1L, 100L);
+        CapacityLimit capacity = new CapacityLimit(1L, 100L);
         var first = endpoint.reserveForDispatch("100", 500L, 1000L, 30, capacity);
         assertNotNull(first);
         assertNotNull(first.reservation());
@@ -57,7 +58,7 @@ class DecodeEndpointTest {
     @Test
     void releasingUnpublishedDispatchReservationReleasesPermitToo() {
         updateStatus(null, null, 10000L);
-        DecodeEndpoint.CapacityLimit capacity = new DecodeEndpoint.CapacityLimit(1L, 100L);
+        CapacityLimit capacity = new CapacityLimit(1L, 100L);
         var first = endpoint.reserveForDispatch("100", 500L, 1000L, 30, capacity);
         assertNotNull(first);
         assertEquals(DecodeEndpoint.ReservationReleaseResult.RELEASED,
@@ -402,7 +403,7 @@ class DecodeEndpointTest {
 
     private DecodeEndpoint.EngineDispatchPermit acquirePermit(long requestId) {
         DecodeEndpoint.EngineDispatchPermitAcquisition acquisition =
-                endpoint.acquireDispatchPermit(reservations.get(requestId), new DecodeEndpoint.CapacityLimit(0, 100L));
+                endpoint.acquireDispatchPermit(reservations.get(requestId), new CapacityLimit(0, 100L));
         assertEquals(DecodeEndpoint.EngineDispatchPermitAcquireStatus.SUCCESS, acquisition.status());
         assertNotNull(acquisition.permit());
         return acquisition.permit();

@@ -1,128 +1,173 @@
 package org.flexlb.balance.strategy;
 
-import org.flexlb.balance.PlacementResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint;
-import org.flexlb.balance.scheduler.decode.DecodeRequirement;
 import org.flexlb.dao.BalanceContext;
-import org.flexlb.dao.loadbalance.RejectReason;
-import org.flexlb.dao.loadbalance.Response;
-import org.flexlb.dao.loadbalance.StrategyErrorType;
+import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.sync.status.DpGroupMembers;
 import org.flexlb.sync.status.WorkerDirectory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Component
 public class DecodeSelector {
 
-    private static final int MAX_SELECTION_ATTEMPTS = 2;
-    private enum Availability { READY, BUSY, IMPOSSIBLE }
+    private static final int DEFAULT_WORKER_LIST_CAPACITY = 16;
+
     private final WorkerDirectory workerDirectory;
-    private final EndpointRoundRobin rotation;
+    private long lastSeenDpSize;
+    private int lastEmptyWorkerPeakSize = DEFAULT_WORKER_LIST_CAPACITY;
+    private int lastLowestCostWorkerPeakSize = DEFAULT_WORKER_LIST_CAPACITY;
 
-    public DecodeSelector(WorkerDirectory workerDirectory,
-                          EndpointRoundRobin rotation) {
+    public DecodeSelector(WorkerDirectory workerDirectory) {
         this.workerDirectory = workerDirectory;
-        this.rotation = rotation;
     }
 
-    public PlacementResult<DecodeEndpoint, RoleType> select(DecodeRequirement request, String group) {
-        return select(null, request, group);
-    }
+    public SelectedDecode select(BalanceContext context, String group) {
+        var directory = workerDirectory.decodeRoutingEntries();
+        int workerCount = directory.size();
+        if (workerCount == 0) {
+            return null;
+        }
 
-    /**
-     * Selects the least-cost available Decode endpoint and records the choice
-     * reason when the caller supplies the request context.
-     */
-    public PlacementResult<DecodeEndpoint, RoleType> select(BalanceContext context,
-                                                            DecodeRequirement request,
-                                                            String group) {
-        for (int attempt = 0; attempt < MAX_SELECTION_ATTEMPTS; attempt++) {
-            List<Map.Entry<String, DecodeEndpoint>> candidates = workerDirectory.getDecodeCandidates(group);
-            if (candidates.isEmpty()) {
-                return PlacementResult.blocked(RoleType.DECODE);
+        DecodeRequirement requirement = context.getDecodeRequirement();
+        Map<String, DpGroupMembers> dpGroups = null;
+        var emptyWorkers = new ArrayList<Map.Entry<String, DecodeEndpoint>>(lastEmptyWorkerPeakSize);
+        var lowestCostWorkers = new ArrayList<Map.Entry<String, DecodeEndpoint>>(lastLowestCostWorkerPeakSize);
+        double lowestCost = Double.POSITIVE_INFINITY;
+        for (var entry : directory) {
+            WorkerStatus status = entry.getValue().getStatus();
+            if (group != null && !group.equals(status.topologySnapshot().group())) {
+                continue;
             }
-            Availability[] availabilityByWorker = new Availability[candidates.size()];
-            Availability preferredAvailability = Availability.IMPOSSIBLE;
-            boolean allWorkersTooSmall = true;
-            long largestKvBudget = 0L;
-            for (int index = 0; index < candidates.size(); index++) {
-                DecodeEndpoint endpoint = candidates.get(index).getValue();
-                var engine = endpoint.getStatus().committedEngineObservation();
-                long totalKv = Math.max(0L, engine.totalKvCacheTokens());
-                long kvBudget = request.capacity().kvBudget(totalKv);
-                Availability availability;
-                if (totalKv > 0L && request.inputAndMaxOutputKvTokens() > kvBudget) {
-                    availability = Availability.IMPOSSIBLE;
-                } else {
-                    availability = endpoint.hasCapacityForSelection(engine, request.capacity(), request.inputKvTokens(),
-                            request.inputAndMaxOutputKvTokens()) ? Availability.READY : Availability.BUSY;
+
+            var engine = status.committedEngineObservation();
+            String dpMaster = engine.dpMasterAddress();
+            if (dpMaster != null) {
+                long dpSize = engine.dpSize();
+                if (dpGroups == null) {
+                    dpGroups = dpSize > 1 && lastSeenDpSize > 1
+                            ? HashMap.newHashMap((int) Math.max(16L, workerCount / lastSeenDpSize))
+                            : new HashMap<>();
                 }
-                availabilityByWorker[index] = availability;
-                allWorkersTooSmall &= availability == Availability.IMPOSSIBLE;
-                largestKvBudget = Math.max(largestKvBudget, kvBudget);
-                if (availability == Availability.READY
-                        || availability == Availability.BUSY && preferredAvailability == Availability.IMPOSSIBLE) {
-                    preferredAvailability = availability;
-                }
+                dpGroups.computeIfAbsent(dpMaster, ignored -> new DpGroupMembers()).add(dpSize, engine.dpRank());
+                lastSeenDpSize = dpSize;
             }
-            if (allWorkersTooSmall) {
-                return PlacementResult.rejected(oversizedRequestFailure(
-                        request.inputAndMaxOutputKvTokens(), largestKvBudget));
-            }
-            Availability selectedAvailability = preferredAvailability;
-            double[] costByWorker = new double[candidates.size()];
-            double minimumCost = Double.POSITIVE_INFINITY;
-            int minimumCostCandidateCount = 0;
-            for (int index = 0; index < candidates.size(); index++) {
-                if (availabilityByWorker[index] == selectedAvailability) {
-                    DecodeEndpoint endpoint = candidates.get(index).getValue();
-                    var engine = endpoint.getStatus().committedEngineObservation();
-                    double cost = request.costFormula()
-                            .evaluate(endpoint.totalLoad(), request.capacity().maxEngineRequests(),
-                                    endpoint.placementKvUsed(engine), Math.max(0L, engine.totalKvCacheTokens()));
-                    costByWorker[index] = cost;
-                    if (Double.isFinite(cost)) {
-                        if (cost < minimumCost) {
-                            minimumCost = cost;
-                            minimumCostCandidateCount = 1;
-                        } else if (cost == minimumCost) {
-                            minimumCostCandidateCount++;
-                        }
-                    }
-                }
-            }
-            if (!Double.isFinite(minimumCost)) {
-                throw new IllegalStateException("Decode cost formula produced no finite score: "
-                        + request.costFormula().expression());
-            }
-            double selectedCost = minimumCost;
-            int selectedIndex = rotation.next(RoleType.DECODE, group, candidates.size(),
-                    i -> availabilityByWorker[i] == selectedAvailability && costByWorker[i] == selectedCost,
-                    i -> candidates.get(i).getKey());
-            if (selectedIndex < 0) {
-                throw new IllegalStateException("No Decode candidate matched the selected cost and availability");
-            }
-            DecodeEndpoint endpoint = workerDirectory.findDecodeEndpoint(candidates.get(selectedIndex));
-            if (endpoint != null) {
-                if (context != null) {
-                    context.recordSelectionReason(RoleType.DECODE,
-                            minimumCostCandidateCount > 1
-                                    ? "DECODE_MIN_COST_ROUND_ROBIN_TIEBREAK"
-                                    : "DECODE_MIN_COST");
-                }
-                return PlacementResult.success(endpoint);
+
+            lowestCost = collectCandidate(entry, engine, requirement, emptyWorkers, lowestCostWorkers, lowestCost);
+        }
+
+        if (dpGroups != null) {
+            boolean hadLowestCostWorkers = !lowestCostWorkers.isEmpty();
+            removeIncompleteDpWorkers(emptyWorkers, dpGroups);
+            removeIncompleteDpWorkers(lowestCostWorkers, dpGroups);
+            if (hadLowestCostWorkers && emptyWorkers.isEmpty() && lowestCostWorkers.isEmpty()) {
+                return selectForDpFallBack(context, group, directory, dpGroups, emptyWorkers, lowestCostWorkers,
+                        requirement);
             }
         }
-        return PlacementResult.blocked(RoleType.DECODE);
+        return chooseFromCandidates(context, emptyWorkers, lowestCostWorkers, lowestCost, requirement);
     }
 
-    private static Response oversizedRequestFailure(long required, long maximum) {
-        return Response.error(StrategyErrorType.RESOURCE_EXHAUSTED, RejectReason.RESOURCE_EXHAUSTED,
-                "Decode prompt plus output demand=" + required + " exceeds every worker KV admission budget; maximum="
-                        + maximum);
+    private SelectedDecode selectForDpFallBack(BalanceContext context,
+                                               String group,
+                                               List<Map.Entry<String, DecodeEndpoint>> directory,
+                                               Map<String, DpGroupMembers> dpGroups,
+                                               List<Map.Entry<String, DecodeEndpoint>> emptyWorkers,
+                                               List<Map.Entry<String, DecodeEndpoint>> lowestCostWorkers,
+                                               DecodeRequirement requirement) {
+        double lowestCost = Double.POSITIVE_INFINITY;
+        for (var entry : directory) {
+            WorkerStatus status = entry.getValue().getStatus();
+            if (group != null && !group.equals(status.topologySnapshot().group())) {
+                continue;
+            }
+            var engine = status.committedEngineObservation();
+            if (hasIncompleteDpGroup(dpGroups, engine.dpMasterAddress())) {
+                continue;
+            }
+
+            lowestCost = collectCandidate(entry, engine, requirement, emptyWorkers, lowestCostWorkers, lowestCost);
+        }
+        return chooseFromCandidates(context, emptyWorkers, lowestCostWorkers, lowestCost, requirement);
     }
 
+    private double collectCandidate(Map.Entry<String, DecodeEndpoint> entry,
+                                    WorkerStatus.EngineObservation engine,
+                                    DecodeRequirement requirement,
+                                    List<Map.Entry<String, DecodeEndpoint>> emptyWorkers,
+                                    List<Map.Entry<String, DecodeEndpoint>> lowestCostWorkers,
+                                    double lowestCost) {
+        DecodeEndpoint endpoint = entry.getValue();
+        if (endpoint.isEmptyForSelection(engine)) {
+            emptyWorkers.add(entry);
+            lastEmptyWorkerPeakSize = Math.max(lastEmptyWorkerPeakSize, emptyWorkers.size());
+            return lowestCost;
+        }
+
+        double cost = requirement.costFormula()
+                .evaluate(endpoint.totalLoad(), requirement.capacity().maxEngineRequests(),
+                        endpoint.placementKvUsed(engine), Math.max(0L, engine.totalKvCacheTokens()));
+        // Retain invalid scores until DP filtering can distinguish them from no routable workers.
+        if (!Double.isFinite(cost)) {
+            cost = Double.POSITIVE_INFINITY;
+        }
+        if (cost < lowestCost) {
+            lowestCostWorkers.clear();
+            lowestCost = cost;
+        }
+        if (cost == lowestCost) {
+            lowestCostWorkers.add(entry);
+            lastLowestCostWorkerPeakSize = Math.max(lastLowestCostWorkerPeakSize, lowestCostWorkers.size());
+        }
+        return lowestCost;
+    }
+
+    private static SelectedDecode chooseFromCandidates(BalanceContext context,
+                                                       List<Map.Entry<String, DecodeEndpoint>> emptyWorkers,
+                                                       List<Map.Entry<String, DecodeEndpoint>> lowestCostWorkers,
+                                                       double lowestCost,
+                                                       DecodeRequirement requirement) {
+        if (!emptyWorkers.isEmpty()) {
+            return choose(context, emptyWorkers, true);
+        }
+        if (lowestCostWorkers.isEmpty()) {
+            return null;
+        }
+        if (!Double.isFinite(lowestCost)) {
+            throw new IllegalStateException(
+                    "Decode cost formula produced no finite score: " + requirement.costFormula().expression());
+        }
+        return choose(context, lowestCostWorkers, false);
+    }
+
+    private static SelectedDecode choose(BalanceContext context,
+                                         List<Map.Entry<String, DecodeEndpoint>> workers,
+                                         boolean selectedAsEmpty) {
+        int count = workers.size();
+        int index = count == 1 ? 0 : ThreadLocalRandom.current().nextInt(count);
+        String reason = selectedAsEmpty ? "DECODE_EMPTY_WORKER" : "DECODE_MIN_COST";
+        context.recordSelectionReason(RoleType.DECODE, reason);
+        return new SelectedDecode(workers.get(index).getValue(), selectedAsEmpty);
+    }
+
+    private static void removeIncompleteDpWorkers(List<Map.Entry<String, DecodeEndpoint>> workers,
+                                                  Map<String, DpGroupMembers> dpGroups) {
+        workers.removeIf(entry -> hasIncompleteDpGroup(dpGroups,
+                entry.getValue().getStatus().committedEngineObservation().dpMasterAddress()));
+    }
+
+    private static boolean hasIncompleteDpGroup(Map<String, DpGroupMembers> dpGroups, String dpMaster) {
+        if (dpMaster == null) {
+            return false;
+        }
+        DpGroupMembers members = dpGroups.get(dpMaster);
+        return members == null || !members.hasAllRanks();
+    }
 }

@@ -2,8 +2,10 @@ package org.flexlb.balance.endpoint;
 
 import org.flexlb.balance.scheduler.EndpointEventHandler;
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.config.RoutingConfig;
 import org.flexlb.dao.master.WorkerStatus;
+import org.flexlb.dao.route.CapacityLimit;
+import org.flexlb.dao.route.CapacityRelease;
+import org.flexlb.dao.route.CapacityUsage;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
@@ -23,7 +25,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public class DecodeEndpoint extends WorkerEndpoint {
     private static final Logger logger = LoggerFactory.getLogger("syncLogger");
     private final DecodeState state;
-    private final EndpointEventHandler endpointEvents;
     private final PlacementAvailability placementAvailability;
     private final Set<Runnable> engineDispatchCapacityListeners = ConcurrentHashMap.newKeySet();
 
@@ -38,7 +39,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
                    PlacementAvailability placementAvailability) {
         super(status);
         this.state = new DecodeState(status, endpointEvents.getConfigService(), endpointEvents.getRequestReporter());
-        this.endpointEvents = endpointEvents;
         this.placementAvailability = placementAvailability;
     }
 
@@ -401,22 +401,16 @@ public class DecodeEndpoint extends WorkerEndpoint {
 
     public long realKvAvailable() { return state.realKvAvailable(); }
 
+    public boolean isEmptyForSelection(WorkerStatus.EngineObservation engine) {
+        return state.isEmpty(engine);
+    }
+
     public int totalLoad() {
         return state.getTotalLoad();
     }
 
     public long placementKvUsed(WorkerStatus.EngineObservation engine) {
         return state.placementKvUsed(engine);
-    }
-
-    /**
-     * Selection reads the current counts without locking; reservation rechecks capacity under the endpoint lock.
-     */
-    public boolean hasCapacityForSelection(WorkerStatus.EngineObservation engine,
-                                           CapacityLimit limit,
-                                           long inputKv,
-                                           long budgetKv) {
-        return state.hasCapacityForSelection(engine, limit, inputKv, budgetKv);
     }
 
     public int getInflightCount() { return state.getInflightCount(); }
@@ -520,120 +514,6 @@ public class DecodeEndpoint extends WorkerEndpoint {
         public DecodeRoutingView routing() { return routing; }
         public CapacityRelease placementOccupancy(int priority) { return placementOccupancy[priority]; }
         public CapacityRelease engineOccupancy(int priority) { return engineOccupancy[priority]; }
-    }
-
-    public record CapacityLimit(long maxEngineRequests, long maxKvUsagePercent) {
-
-        public CapacityLimit {
-            if (maxEngineRequests < 0L || maxKvUsagePercent <= 0L
-                    || maxKvUsagePercent > RoutingConfig.PERCENTAGE_SCALE) {
-                throw new IllegalArgumentException(
-                        "Decode admission limits are outside their domain");
-            }
-        }
-
-        public CapacityDeficit evaluate(CapacityUsage usage, long requiredKvTokens, long kvBudgetTokens) {
-            return evaluate(usage, requiredKvTokens, kvBudgetTokens, CapacityRelease.NONE);
-        }
-
-        /** Use the same occupancy scope for the observation and every exact victim release. */
-        public CapacityDeficit evaluate(CapacityUsage usage,
-                                        long requiredKvTokens,
-                                        long kvBudgetTokens,
-                                        CapacityRelease release) {
-            validateDemand(requiredKvTokens, kvBudgetTokens);
-            long requests = maxEngineRequests == 0L ? 0L
-                    : shortfall(Math.max(0L, usage.occupiedRequests - release.requests),
-                            1L, maxEngineRequests, 0L);
-            if (usage.totalKvTokens == 0L) {
-                return new CapacityDeficit(requests, 0L, 0L);
-            }
-            return new CapacityDeficit(requests,
-                    shortfall(usage.reservedKvTokens, requiredKvTokens,
-                            usage.availableKvTokens, release.requiredKvTokens),
-                    shortfall(Math.max(0L, usage.kvBudgetUsedTokens - release.kvBudgetTokens),
-                            kvBudgetTokens, kvBudget(usage.totalKvTokens), 0L));
-        }
-
-        boolean hasCapacity(long occupiedRequests,
-                            long totalKv,
-                            long availableKv,
-                            long reservedInputKv,
-                            long usedBudgetKv,
-                            long inputKv,
-                            long budgetKv) {
-            validateDemand(inputKv, budgetKv);
-            if (maxEngineRequests != 0L && occupiedRequests >= maxEngineRequests) {
-                return false;
-            }
-            return totalKv == 0L || (shortfall(reservedInputKv, inputKv, availableKv, 0L) == 0L
-                    && shortfall(usedBudgetKv, budgetKv, kvBudget(totalKv), 0L) == 0L);
-        }
-
-        private static void validateDemand(long requiredKvTokens, long kvBudgetTokens) {
-            if (requiredKvTokens < 0L || kvBudgetTokens < requiredKvTokens) {
-                throw new IllegalArgumentException("Decode demand must satisfy KV budget >= required KV >= 0");
-            }
-        }
-
-        /** Integer arithmetic never rounds the configured KV budget up. */
-        public long kvBudget(long totalKv) {
-            if (totalKv < 0L) {
-                throw new IllegalArgumentException("negative KV capacity");
-            }
-            return totalKv / 100L * maxKvUsagePercent + totalKv % 100L * maxKvUsagePercent / 100L;
-        }
-
-        private static long shortfall(long used, long incoming, long capacity, long released) {
-            long remainingUsed = Math.max(0L, used - released);
-            long remainingCapacity = DecodeState.saturatedAddNonNegative(capacity, Math.max(0L, released - used));
-            return remainingUsed > remainingCapacity
-                    ? DecodeState.saturatedAddNonNegative(remainingUsed - remainingCapacity, incoming)
-                    : Math.max(0L, incoming - (remainingCapacity - remainingUsed));
-        }
-    }
-
-    public record CapacityUsage(long occupiedRequests, long totalKvTokens, long availableKvTokens,
-                                long reservedKvTokens, long kvBudgetUsedTokens) {
-        public CapacityUsage {
-            if (occupiedRequests < 0L || totalKvTokens < 0L || availableKvTokens < 0L
-                    || reservedKvTokens < 0L || kvBudgetUsedTokens < 0L) {
-                throw new IllegalArgumentException("Decode occupancy must be non-negative");
-            }
-        }
-
-        public long availableKvAfterReservations() {
-            return Math.max(0L, availableKvTokens - reservedKvTokens);
-        }
-    }
-
-    /**
-     * Capacity released by removing a request: before confirmation, input KV
-     * and input plus max output; after confirmation, both use engine-reported KV.
-     */
-    public record CapacityRelease(long requests, long requiredKvTokens, long kvBudgetTokens) {
-        public static final CapacityRelease NONE = new CapacityRelease(0L, 0L, 0L);
-
-        public CapacityRelease {
-            if (requests < 0L || requiredKvTokens < 0L || kvBudgetTokens < requiredKvTokens) {
-                throw new IllegalArgumentException("invalid Decode capacity release");
-            }
-        }
-
-        public CapacityRelease plus(CapacityRelease other) {
-            return new CapacityRelease(DecodeState.saturatedAddNonNegative(requests, other.requests),
-                    DecodeState.saturatedAddNonNegative(requiredKvTokens, other.requiredKvTokens),
-                    DecodeState.saturatedAddNonNegative(kvBudgetTokens, other.kvBudgetTokens));
-        }
-    }
-
-    /**
-     * Remaining shortages against available KV and the configured KV budget.
-     */
-    public record CapacityDeficit(long requests, long requiredKvTokens, long kvBudgetTokens) {
-        public boolean hasCapacity() { return requests == 0L && !needsKv(); }
-        public boolean needsKv() { return requiredKvTokens > 0L || kvBudgetTokens > 0L; }
-        public long kvTokens() { return Math.max(requiredKvTokens, kvBudgetTokens); }
     }
 
     // Retirement and finished request history.

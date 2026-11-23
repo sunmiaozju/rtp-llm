@@ -2,6 +2,8 @@ package org.flexlb.balance.eviction;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
+import org.flexlb.dao.route.CapacityLimit;
+import org.flexlb.dao.route.CapacityUsage;
 import org.flexlb.enums.DecodeTaskPhase;
 
 import java.util.ArrayList;
@@ -10,13 +12,13 @@ import java.util.List;
 /** Victims and placement occupancy captured under one endpoint admission lock. */
 public record DecodeEndpointSnapshot(DecodeEndpoint endpoint,
                                      String endpointId,
-                                     DecodeEndpoint.CapacityLimit capacity,
-                                     DecodeEndpoint.CapacityUsage usage,
+                                     CapacityLimit capacity,
+                                     CapacityUsage usage,
                                      List<DecodeRequestView> reserved,
                                      List<DecodeRequestView> accepted,
                                      List<DecodeRequestView> running) {
 
-    public static DecodeEndpointSnapshot capture(DecodeEndpoint endpoint, DecodeEndpoint.CapacityLimit policy) {
+    public static DecodeEndpointSnapshot capture(DecodeEndpoint endpoint, CapacityLimit policy) {
         DecodeEndpoint.LayeredAdmissionView view = endpoint.resourceSnapshot();
         DecodeEndpoint.DecodeRoutingView routing = view.routing();
         List<DecodeRequestView> reserved = new ArrayList<>();

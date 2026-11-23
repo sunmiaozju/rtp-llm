@@ -1,6 +1,6 @@
 package org.flexlb.balance.schedulev2;
 
-import org.flexlb.balance.endpoint.DecodeEndpoint;
+import org.flexlb.dao.route.CapacityDeficit;
 
 /**
  * 出队检查的固定原因标签，不把请求 ID、异常文本或动态配置值放进指标。
@@ -13,7 +13,7 @@ public enum QueueBlockReason {
     /**
      * 同时缺少请求名额和 KV 时使用组合原因，不丢掉其中一个容量约束。
      */
-    public static QueueBlockReason decodeCapacity(DecodeEndpoint.CapacityDeficit deficit) {
+    public static QueueBlockReason decodeCapacity(CapacityDeficit deficit) {
         if (deficit.requests() > 0L) {
             return deficit.needsKv() ? DECODE_REQUESTS_AND_KV_FULL : DECODE_REQUESTS_FULL;
         }

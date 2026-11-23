@@ -6,12 +6,12 @@ import java.util.Set;
 /**
  * Tracks the routable Decode ranks reported for one DP master address.
  */
-final class DpGroupMembers {
+public final class DpGroupMembers {
     private final Set<Long> ranks = new HashSet<>();
     private long dpSize;
     private boolean consistentRanks = true;
 
-    void add(long size, long rank) {
+    public void add(long size, long rank) {
         if (dpSize == 0) {
             dpSize = size;
         }
@@ -20,7 +20,7 @@ final class DpGroupMembers {
         }
     }
 
-    boolean hasAllRanks() {
+    public boolean hasAllRanks() {
         return consistentRanks && ranks.size() == dpSize;
     }
 }

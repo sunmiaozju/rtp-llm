@@ -16,4 +16,11 @@ public final class CommonUtils {
     public static int toGrpcPort(int httpPort) {
         return httpPort + CommonConstants.GRPC_PORT_OFFSET;
     }
+
+    public static long saturatedAddNonNegative(long left, long right) {
+        if (left < 0 || right < 0) {
+            throw new IllegalArgumentException("KV admission counters must be non-negative");
+        }
+        return left > Long.MAX_VALUE - right ? Long.MAX_VALUE : left + right;
+    }
 }

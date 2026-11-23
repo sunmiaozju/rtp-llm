@@ -5,6 +5,7 @@ import org.flexlb.balance.eviction.DecodeEvictionProposal;
 import org.flexlb.balance.eviction.EvictionPlanner;
 import org.flexlb.config.PreemptionConfig;
 import org.flexlb.config.VictimStage;
+import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,7 @@ class DecodeCapacityPreemptionTest {
     @ValueSource(booleans = {false, true})
     void outputBudgetRejectionProducesAPlanAndCommitRechecksCurrentUsage(boolean usageChanged) {
         DecodeEndpoint endpoint = endpoint(400L);
-        DecodeEndpoint.CapacityLimit policy = new DecodeEndpoint.CapacityLimit(0L, 90L);
+        CapacityLimit policy = new CapacityLimit(0L, 90L);
         long requiredKvTokens = 100L;
         long kvBudgetTokens = 250L;
         DecodeEndpoint.ReservationHandle victim;
@@ -57,7 +58,7 @@ class DecodeCapacityPreemptionTest {
     @Test
     void queuedReservationReleasesThePlacementRequestCharge() {
         DecodeEndpoint endpoint = endpoint(1000L);
-        DecodeEndpoint.CapacityLimit policy = new DecodeEndpoint.CapacityLimit(1L, 90L);
+        CapacityLimit policy = new CapacityLimit(1L, 90L);
         long requiredKvTokens = 100L;
         long kvBudgetTokens = 100L;
         DecodeEndpoint.ReservationHandle victim;
@@ -76,7 +77,7 @@ class DecodeCapacityPreemptionTest {
     @Test
     void zeroPromptVictimCanReleaseItsFullOutputReservation() {
         DecodeEndpoint endpoint = endpoint(1000L);
-        DecodeEndpoint.CapacityLimit policy = new DecodeEndpoint.CapacityLimit(0L, 90L);
+        CapacityLimit policy = new CapacityLimit(0L, 90L);
         long requiredKvTokens = 100L;
         long kvBudgetTokens = 200L;
         DecodeEndpoint.ReservationHandle victim;
@@ -90,7 +91,7 @@ class DecodeCapacityPreemptionTest {
     private static DecodeEvictionProposal plan(DecodeEndpoint endpoint,
                                                long requiredKvTokens,
                                                long kvBudgetTokens,
-                                               DecodeEndpoint.CapacityLimit policy,
+                                               CapacityLimit policy,
                                                VictimStage stage) {
         PreemptionConfig preemption = new PreemptionConfig();
         preemption.setAllowedVictimStages(EnumSet.of(stage));
