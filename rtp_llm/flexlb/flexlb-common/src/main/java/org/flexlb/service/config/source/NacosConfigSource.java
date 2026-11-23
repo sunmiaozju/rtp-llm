@@ -129,6 +129,8 @@ final class NacosConfigSource implements ConfigSource {
 
             @Override
             public void receiveConfigInfo(String configInfo) {
+                log.info("Nacos config received: namespace={}, group={}, dataId={}, config={}",
+                        config.getNamespace(), config.getGroup(), config.getDataId(), configInfo);
                 configContent = configInfo;
                 Consumer<String> listener = updateListener;
                 if (listener != null) {
