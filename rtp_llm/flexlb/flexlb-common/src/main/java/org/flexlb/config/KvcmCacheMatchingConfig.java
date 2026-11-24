@@ -15,7 +15,7 @@ import java.util.List;
 public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permits LocalStandbyCacheMatchingConfig {
 
     public static final long DEFAULT_REQUEST_TIMEOUT_MS = 500L;
-    public static final long DEFAULT_QUERY_TIMEOUT_MS = 30L;
+    public static final long DEFAULT_QUERY_TIMEOUT_MS = 100L;
     public static final long DEFAULT_LEADER_REFRESH_INTERVAL_MS = 30_000L;
     public static final int DEFAULT_QUERY_CHANNELS_PER_LEADER = 8;
     public static final int DEFAULT_HEARTBEAT_FAILURE_THRESHOLD = 3;

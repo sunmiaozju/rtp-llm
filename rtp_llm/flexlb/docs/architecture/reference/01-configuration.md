@@ -287,7 +287,7 @@ KVCM 模式下，Nacos v3 配置可设置并热更新查询参数：
   "schemaVersion": 3,
   "cacheMatching": {
     "type": "KVCM",
-    "queryTimeoutMs": 30,
+    "queryTimeoutMs": 100,
     "topKHostCount": 3,
     "queryChannelsPerLeader": 8,
     "backendTypes": []
@@ -295,7 +295,7 @@ KVCM 模式下，Nacos v3 配置可设置并热更新查询参数：
 }
 ```
 
-`queryTimeoutMs` 是 `GetHostCacheState` 的总超时预算（含重试），必须为正整数，默认 30 ms；
+`queryTimeoutMs` 是 `GetHostCacheState` 的总超时预算（含重试），必须为正整数，默认 100 ms；
 超时后，本次请求走本地 Standby。`requestTimeoutMs` 仅用于 Leader 探测的 `GetClusterInfo`，默认仍为 500 ms。
 升级时，如果要保留原先通过 `requestTimeoutMs` 设置的缓存查询超时，请把该值显式填到 `queryTimeoutMs`。
 

@@ -287,7 +287,7 @@ class NacosConfigSourceTest {
                      "queryFailureThreshold":500,"backendTypes":["ST_EVENT_REPORT_L2","ST_TAIRMEMPOOL"]}}
                     """);
             KvcmCacheMatchingConfig updated = configuration.getKvcmClientSettings();
-            assertThat(initial.getQueryTimeoutMs()).isEqualTo(30L);
+            assertThat(initial.getQueryTimeoutMs()).isEqualTo(100L);
             assertThat(updated.getQueryTimeoutMs()).isEqualTo(60L);
             assertThat(updated.getQueryFailureThreshold()).isEqualTo(500);
             assertThat(updated.getRequestTimeoutMs()).isEqualTo(500L);
