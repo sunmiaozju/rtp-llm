@@ -30,6 +30,8 @@
 
 FlexLB 将同一组 `[A, B, C, D]` 发给 KVCM leader 的 `GetHostCacheState`。查询必须落到正确的引擎实例：优先用配置的 namespace，否则取对应 worker 的 `deploymentName`，再拼上块大小，例如 `model_a_16`。显式配置的 `queryType` 优先；否则根据 worker 上报的布局选择普通前缀、Mamba 或滑窗注意力（SWA）匹配。无法确定必要元数据是查询失败，不是引擎报告了零命中。
 
+`GetClusterInfo` 只保留一条独立连接，切换探测地址时替换连接，默认每 30 秒刷新一次 leader。每次 `GetHostCacheState` 尝试从当前 leader 的连接池中随机选择一个槽位，按需建连，默认最多 8 条。查询使用 gRPC FutureStub，Prefill 准备线程收到结果后开始计算候选工作量。
+
 假设返回以下两条记录。`local` 是该节点本地已有的连续前缀块数；`global` 是结合本地、其他节点可提供的 KV（P2P）和配置允许的远端存储后，可复用的前缀总长。**`global` 已经包含 `local`。**
 
 | 候选 | KVCM 返回（块） | 对这条 70-token 输入意味着什么 |

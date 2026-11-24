@@ -15,7 +15,6 @@ import org.flexlb.kvcm.grpc.MetaNodeEndpoint;
 import org.flexlb.util.IdUtils;
 import org.springframework.stereotype.Component;
 
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -87,14 +86,11 @@ public class KvcmLeaderResolver {
                 }
 
                 GrpcTarget newLeader = new GrpcTarget(endpoint.getHost(), leaderPort);
-                GrpcTarget previousLeader = leader.get();
+                GrpcTarget previousLeader = leader.getAndSet(newLeader);
                 if (!newLeader.equals(previousLeader)) {
-                    leader.set(newLeader);
                     log.info("KVCM leader changed from {} to {}", previousLeader, newLeader);
                 }
-                Set<GrpcTarget> activeTargets = new HashSet<>(bootstrapTargets);
-                activeTargets.add(newLeader);
-                metaServiceClient.removeStaleChannels(activeTargets);
+                metaServiceClient.removeStaleQueryChannels(newLeader);
                 return true;
             } catch (Exception e) {
                 log.warn("Failed to query KVCM cluster info from bootstrap target: {}", bootstrapTarget, e);

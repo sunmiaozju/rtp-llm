@@ -289,6 +289,7 @@ KVCM 模式下，Nacos v3 配置可设置并热更新查询参数：
     "type": "KVCM",
     "queryTimeoutMs": 30,
     "topKHostCount": 3,
+    "queryChannelsPerLeader": 8,
     "backendTypes": []
   }
 }
@@ -301,6 +302,9 @@ KVCM 模式下，Nacos v3 配置可设置并热更新查询参数：
 `queryType` 接受 KVCM 协议中 `QueryType` 的枚举名称字符串，配置后覆盖所有 role/group 的
 worker 状态推导值。启动时省略该字段则继续从 worker 状态推导。
 `topKHostCount` 为非负整数，默认 3；0 只计算本地命中。
+`queryChannelsPerLeader` 为正整数，默认 8，限制对当前 KVCM leader 的查询连接数。Nacos 更新后，
+新查询从新容量内随机选槽，超出容量的连接退出池，已发出的 RPC 可以完成。
+`leaderRefreshIntervalMs` 默认 30000 毫秒，启动时读取。
 `backendTypes` 默认空列表，只接受 `ST_TAIRMEMPOOL` 和 `ST_EVENT_REPORT_L2`，
 例如 `["ST_TAIRMEMPOOL", "ST_EVENT_REPORT_L2"]`。空列表原样发送给 KVCM。
 运行时省略字段保留当前值；显式配置 `[]` 清空来源列表。非法值或 JSON `null`

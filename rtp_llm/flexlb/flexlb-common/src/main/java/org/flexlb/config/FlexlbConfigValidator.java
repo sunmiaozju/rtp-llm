@@ -305,6 +305,7 @@ public final class FlexlbConfigValidator {
         positive(kvcm.getQueryTimeoutMs(), "cacheMatching.queryTimeoutMs");
         positive(kvcm.getLeaderRefreshIntervalMs(),
                 "cacheMatching.leaderRefreshIntervalMs");
+        positive(kvcm.getQueryChannelsPerLeader(), "cacheMatching.queryChannelsPerLeader");
         positive(kvcm.getHeartbeatFailureThreshold(),
                 "cacheMatching.heartbeatFailureThreshold");
         positive(kvcm.getQueryFailureThreshold(),

@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.google.common.util.concurrent.SettableFuture;
 import io.grpc.Deadline;
 import io.grpc.Status.Code;
 import org.flexlb.config.CacheMatchConfiguration;
@@ -41,20 +42,25 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.google.common.util.concurrent.Futures.immediateFailedFuture;
+import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static io.grpc.Status.DEADLINE_EXCEEDED;
 import static io.grpc.Status.UNAVAILABLE;
 import static io.grpc.Status.fromThrowable;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -215,8 +221,8 @@ class KvcmGrpcClientTest {
             return null;
         }).when(metadata).refreshNamespacesAndQueryTypes();
         healthMetaService = mock(KvcmMetaServiceClient.class);
-        when(healthMetaService.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenReturn(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build());
+        when(healthMetaService.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFuture(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build()));
         healthWarmup = new ApplicationWarmupState();
         healthWarmup.setWarmupFinished(true);
         client = new KvcmGrpcClient(configuration, healthMetaService, leader, metadata, healthWarmup,
@@ -227,9 +233,9 @@ class KvcmGrpcClientTest {
 
     private void failQuery() {
         IllegalStateException failure = new IllegalStateException("meta service unavailable");
-        when(healthMetaService.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenThrow(failure)
-                .thenReturn(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build());
+        when(healthMetaService.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFailedFuture(failure))
+                .thenReturn(immediateFuture(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build()));
         assertSame(failure, assertThrows(IllegalStateException.class, this::succeedQuery));
     }
 
@@ -285,16 +291,18 @@ class KvcmGrpcClientTest {
         when(metadataResolver.resolveQueryType(
                 RoleType.PREFILL, "default")).thenReturn(QueryType.QT_PREFIX_MATCH);
         when(leaderResolver.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenAnswer(invocation -> {
-                    TimeUnit.MILLISECONDS.sleep(5L);
-                    return GetHostCacheStateResponse.newBuilder()
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenAnswer(ignored -> {
+                    var response = GetHostCacheStateResponse.newBuilder()
                         .setHeader(okHeader())
                         .addHosts(HostCacheMatch.newBuilder()
                                 .setHostIpPort("10.0.0.1:8601@1")
                                 .setLocal(2)
                                 .setGlobal(10))
                         .build();
+                    var future = SettableFuture.<GetHostCacheStateResponse>create();
+                    CompletableFuture.delayedExecutor(5, TimeUnit.MILLISECONDS).execute(() -> future.set(response));
+                    return future;
                 });
 
         GrpcReporter reporter = mock(GrpcReporter.class);
@@ -319,7 +327,7 @@ class KvcmGrpcClientTest {
 
         ArgumentCaptor<GetHostCacheStateRequest> sentRequest =
                 ArgumentCaptor.forClass(GetHostCacheStateRequest.class);
-        verify(metaServiceClient).getHostCacheState(any(), sentRequest.capture(), any(Deadline.class));
+        verify(metaServiceClient).getHostCacheStateAsync(any(), sentRequest.capture(), any(Deadline.class));
         assertEquals(List.of("hbm", "kvs"), sentRequest.getValue().getMediumList());
         assertEquals(5, sentRequest.getValue().getTopKHostCount());
         assertEquals(List.of(StorageType.ST_TAIRMEMPOOL, StorageType.ST_EVENT_REPORT_L2),
@@ -353,8 +361,9 @@ class KvcmGrpcClientTest {
                     .setGlobal(100L + index));
         }
         var matchesResponse = matchesResponseBuilder.build();
-        when(healthMetaService.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenReturn(errorResponse, matchesResponse);
+        when(healthMetaService.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFuture(errorResponse))
+                .thenReturn(immediateFuture(matchesResponse));
         Logger logger = (Logger) LoggerFactory.getLogger("kvcmLogger");
         Level originalLevel = logger.getLevel();
         ListAppender<ILoggingEvent> appender = new ListAppender<>();
@@ -417,10 +426,10 @@ class KvcmGrpcClientTest {
         when(metadataResolver.resolveQueryType(
                 RoleType.PREFILL, "default")).thenReturn(QueryType.QT_PREFIX_MATCH);
         when(leaderResolver.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenReturn(GetHostCacheStateResponse.newBuilder()
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFuture(GetHostCacheStateResponse.newBuilder()
                         .setHeader(okHeader())
-                        .build());
+                        .build()));
 
         client = createClient(
                 configuration,
@@ -433,7 +442,7 @@ class KvcmGrpcClientTest {
 
         ArgumentCaptor<GetHostCacheStateRequest> sentRequest =
                 ArgumentCaptor.forClass(GetHostCacheStateRequest.class);
-        verify(metaServiceClient).getHostCacheState(any(), sentRequest.capture(), any(Deadline.class));
+        verify(metaServiceClient).getHostCacheStateAsync(any(), sentRequest.capture(), any(Deadline.class));
         assertEquals(3, sentRequest.getValue().getTopKHostCount());
         assertTrue(sentRequest.getValue().getBackendTypesList().isEmpty());
         assertTrue(sentRequest.getValue().getMediumList().isEmpty());
@@ -490,7 +499,7 @@ class KvcmGrpcClientTest {
             assertTrue(first.getMessage().contains("worker metadata unavailable for role=PREFILL, group=default"));
             assertEquals(first.getMessage(), second.getMessage());
             assertEquals(2, client.healthSnapshot().consecutiveQueryFailures());
-            verify(metaService, never()).getHostCacheState(any(), any(), any(Deadline.class));
+            verify(metaService, never()).getHostCacheStateAsync(any(), any(), any(Deadline.class));
         } finally {
             releaseRefresh.countDown();
         }
@@ -504,9 +513,9 @@ class KvcmGrpcClientTest {
         when(leader.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
         when(metadata.resolveNamespace(RoleType.PREFILL, "default", 2192L)).thenReturn("deployment_2192");
         when(metadata.resolveQueryType(RoleType.PREFILL, "default")).thenReturn(QueryType.QT_PREFIX_MATCH);
-        when(metaService.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenReturn(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build())
-                .thenThrow(DEADLINE_EXCEEDED.asRuntimeException());
+        when(metaService.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFuture(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build()))
+                .thenReturn(immediateFailedFuture(DEADLINE_EXCEEDED.asRuntimeException()));
         GrpcReporter reporter = mock(GrpcReporter.class);
         doThrow(new IllegalStateException("monitor unavailable")).when(reporter)
                 .reportCallMetrics(eq("KVCM_GET_HOST_CACHE_STATE"), anyLong(), anyInt(), eq(false));
@@ -520,7 +529,7 @@ class KvcmGrpcClientTest {
         assertTrue(first.isEmpty());
         assertEquals(Code.DEADLINE_EXCEEDED, fromThrowable(failure).getCode());
         assertEquals(1, client.healthSnapshot().consecutiveQueryFailures());
-        verify(metaService, times(2)).getHostCacheState(any(), any(), any(Deadline.class));
+        verify(metaService, times(2)).getHostCacheStateAsync(any(), any(), any(Deadline.class));
     }
 
     @Test
@@ -545,10 +554,10 @@ class KvcmGrpcClientTest {
         when(metadataResolver.resolveQueryType(
                 RoleType.PREFILL, "default")).thenReturn(QueryType.QT_PREFIX_MATCH);
         when(leaderResolver.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenReturn(GetHostCacheStateResponse.newBuilder()
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFuture(GetHostCacheStateResponse.newBuilder()
                         .setHeader(okHeader())
-                        .build());
+                        .build()));
 
         client = createClient(
                 configuration,
@@ -569,10 +578,10 @@ class KvcmGrpcClientTest {
         updatedConfig.setQueryTimeoutMs(2000L);
         runtimeConfig.set(updatedConfig);
         AtomicLong updatedBudgetMs = new AtomicLong();
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class))).thenAnswer(invocation -> {
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class))).thenAnswer(invocation -> {
             Deadline budget = invocation.getArgument(2);
             updatedBudgetMs.set(budget.timeRemaining(TimeUnit.MILLISECONDS));
-            return GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build();
+            return immediateFuture(GetHostCacheStateResponse.newBuilder().setHeader(okHeader()).build());
         });
         client.findMatchingEngines(
                 "request-5", List.of(11L), 2192L, RoleType.PREFILL, "default");
@@ -581,7 +590,7 @@ class KvcmGrpcClientTest {
                 ArgumentCaptor.forClass(GetHostCacheStateRequest.class);
         ArgumentCaptor<Deadline> deadline = ArgumentCaptor.forClass(Deadline.class);
         verify(metaServiceClient, times(2))
-                .getHostCacheState(any(), sentRequest.capture(), deadline.capture());
+                .getHostCacheStateAsync(any(), sentRequest.capture(), deadline.capture());
         assertEquals(3, sentRequest.getAllValues().get(0).getTopKHostCount());
         assertEquals(0, sentRequest.getAllValues().get(1).getTopKHostCount());
         assertEquals(QueryType.QT_PREFIX_MATCH, sentRequest.getAllValues().get(0).getQueryType());
@@ -620,7 +629,7 @@ class KvcmGrpcClientTest {
                 RoleType.PREFILL, "default", 2192L)).thenReturn("deployment_2192");
         when(leaderResolver.resolve()).thenReturn(new GrpcTarget("127.0.0.1", 7001));
         AtomicInteger attempts = new AtomicInteger();
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
                 .thenAnswer(ignored -> {
                     if (attempts.getAndIncrement() == 0) {
                         KvcmCacheMatchingConfig updatedConfig = new KvcmCacheMatchingConfig();
@@ -631,11 +640,11 @@ class KvcmGrpcClientTest {
                         updatedConfig.setMedium(List.of("kvs"));
                 updatedConfig.setQueryTimeoutMs(900L);
                         runtimeConfig.set(updatedConfig);
-                        throw UNAVAILABLE.asRuntimeException();
+                        return immediateFailedFuture(UNAVAILABLE.asRuntimeException());
                     }
-                    return GetHostCacheStateResponse.newBuilder()
+                    return immediateFuture(GetHostCacheStateResponse.newBuilder()
                             .setHeader(okHeader())
-                            .build();
+                            .build());
                 });
 
         client = createClient(
@@ -651,7 +660,7 @@ class KvcmGrpcClientTest {
                 ArgumentCaptor.forClass(GetHostCacheStateRequest.class);
         ArgumentCaptor<Deadline> deadline = ArgumentCaptor.forClass(Deadline.class);
         verify(metaServiceClient, times(2))
-                .getHostCacheState(any(), sentRequest.capture(), deadline.capture());
+                .getHostCacheStateAsync(any(), sentRequest.capture(), deadline.capture());
         for (GetHostCacheStateRequest request : sentRequest.getAllValues()) {
             assertEquals(4, request.getTopKHostCount());
             assertEquals(QueryType.QT_PREFIX_MATCH_WITH_MAMBA, request.getQueryType());
@@ -664,7 +673,7 @@ class KvcmGrpcClientTest {
     }
 
     @Test
-    void stopsRetryingWhenTheTotalQueryBudgetExpires() {
+    void cancelsPendingQueryWhenTheTotalQueryBudgetExpires() {
         CacheMatchConfiguration configuration = mock(CacheMatchConfiguration.class);
         KvcmCacheMatchingConfig runtimeConfig = new KvcmCacheMatchingConfig();
         runtimeConfig.setLeaderRefreshIntervalMs(60_000);
@@ -681,20 +690,18 @@ class KvcmGrpcClientTest {
                 .thenReturn("deployment_2192");
         when(metadataResolver.resolveQueryType(RoleType.PREFILL, "default"))
                 .thenReturn(QueryType.QT_PREFIX_MATCH);
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenAnswer(invocation -> {
-                    Deadline deadline = invocation.getArgument(2);
-                    TimeUnit.NANOSECONDS.sleep(Math.max(0L,
-                            deadline.timeRemaining(TimeUnit.NANOSECONDS)) + 1_000_000L);
-                    throw DEADLINE_EXCEEDED.asRuntimeException();
-                });
+        var pendingResponse = SettableFuture.<GetHostCacheStateResponse>create();
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class))).thenReturn(pendingResponse);
         client = createClient(configuration, metaServiceClient, leaderResolver,
                 metadataResolver, mock(GrpcReporter.class));
 
-        assertThrows(KvcmQueryException.class, () -> client.findMatchingEngines(
-                "timeout-query", List.of(11L), 2192L, RoleType.PREFILL, "default"));
+        KvcmQueryException failure = assertTimeoutPreemptively(Duration.ofSeconds(3), () -> assertThrows(
+                KvcmQueryException.class,
+                () -> client.findMatchingEngines("timeout-query", List.of(11L), 2192L, RoleType.PREFILL, "default")));
 
-        verify(metaServiceClient).getHostCacheState(any(), any(), any(Deadline.class));
+        assertEquals(Code.DEADLINE_EXCEEDED, fromThrowable(failure).getCode());
+        assertTrue(pendingResponse.isCancelled());
+        verify(metaServiceClient).getHostCacheStateAsync(any(), any(), any(Deadline.class));
     }
 
     @Test
@@ -768,8 +775,8 @@ class KvcmGrpcClientTest {
                 RoleType.PREFILL, "default", 2192L)).thenReturn("deployment_2192");
         when(metadataResolver.resolveQueryType(
                 RoleType.PREFILL, "default")).thenReturn(QueryType.QT_PREFIX_MATCH);
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenThrow(UNAVAILABLE.asRuntimeException());
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFailedFuture(UNAVAILABLE.asRuntimeException()));
         client = createClient(
                 configuration,
                 metaServiceClient,
@@ -804,8 +811,8 @@ class KvcmGrpcClientTest {
                 .thenReturn("deployment_2192");
         when(metadataResolver.resolveQueryType(RoleType.PREFILL, "default"))
                 .thenReturn(QueryType.QT_PREFIX_MATCH);
-        when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class)))
-                .thenThrow(UNAVAILABLE.asRuntimeException());
+        when(metaServiceClient.getHostCacheStateAsync(any(), any(), any(Deadline.class)))
+                .thenReturn(immediateFailedFuture(UNAVAILABLE.asRuntimeException()));
         GrpcReporter reporter = mock(GrpcReporter.class);
         client = createClient(configuration, metaServiceClient, leaderResolver, metadataResolver, reporter);
 

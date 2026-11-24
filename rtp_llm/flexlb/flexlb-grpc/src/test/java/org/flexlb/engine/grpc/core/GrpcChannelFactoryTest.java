@@ -98,16 +98,19 @@ class GrpcChannelFactoryTest {
             var engine = context.getBean("engineChannelEventLoopGroup", MultithreadEventLoopGroup.class);
             var kvcm = context.getBean("kvcmChannelEventLoopGroup", MultithreadEventLoopGroup.class);
             var target = new GrpcTarget("127.0.0.1", server.getPort());
-            var kvcmClient = context.getBean(KvcmMetaServiceClient.class);
-            assertEquals(cacheState, queryWhileEventLoopsAreBlocked(engine, () -> kvcmClient.getHostCacheState(target,
-                    GetHostCacheStateRequest.getDefaultInstance(), Deadline.after(3, TimeUnit.SECONDS))));
-
-            ManagedChannel engineChannel = context.getBean(GrpcChannelFactory.class).createEngineChannel(target);
+            var factory = context.getBean(GrpcChannelFactory.class);
+            ManagedChannel kvcmChannel = factory.createKvcmChannel(target);
+            ManagedChannel engineChannel = factory.createEngineChannel(target);
             try {
+                assertEquals(cacheState, queryWhileEventLoopsAreBlocked(engine,
+                        () -> MetaServiceGrpc.newFutureStub(kvcmChannel).withDeadline(Deadline.after(3, TimeUnit.SECONDS))
+                                .getHostCacheState(GetHostCacheStateRequest.getDefaultInstance())
+                                .get(3, TimeUnit.SECONDS)));
                 assertEquals(workerStatus, queryWhileEventLoopsAreBlocked(kvcm,
                         () -> RpcServiceGrpc.newBlockingStub(engineChannel).withDeadlineAfter(3, TimeUnit.SECONDS)
                                 .getWorkerStatus(EngineRpcService.StatusVersionPB.getDefaultInstance())));
             } finally {
+                kvcmChannel.shutdownNow();
                 engineChannel.shutdownNow();
             }
         } finally {

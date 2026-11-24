@@ -1,6 +1,8 @@
 package org.flexlb.engine.grpc.client;
 
+import com.google.common.util.concurrent.ListenableFuture;
 import io.grpc.Deadline;
+import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -28,10 +30,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -159,7 +163,8 @@ public class KvcmGrpcClient {
                 recordQuerySuccess();
                 return result;
             } catch (RuntimeException failure) {
-                if (attemptIndex == maxQueryRetryCount || queryDeadline.isExpired()) {
+                if (attemptIndex == maxQueryRetryCount || queryDeadline.isExpired()
+                        || Thread.currentThread().isInterrupted()) {
                     recordQueryFailure();
                     metricsReporter.reportQueryFailure();
                     throw failure;
@@ -204,8 +209,8 @@ public class KvcmGrpcClient {
         int responseBytes = 0;
         GetHostCacheStateResponse response;
         try {
-            response = metaServiceClient.getHostCacheState(
-                    currentLeader, request, queryDeadline);
+            var pendingResponse = metaServiceClient.getHostCacheStateAsync(currentLeader, request, queryDeadline);
+            response = awaitQuery(pendingResponse, queryDeadline);
             responseBytes = response.getSerializedSize();
         } catch (StatusRuntimeException error) {
             requestImmediateRefresh();
@@ -232,6 +237,25 @@ public class KvcmGrpcClient {
                             + response.getHeader().getStatus().getMessage());
         }
         return toMatchesByHost(response.getHostsList());
+    }
+
+    private GetHostCacheStateResponse awaitQuery(ListenableFuture<GetHostCacheStateResponse> response,
+                                                 Deadline queryDeadline) {
+        try {
+            return response.get(queryDeadline.timeRemaining(TimeUnit.NANOSECONDS), TimeUnit.NANOSECONDS);
+        } catch (TimeoutException error) {
+            response.cancel(true);
+            throw Status.DEADLINE_EXCEEDED.withCause(error).asRuntimeException();
+        } catch (InterruptedException error) {
+            response.cancel(true);
+            Thread.currentThread().interrupt();
+            throw Status.CANCELLED.withCause(error).asRuntimeException();
+        } catch (ExecutionException error) {
+            if (error.getCause() instanceof RuntimeException failure) {
+                throw failure;
+            }
+            throw new KvcmQueryException("KVCM GetHostCacheState gRPC request failed", error.getCause());
+        }
     }
 
     void refreshKvcmServiceStateSafely() {

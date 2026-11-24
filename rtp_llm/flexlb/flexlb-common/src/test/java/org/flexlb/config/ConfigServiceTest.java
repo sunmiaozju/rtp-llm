@@ -136,12 +136,14 @@ class ConfigServiceTest {
     }
 
     @Test
-    void defaultsKvcmTopKToThreeAndBackendTypesToEmpty() {
+    void appliesKvcmQueryDefaults() {
         KvcmCacheMatchingConfig config = ConfigTestFixtures.parse("""
                 {"cacheMatching":{"type":"KVCM"}}
                 """).getKvcmAndStandbyConfig();
 
         assertEquals(3, config.getTopKHostCount());
+        assertEquals(8, config.getQueryChannelsPerLeader());
+        assertEquals(30_000L, config.getLeaderRefreshIntervalMs());
         assertTrue(config.getBackendTypes().isEmpty());
         assertEquals(0, ConfigTestFixtures.parse("""
                 {"cacheMatching":{"type":"KVCM","topKHostCount":0}}
@@ -155,7 +157,8 @@ class ConfigServiceTest {
                 "\"backendTypes\":[\"ST_NFS\"]", "\"backendTypes\":[\"UNKNOWN\"]", "\"backendTypes\":[3]",
                 "\"backendTypes\":null", "\"backendTypes\":[null]", "\"backendTypes\":\"ST_EVENT_REPORT_L2\"",
                 "\"queryType\":\"UNKNOWN\"", "\"queryType\":\"UNRECOGNIZED\"", "\"queryType\":\"\"",
-                "\"queryType\":2", "\"queryType\":null"}) {
+                "\"queryType\":2", "\"queryType\":null", "\"queryChannelsPerLeader\":0",
+                "\"queryChannelsPerLeader\":-1", "\"queryChannelsPerLeader\":null"}) {
             assertThrows(ConfigValidationException.class, () -> ConfigTestFixtures.parse(
                     "{\"cacheMatching\":{\"type\":\"KVCM\"," + queryField + "}}"), queryField);
         }

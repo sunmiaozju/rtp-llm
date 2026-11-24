@@ -404,6 +404,26 @@ class ConfigServiceTest {
     }
 
     @Test
+    void acceptsKvcmQueryPoolSizeFromNacosUpdates() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        assertThat(service.loadBalanceConfig().getKvcmAndStandbyConfig().getQueryChannelsPerLeader()).isEqualTo(8);
+
+        source.emit("""
+                {"schemaVersion":3,"cacheMatching":{"queryChannelsPerLeader":12}}
+                """);
+        FlexlbConfig updated = service.loadBalanceConfig();
+        assertThat(updated.getKvcmAndStandbyConfig().getQueryChannelsPerLeader()).isEqualTo(12);
+
+        source.emit("""
+                {"schemaVersion":3,"cacheMatching":{"queryChannelsPerLeader":0}}
+                """);
+        assertThat(service.loadBalanceConfig()).isSameAs(updated);
+    }
+
+    @Test
     void taggedUnionTypeChangesReplaceTheWholeBranch() {
         FakeConfigSource source = new FakeConfigSource(
                 "Nacos",
