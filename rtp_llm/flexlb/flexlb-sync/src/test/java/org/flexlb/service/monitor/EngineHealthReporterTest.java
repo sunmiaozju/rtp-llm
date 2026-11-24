@@ -75,7 +75,7 @@ class EngineHealthReporterTest {
         when(engineGrpcClient.getEventLoopGroup()).thenReturn(mock(EventLoopGroup.class));
         reporter = new EngineHealthReporter(
                 monitor, cacheMetricsReporter, engineGrpcClient,
-                loopResources, workerDirectory);
+                loopResources, workerDirectory, mock(EventLoopGroup.class));
     }
 
     @Test

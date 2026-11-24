@@ -74,8 +74,8 @@ public final class RequestSchedulerTestRuntime implements AutoCloseable {
                 new org.flexlb.balance.eviction.DecodePreemptionCoordinator(requestReporter),
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.V2QueueReporter.class));
         this.scheduler = new RequestScheduler(configService, router, lifecycle, v2);
-        this.runtime = new SchedulerRuntime(lifecycle, registry, batchReporter, requestReporter, scheduler,
-                configService, queueCapacity, model);
+        this.runtime = new SchedulerRuntime(lifecycle, registry, batchReporter, scheduler, configService, queueCapacity,
+                model);
     }
 
     public RequestScheduler scheduler() {

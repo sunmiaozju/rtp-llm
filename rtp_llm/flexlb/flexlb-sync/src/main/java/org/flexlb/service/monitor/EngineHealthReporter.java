@@ -27,6 +27,7 @@ import org.flexlb.sync.status.WorkerDirectory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import reactor.netty.resources.LoopResources;
@@ -129,7 +130,8 @@ public class EngineHealthReporter {
                                 CacheMetricsReporter cacheMetricsReporter,
                                 EngineGrpcClient engineGrpcClient,
                                 LoopResources serverLoopResources,
-                                WorkerDirectory workerDirectory) {
+                                WorkerDirectory workerDirectory,
+                                @Qualifier("kvcmChannelEventLoopGroup") EventLoopGroup kvcmEventLoopGroup) {
         this.monitor = monitor;
         this.cacheMetricsReporter = cacheMetricsReporter;
         this.engineGrpcClient = engineGrpcClient;
@@ -137,7 +139,8 @@ public class EngineHealthReporter {
         this.eventLoopGroupMap = Map.of(
                 "serverWorker", serverLoopResources.onServer(true),
                 "serverSelector", serverLoopResources.onServerSelect(true),
-                "gRpcEventLoopGroup", engineGrpcClient.getEventLoopGroup()
+                "gRpcEventLoopGroup", engineGrpcClient.getEventLoopGroup(),
+                "kvcmGrpcEventLoopGroup", kvcmEventLoopGroup
         );
     }
 
