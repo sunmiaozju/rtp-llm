@@ -250,13 +250,11 @@ public class RequestRegistry {
     }
 
     /**
-     * Collect both request counts and the oldest live age in one traversal.
+     * Count live requests by phase in one traversal.
      */
     public TrackedRequestStats trackedRequestStats() {
         int generation = 0;
         int encoder = 0;
-        long oldest = Long.MAX_VALUE;
-        long now = System.currentTimeMillis();
         for (RequestPhase phase : RequestPhase.values()) {
             if (phase != RequestPhase.GENERATION && phase != RequestPhase.ENCODER) {
                 continue;
@@ -271,15 +269,13 @@ public class RequestRegistry {
                     } else {
                         encoder++;
                     }
-                    oldest = Math.min(oldest, slot.createdAtMs());
                 }
             }
         }
-        return new TrackedRequestStats(generation, encoder,
-                oldest == Long.MAX_VALUE ? 0L : Math.max(0L, now - oldest));
+        return new TrackedRequestStats(generation, encoder);
     }
 
-    public record TrackedRequestStats(int generationRequests, int encoderRequests, long oldestAgeMs) { }
+    public record TrackedRequestStats(int generationRequests, int encoderRequests) { }
 
     public List<RequestState> snapshotActiveRequests() {
         List<RequestState> snapshots = new ArrayList<>(encoderRequestSlots.size());

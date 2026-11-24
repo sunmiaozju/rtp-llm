@@ -336,11 +336,9 @@ public class EngineHealthReporter {
         monitor.report(ENGINE_STATUS_CHECK_FAIL_TOTAL, metricTags, 1.0);
     }
 
-    public void reportStatusCheckFailureLatency(
-            BalanceStatusEnum errorEnum,
-            String engineIp, RoleType role, long latencyUs) {
-        monitor.report(ENGINE_STATUS_CHECK_FAIL_RT,
-                statusCheckFailureTags(errorEnum, engineIp, role), latencyUs);
+    public void reportStatusCheckFailureLatency(RoleType role, long latencyUs) {
+        FlexMetricTags tags = FlexMetricTags.of("role", role == null ? "" : role.getCode());
+        monitor.report(ENGINE_STATUS_CHECK_FAIL_RT, tags, latencyUs);
     }
 
     private static FlexMetricTags statusCheckFailureTags(

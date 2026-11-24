@@ -13,8 +13,6 @@ import javax.annotation.PostConstruct;
 
 import static org.flexlb.constant.MetricConstant.ACK_TO_RESPONSE_TIME_MS;
 import static org.flexlb.constant.MetricConstant.BATCHER_QUEUE_SIZE;
-import static org.flexlb.constant.MetricConstant.DECODE_INPUT_AND_MAX_OUTPUT_KV_RESERVED_TOKENS;
-import static org.flexlb.constant.MetricConstant.DECODE_INPUT_KV_RESERVED_TOKENS;
 import static org.flexlb.constant.MetricConstant.DECODE_RESERVATION_BLOCKED;
 import static org.flexlb.constant.MetricConstant.DECODE_TOTAL_LOAD;
 import static org.flexlb.constant.MetricConstant.ENGINE_BALANCING_MASTER_BATCH_SIZE;
@@ -23,8 +21,6 @@ import static org.flexlb.constant.MetricConstant.ENGINE_SUBQUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.ENGINE_SUBQUEUE_RESIDENCE_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_RESIDENCE_MS;
-import static org.flexlb.constant.MetricConstant.INFLIGHT_MAX_AGE_MS;
-import static org.flexlb.constant.MetricConstant.INFLIGHT_REQUEST_COUNT;
 import static org.flexlb.constant.MetricConstant.ROUTE_SUBMIT_TIME_MS;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_LENGTH;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_MAX_LENGTH;
@@ -58,12 +54,6 @@ public class BatchSchedulerReporter {
     /** type tag value for the global Generation queue series of routing.queue.length. */
     public static final String GLOBAL_QUEUE_TYPE = "mainQueue";
 
-    /** role tag value for scheduler-ledger series (vs PREFILL/DECODE endpoint ledgers). */
-    public static final String SCHEDULER_ROLE = "SCHEDULER";
-
-    /** engineIp tag value for scheduler-ledger series (no real engine behind them). */
-    public static final String SCHEDULER_ENGINE_IP = "scheduler";
-
     private final FlexMonitor monitor;
 
     @Autowired
@@ -84,7 +74,6 @@ public class BatchSchedulerReporter {
         // Batch size — gauge, reported per dispatch
         monitor.register(ENGINE_BALANCING_MASTER_BATCH_SIZE, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
 
-        monitor.register(INFLIGHT_REQUEST_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(WORKER_STATUS_UNCONFIRMED_REQUEST_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(TRACKED_REQUEST_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
 
@@ -103,9 +92,6 @@ public class BatchSchedulerReporter {
 
         // Decode total load and inflight KV reserved — per decode worker (FlexLB scheduler view)
         monitor.register(DECODE_TOTAL_LOAD, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(DECODE_INPUT_AND_MAX_OUTPUT_KV_RESERVED_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(DECODE_INPUT_KV_RESERVED_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(INFLIGHT_MAX_AGE_MS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
 
         // Inflight TTL expired — count of inflight requests cleaned up by the TTL task, QPS tagged by role
 
@@ -257,52 +243,12 @@ public class BatchSchedulerReporter {
     }
 
     /**
-     * Report role-specific request counts via {@code flexlb.inflight.request.count}.
-     * NON_BATCH PREFILL/PDFUSION include all capacity occupancy, including queued and confirmed requests.
-     * DECODE retains non-queued local reservations awaiting KV_ALLOCATED or RUNNING confirmation.
-     * Tagged by role, engineIp, and scope=worker; values must not be compared across roles.
-     */
-    public void reportInflightRequestCount(String role, String engineIp, long count) {
-        monitor.report(INFLIGHT_REQUEST_COUNT, FlexMetricTags.ofEngine(engineIp,
-                "role", role, "scope", "worker"), count);
-    }
-
-    /**
      * Report NON_BATCH PREFILL/PDFUSION submitted requests awaiting their first matching WorkerStatus task.
      * Queued requests have not been submitted and do not count here.
      */
     public void reportWorkerStatusUnconfirmedRequestCount(String role, String engineIp, int count) {
         monitor.report(WORKER_STATUS_UNCONFIRMED_REQUEST_COUNT,
                 FlexMetricTags.ofEngine(engineIp, "role", role, "scope", "worker"), count);
-    }
-
-    /**
-     * Report the age (ms) of the oldest inflight entry per worker
-     * via {@code flexlb.inflight.max.age.ms}.
-     */
-    public void reportInflightMaxAgeMs(String role, String engineIp, long ageMs) {
-        FlexMetricTags tags = FlexMetricTags.ofEngine(engineIp,
-                "role", role);
-        monitor.report(INFLIGHT_MAX_AGE_MS, tags, ageMs);
-    }
-
-    /**
-     * Report the age (ms) of the oldest entry in the scheduler's own
-     * request-slot ledger via the unified {@code flexlb.inflight.max.age.ms}
-     * series with role=SCHEDULER + engineIp="scheduler" — same metric name
-     * and tag schema as the per-worker {@link #reportInflightMaxAgeMs}, so a
-     * single role='*' grouping compares the scheduler ledger against the
-     * PREFILL/DECODE endpoint ledgers. Immune to per-endpoint ledger
-     * releases, it exposes master-side leaks (fenced or unobserved entries)
-     * that keep the scheduler ledger pinned: max age approaching the TTL
-     * window is the leak signature.
-     *
-     * @param ageMs age of the oldest scheduler inflight entry, 0 when empty
-     */
-    public void reportSchedulerInflightMaxAgeMs(long ageMs) {
-        monitor.report(INFLIGHT_MAX_AGE_MS,
-                FlexMetricTags.ofEngine(SCHEDULER_ENGINE_IP,
-                        "role", SCHEDULER_ROLE), ageMs);
     }
 
     // ==================== Decode inflight metrics ====================
@@ -315,26 +261,6 @@ public class BatchSchedulerReporter {
         FlexMetricTags tags = FlexMetricTags.ofEngine(engineIp,
                 "role", RoleType.DECODE.name());
         monitor.report(DECODE_TOTAL_LOAD, tags, totalLoad);
-    }
-
-    /**
-     * Report input plus max_new_tokens for unconfirmed Decode reservations, including queued requests.
-     * via {@code flexlb.decode.inflight.kv.reserved.tokens}.
-     */
-    public void reportDecodeInputAndMaxOutputKvReserved(String engineIp, long kvReservedTokens) {
-        FlexMetricTags tags = FlexMetricTags.ofEngine(engineIp,
-                "role", RoleType.DECODE.name());
-        monitor.report(DECODE_INPUT_AND_MAX_OUTPUT_KV_RESERVED_TOKENS, tags, kvReservedTokens);
-    }
-
-    /**
-     * Report input tokens for unconfirmed Decode reservations, including queued requests.
-     * via {@code flexlb.decode.inflight.hard.kv.reserved.tokens}.
-     */
-    public void reportDecodeInputKvReserved(String engineIp, long kvReservedTokens) {
-        FlexMetricTags tags = FlexMetricTags.ofEngine(engineIp,
-                "role", RoleType.DECODE.name());
-        monitor.report(DECODE_INPUT_KV_RESERVED_TOKENS, tags, kvReservedTokens);
     }
 
     /** Prepare schedule-path meters before an endpoint receives traffic. */

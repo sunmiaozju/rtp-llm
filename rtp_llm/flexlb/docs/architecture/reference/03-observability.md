@@ -247,8 +247,7 @@ WorkerStatus 成功轮询上报 `app.flexlb.encoder.pending.request.count` 和
 `input_length`；两者口径可能略有差异，finished 中的长度不参与该指标。
 通用 KV 指标仍上报，但不参与 Encoder 选点。
 `app.flexlb.tracked.request.count{role=ENCODER,engineIp=scheduler}` 统计 Encoder 请求表。
-Generation 分阶段指标见 V2 队列指标。Decode `app.flexlb.inflight.request.count` 继续统计
-本地未确认预留数减去 Master 排队数；收到 `KV_ALLOCATED/RUNNING` 后不再计入。
+Generation 分阶段指标见 V2 队列指标。
 Decode 总负载仍使用 `app.flexlb.decode.total.load`（已确认请求加本地预留，含排队）。
 `/rtp_llm/inflight_status` 的 `scheduler_tracked` 返回两个阶段正在跟踪的请求总数，包含排队请求；
 `scheduler_inflight` 保留为该值的兼容别名，供现有清账和测试工具使用。它不表示节点侧的未确认在途数。
@@ -256,10 +255,6 @@ Decode 预留字段 `inputKvTokens = max(0, seqLen)`，
 `inputAndMaxOutputKvTokens = inputKvTokens + max(0, maxNewTokens)`（溢出时饱和）。
 两者分别表示输入预留和输入加最大输出预留，不是输出长度预测，后者包含前者。
 引擎确认后的容量使用引擎上报的实际 KV 数，不再使用请求上限。
-监控分别使用 `app.flexlb.decode.inflight.hard.kv.reserved.tokens` 与
-`app.flexlb.decode.inflight.kv.reserved.tokens`，包含排队预留；中文图例使用上述计算口径。
-周期统计复用 Prefill 快照，调度器一次遍历计算数量和最大年龄；Decode admission
-上报仅收集数值，不构造请求明细。
 
 `auto_tpm.preemption.target_invalid.count` 统计 Decode 抢占目标校验失败的尝试次数，
 使用 QPS + NORMAL（20 秒聚合）上报。一次计划即使包含多个目标也只计一次，标签仅有

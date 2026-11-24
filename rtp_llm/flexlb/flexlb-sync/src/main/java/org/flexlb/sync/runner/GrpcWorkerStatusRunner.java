@@ -472,8 +472,7 @@ public class GrpcWorkerStatusRunner implements Runnable {
 
     private void reportStatusCheckFailure(BalanceStatusEnum error, long startTime) {
         engineHealthReporter.reportStatusCheckerFail(error, workerStatus.getMetricIpPort(), roleType);
-        engineHealthReporter.reportStatusCheckFailureLatency(error, workerStatus.getMetricIpPort(),
-                roleType, Math.max(0L, System.nanoTime() / 1000 - startTime));
+        engineHealthReporter.reportStatusCheckFailureLatency(roleType, Math.max(0L, System.nanoTime() / 1000 - startTime));
     }
 
     private void log(String msg) {

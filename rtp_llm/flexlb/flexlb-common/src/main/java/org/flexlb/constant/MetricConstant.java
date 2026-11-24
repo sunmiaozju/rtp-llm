@@ -87,15 +87,6 @@ public class MetricConstant {
     public static final String TRACKED_REQUEST_COUNT = "app.flexlb.tracked.request.count";
 
     /**
-     * NON_BATCH PREFILL/PDFUSION: all requests occupying worker capacity, including queued,
-     * unconfirmed, and WorkerStatus-confirmed requests, deduplicated against engine-reported work.
-     * BATCH PREFILL/PDFUSION: dispatched requests in batches not yet confirmed by WorkerStatus.
-     * DECODE: non-queued local reservations awaiting KV_ALLOCATED or RUNNING confirmation.
-     * Tagged by role and engineIp.
-     */
-    public static final String INFLIGHT_REQUEST_COUNT = "app.flexlb.inflight.request.count";
-
-    /**
      * NON_BATCH PREFILL/PDFUSION submitted requests not yet confirmed by WorkerStatus.
      * Excludes queued and confirmed requests; tagged by role and engineIp.
      */
@@ -122,26 +113,6 @@ public class MetricConstant {
      * FlexLB scheduler total load per decode worker (confirmed running + scheduler inflight)
      */
     public static final String DECODE_TOTAL_LOAD = "app.flexlb.decode.total.load";
-
-    /**
-     * Sum of input tokens plus max_new_tokens for local Decode reservations, including queued requests.
-     */
-    public static final String DECODE_INPUT_AND_MAX_OUTPUT_KV_RESERVED_TOKENS = "app.flexlb.decode.inflight.kv.reserved.tokens";
-
-    /**
-     * Sum of input tokens for local Decode reservations, including queued requests.
-     */
-    public static final String DECODE_INPUT_KV_RESERVED_TOKENS =
-            "app.flexlb.decode.inflight.hard.kv.reserved.tokens";
-
-    /**
-     * FlexLB scheduler inflight max age (ms) — age of the oldest inflight entry,
-     * tagged by role and engineIp. role=SCHEDULER + engineIp="scheduler" marks
-     * the scheduler's own ledger (leak signature: max age creeping toward the
-     * TTL window); PREFILL/DECODE + real engineIp mark per-worker ledgers.
-     */
-    public static final String INFLIGHT_MAX_AGE_MS =
-            "app.flexlb.inflight.max.age.ms";
 
     /** Selection-time first-token readiness estimate, including outstanding work. */
     public static final String PREFILL_SELECTED_ESTIMATED_TTFT_MS =
@@ -814,16 +785,6 @@ public class MetricConstant {
     public static final String AUTO_TPM_VICTIM_KV_TOKENS = "auto_tpm.victim.kv_tokens";
 
     /**
-     * Auto-TPM decode reserved (shadow, engine-unconfirmed) request count (gauge), tags: endpoint
-     */
-    public static final String AUTO_TPM_DECODE_RESERVED_COUNT = "auto_tpm.decode.reserved.count";
-
-    /**
-     * Auto-TPM decode shadow hard KV reserved tokens (gauge), tags: endpoint
-     */
-    public static final String AUTO_TPM_DECODE_SHADOW_KV_RESERVED = "auto_tpm.decode.shadow_kv_reserved";
-
-    /**
      * Auto-TPM TTFT approximation in ms (timer), tags: priority.
      * Approximated as request arrival → schedule completion on the Master;
      * true TTFT (first token on the engine) is not observable here.
@@ -843,33 +804,12 @@ public class MetricConstant {
     public static final String AUTO_TPM_PRIORITY_PREEMPT_COUNT = "auto_tpm.priority_preempt.count";
 
     /**
-     * Auto-TPM decode confirmed running request count (gauge), tags: endpoint.
-     * Counts only engine-reported {@code RUNNING} tasks. Accepted-not-running
-     * ownership is reported by {@link #AUTO_TPM_DECODE_ACCEPTED_COUNT}.
-     */
-    public static final String AUTO_TPM_DECODE_RUNNING_COUNT = "auto_tpm.decode.running.count";
-
-    /**
-     * Auto-TPM decode accepted-not-running (engine KV-allocated) request
-     * count (gauge), tags: endpoint.
-     */
-    public static final String AUTO_TPM_DECODE_ACCEPTED_COUNT = "auto_tpm.decode.accepted.count";
-
-    /**
      * Auto-TPM cancel initiations (QPS), tags: priority (normalized priority
      * of the cancelled request, raw 1-100 value — matches the rest of the
      * auto_tpm family; "0" = not inflight / no budget), reason
      * (PRIORITY_PREEMPTED / USER_CANCELLED / DEADLINE_EXCEEDED).
      */
     public static final String AUTO_TPM_CANCEL_QPS = "auto_tpm.cancel.qps";
-
-    /**
-     * Auto-TPM decode engine-facing load (gauge): confirmed + dispatched
-     * reservations, excluding queued-phase shadow entries, tags: endpoint.
-     * Compare with {@link #AUTO_TPM_DECODE_RESERVED_COUNT} to distinguish
-     * engine-facing load from Prefill-queued reservations.
-     */
-    public static final String AUTO_TPM_DECODE_ENGINE_LOAD = "auto_tpm.decode.engine_load";
 
     /**
      * Decode preemption attempts rejected during target validation (QPS).

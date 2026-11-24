@@ -15,11 +15,6 @@ import org.springframework.stereotype.Component;
 import javax.annotation.PostConstruct;
 
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_CANCEL_QPS;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_ACCEPTED_COUNT;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_ENGINE_LOAD;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_RESERVED_COUNT;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_RUNNING_COUNT;
-import static org.flexlb.constant.MetricConstant.AUTO_TPM_DECODE_SHADOW_KV_RESERVED;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_EVICTION_COMMIT_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_EVICTION_PLAN_COUNT;
 import static org.flexlb.constant.MetricConstant.AUTO_TPM_PREEMPTION_TARGET_INVALID_COUNT;
@@ -79,15 +74,10 @@ public class RequestSchedulerReporter {
         monitor.register(AUTO_TPM_PREFILL_QUEUE_DEPTH, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_TTFT_MS, FlexMetricType.TIMER, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_PRIORITY_PREEMPT_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_DECODE_RUNNING_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_DECODE_ACCEPTED_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_CANCEL_QPS, FlexMetricType.QPS, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_DECODE_ENGINE_LOAD, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_PREEMPTION_TARGET_INVALID_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         monitor.register(REQUEST_LIFECYCLE_FAILURES_TOTAL, FlexMetricType.COUNTER, FlexPriorityType.NORMAL);
         monitor.register(AUTO_TPM_VICTIM_KV_TOKENS, FlexMetricType.TIMER, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_DECODE_RESERVED_COUNT, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        monitor.register(AUTO_TPM_DECODE_SHADOW_KV_RESERVED, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         monitor.register(REQUEST_STATUS_UPDATE_TIMEOUT_COUNT, FlexMetricType.QPS, FlexPriorityType.NORMAL);
         reportLifecycleFailureCounts();
         log.info("RequestSchedulerReporter initialized");
@@ -213,24 +203,6 @@ public class RequestSchedulerReporter {
     }
 
     /**
-     * Report a decode endpoint's shadow reservation count via
-     * {@code auto_tpm.decode.reserved.count}.
-     */
-    public void reportDecodeReservedCount(String endpoint, int count) {
-        monitor.report(AUTO_TPM_DECODE_RESERVED_COUNT,
-                FlexMetricTags.of("endpoint", endpoint), count);
-    }
-
-    /**
-     * Report a decode endpoint's shadow hard-KV reservation total via
-     * {@code auto_tpm.decode.shadow_kv_reserved}.
-     */
-    public void reportDecodeShadowKvReserved(String endpoint, long kvTokens) {
-        monitor.report(AUTO_TPM_DECODE_SHADOW_KV_RESERVED,
-                FlexMetricTags.of("endpoint", endpoint), kvTokens);
-    }
-
-    /**
      * Report the TTFT approximation via {@code auto_tpm.ttft_ms}.
      * Approximated as "request arrival → schedule completion" on the Master;
      * the engine-side first-token time is not observable here, so this is a
@@ -254,26 +226,6 @@ public class RequestSchedulerReporter {
     }
 
     /**
-     * Report a decode endpoint's engine-reported {@code RUNNING} request
-     * count via {@code auto_tpm.decode.running.count}. The accepted layer is
-     * reported separately via
-     * {@link #reportDecodeAcceptedCount}.
-     */
-    public void reportDecodeRunningCount(String endpoint, int count) {
-        monitor.report(AUTO_TPM_DECODE_RUNNING_COUNT,
-                FlexMetricTags.of("endpoint", endpoint), count);
-    }
-
-    /**
-     * Report a decode endpoint's accepted-not-running (engine KV-allocated)
-     * request count via {@code auto_tpm.decode.accepted.count}.
-     */
-    public void reportDecodeAcceptedCount(String endpoint, int count) {
-        monitor.report(AUTO_TPM_DECODE_ACCEPTED_COUNT,
-                FlexMetricTags.of("endpoint", endpoint), count);
-    }
-
-    /**
      * Report one cancellation request, tagged with its priority and reason
      * (PRIORITY_PREEMPTED / USER_CANCELLED / DEADLINE_EXCEEDED).
      *
@@ -285,14 +237,4 @@ public class RequestSchedulerReporter {
                 FlexMetricTags.of("priority", String.valueOf(priority), "reason", reason), 1.0);
     }
 
-    /**
-     * Report a decode endpoint's engine-facing load (dispatched, excludes
-     * queued-phase shadow reservations) via {@code auto_tpm.decode.engine_load}.
-     * Compare it with the reserved-count gauge to distinguish engine-facing
-     * load from Prefill-queued ownership.
-     */
-    public void reportDecodeEngineLoad(String endpoint, int load) {
-        monitor.report(AUTO_TPM_DECODE_ENGINE_LOAD,
-                FlexMetricTags.of("endpoint", endpoint), load);
-    }
 }

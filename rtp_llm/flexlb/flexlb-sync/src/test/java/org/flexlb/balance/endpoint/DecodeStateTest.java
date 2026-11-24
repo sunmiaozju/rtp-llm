@@ -44,16 +44,6 @@ class DecodeStateTest {
         when(configService.loadBalanceConfig()).thenReturn(config);
     }
 
-    private static void assertAdmissionMetricsMatch(DecodeState state) {
-        var full = state.resourceSnapshot();
-        var metrics = state.admissionStats();
-        assertEquals(full.reserved().size(), metrics.reserved());
-        assertEquals(full.runningCount(), metrics.running());
-        assertEquals(full.acceptedCount(), metrics.accepted());
-        assertEquals(full.routing().inputKvReserved(), metrics.inputKvTokens());
-        assertEquals(full.routing().engineLoad(), metrics.engineLoad());
-    }
-
     @Test
     void extractedRecordsExposeAccessorsWithoutChangingObjectIdentity() throws Exception {
         DecodeRequestState request = new DecodeRequestState(100L, 200L, 50, 1L);
@@ -183,7 +173,6 @@ class DecodeStateTest {
         assertEquals(publishedAtMs, request.getPublishedAtMs());
         assertFalse(state.hasOwnedResources(reservation));
         assertEquals(0, state.routingView().engineCapacityUsed());
-        assertAdmissionMetricsMatch(state);
         assertTrue(heartbeat(state, status, Map.of(), Map.of(), 0L).facts().isEmpty());
     }
 
@@ -240,7 +229,6 @@ class DecodeStateTest {
         assertFalse(state.hasOwnedResources(unconfirmed));
         assertFalse(state.hasOwnedResources(missingConfirmed));
         assertEquals(0, state.routingView().engineCapacityUsed());
-        assertAdmissionMetricsMatch(state);
     }
 
     @ParameterizedTest
@@ -272,7 +260,6 @@ class DecodeStateTest {
             assertTrue(state.resourceSnapshot().confirmed().isEmpty());
             assertTrue(state.resourceSnapshot().reserved().isEmpty());
             assertEquals(0L, state.routingView().inputKvReserved());
-            assertAdmissionMetricsMatch(state);
         }
     }
 
@@ -296,7 +283,6 @@ class DecodeStateTest {
         assertFalse(state.hasOwnedResources(incoming));
         assertEquals(0, state.routingView().engineCapacityUsed());
         assertEquals(10_000L, state.routingView().realKvAvailable());
-        assertAdmissionMetricsMatch(state);
     }
 
     @ParameterizedTest
@@ -321,7 +307,6 @@ class DecodeStateTest {
         assertEquals(2, state.routingView().engineCapacityUsed());
         assertEquals(1, state.resourceSnapshot().runningCount());
         assertEquals(1, state.getInflightCount());
-        assertAdmissionMetricsMatch(state);
     }
 
     @SuppressWarnings("unchecked")
@@ -378,8 +363,6 @@ class DecodeStateTest {
         var first = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         assertTrue(state.dispatch(first, DispatchOutcome.ABANDONED).capacityReleased());
         assertTrue(state.resourceSnapshot().isQueued("1"));
-        assertEquals(0, state.stats().inflight());
-        assertAdmissionMetricsMatch(state);
 
         var replacement = state.acquireDispatchPermit(reservation, CAPACITY).permit();
         assertEquals(OWNERSHIP_LOST, state.dispatch(first, DispatchOutcome.ENGINE_OWNED).status());
@@ -388,14 +371,12 @@ class DecodeStateTest {
         assertEquals(TRANSFERRED, state.dispatch(replacement, DispatchOutcome.ENGINE_OWNED).status());
         assertEquals(0, state.resourceSnapshot().activeDispatchPermits());
         assertEquals(1, state.routingView().engineLoad());
-        assertEquals(1, state.stats().inflight());
-        assertAdmissionMetricsMatch(state);
+        assertEquals(1, state.getInflightCount());
         assertThrows(IllegalStateException.class, () -> state.release(reservation, ReleaseReason.LOCAL_ROLLBACK));
         assertEquals(STILL_OWNED, state.release(reservation, ReleaseReason.COUNTERPART_FINISHED));
         assertEquals(RELEASED, state.release(reservation, ReleaseReason.EXPIRED));
         assertFalse(state.hasOwnedResources(reservation));
         assertEquals(0, state.routingView().engineLoad());
-        assertAdmissionMetricsMatch(state);
     }
 
     @Test
@@ -410,8 +391,7 @@ class DecodeStateTest {
         var accepted = calibrate(state, status, Map.of("2", task), Map.of());
         assertEquals(reservation, accepted.facts().getFirst().reservation());
         assertTrue(state.isAcceptedByEngine(reservation));
-        assertEquals(0, state.stats().inflight());
-        assertAdmissionMetricsMatch(state);
+        assertEquals(0, state.getInflightCount());
         assertEquals(1, state.routingView().engineCapacityUsed());
         assertEquals(0, state.resourceSnapshot().activeDispatchPermits());
         assertTrue(state.resourceSnapshot().reserved().isEmpty());
@@ -419,11 +399,9 @@ class DecodeStateTest {
 
         WorkerStatusPBs.phase(task, TaskPhase.RUNNING);
         calibrate(state, status, Map.of("2", task), Map.of());
-        assertAdmissionMetricsMatch(state);
-        assertEquals(1, state.admissionStats().running());
+        assertEquals(1, state.resourceSnapshot().runningCount());
 
         var finished = calibrate(state, status, Map.of(), Map.of("2", task));
-        assertAdmissionMetricsMatch(state);
         assertEquals(WorkerStatusFact.Kind.TERMINAL, finished.facts().getFirst().kind());
         assertEquals(reservation, finished.facts().getFirst().reservation());
         assertFalse(state.hasOwnedResources(reservation));
@@ -526,12 +504,10 @@ class DecodeStateTest {
             assertEquals(1, state.routingView().engineCapacityUsed());
             assertEquals(1, state.routingView().engineLoad());
             assertEquals(1, state.resourceSnapshot().runningCount());
-            assertAdmissionMetricsMatch(state);
             assertTrue(state.resourceSnapshot().reserved().isEmpty());
             assertTrue(state.hasOwnedResources(reservation));
             assertTrue(state.isAcceptedByEngine(reservation));
-            assertEquals(0, state.stats().inflight());
-            assertAdmissionMetricsMatch(state);
+            assertEquals(0, state.getInflightCount());
         }
         assertEquals(TRANSFERRED, state.dispatch(permit, DispatchOutcome.ENGINE_OWNED).status());
         assertEquals(STILL_OWNED, state.release(reservation, ReleaseReason.COUNTERPART_FINISHED));
@@ -611,7 +587,6 @@ class DecodeStateTest {
         assertTrue(state.hasOwnedResources(victim));
         assertFalse(state.hasOwnedResources(incoming));
         assertEquals(1, state.routingView().engineCapacityUsed());
-        assertAdmissionMetricsMatch(state);
     }
 
     @Test
@@ -641,7 +616,6 @@ class DecodeStateTest {
         assertFalse(state.hasOwnedResources(victim));
         assertTrue(state.hasOwnedResources(incoming));
         assertEquals(1, state.routingView().engineCapacityUsed());
-        assertAdmissionMetricsMatch(state);
     }
 
     @Test
@@ -662,7 +636,6 @@ class DecodeStateTest {
                 Map.of("10", task(10, TaskPhase.RUNNING)));
         assertFalse(state.hasOwnedResources(victim));
         assertEquals(1, state.routingView().engineCapacityUsed());
-        assertAdmissionMetricsMatch(state);
     }
 
     @Test
@@ -684,7 +657,6 @@ class DecodeStateTest {
         assertFalse(state.hasOwnedResources(incoming));
         assertTrue(state.hasOwnedResources(victim));
         assertEquals(1, state.routingView().engineCapacityUsed());
-        assertAdmissionMetricsMatch(state);
     }
 
     private DecodeState.CalibrationResult heartbeat(DecodeState state,

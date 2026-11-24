@@ -10,7 +10,6 @@ import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.grpc.WorkerStatusPBs;
-import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -102,32 +101,6 @@ class DecodeEndpointLayeredViewTest {
         assertEquals(1, endpoint.resourceSnapshot().runningCount());
         // Identity fields stay from first sight.
         assertEquals(30, confirmedView(1L).priority());
-    }
-
-    @Test
-    void periodicAdmissionMetricsExposePhaseSplitByIpAndPort() {
-        reserve(1L, 500, 508, 30);
-        reserve(2L, 400, 408, 40);
-        updateStatus(Map.of(
-                "1", runningTask(1L, TaskPhase.KV_ALLOCATED, 256),
-                "2", runningTask(2L, TaskPhase.RUNNING, 256)), null, 10_000);
-        reserve(3L, 300, 308, 50);
-        RequestSchedulerReporter reporter =
-                org.mockito.Mockito.mock(RequestSchedulerReporter.class);
-
-        endpoint.reportAdmissionMetrics(reporter);
-
-        String endpointKey = "10.0.0.1:8080";
-        org.mockito.Mockito.verify(reporter)
-                .reportDecodeReservedCount(endpointKey, 1);
-        org.mockito.Mockito.verify(reporter)
-                .reportDecodeShadowKvReserved(endpointKey, 300L);
-        org.mockito.Mockito.verify(reporter)
-                .reportDecodeAcceptedCount(endpointKey, 1);
-        org.mockito.Mockito.verify(reporter)
-                .reportDecodeRunningCount(endpointKey, 1);
-        org.mockito.Mockito.verify(reporter)
-                .reportDecodeEngineLoad(endpointKey, 3);
     }
 
     // ==================== calibrate: registry follows the reports ====================

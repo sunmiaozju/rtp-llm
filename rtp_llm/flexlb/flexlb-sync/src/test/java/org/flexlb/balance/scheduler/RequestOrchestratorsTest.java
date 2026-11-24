@@ -9,7 +9,6 @@ import org.flexlb.config.SchedulerConfig;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.dao.route.ServiceRoute;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
-import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -121,7 +120,7 @@ class RequestOrchestratorsTest {
         RequestRegistry requests = mock(RequestRegistry.class);
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
         SchedulerRuntime runtime = new SchedulerRuntime(requests, mock(EndpointRegistry.class), reporter,
-                mock(RequestSchedulerReporter.class), configs, new QueueCapacity(),
+                configs, new QueueCapacity(),
                 new ModelMetaConfig(new ServiceRoute()));
 
         runtime.report();
@@ -138,11 +137,9 @@ class RequestOrchestratorsTest {
                 mock(RequestRegistry.class);
         EndpointRegistry registry = mock(EndpointRegistry.class);
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
-        RequestSchedulerReporter admissionReporter =
-                mock(RequestSchedulerReporter.class);
         when(lifecycle.isShuttingDown()).thenReturn(true);
 
-        new SchedulerRuntime(lifecycle, registry, reporter, admissionReporter, mock(ConfigService.class),
+        new SchedulerRuntime(lifecycle, registry, reporter, mock(ConfigService.class),
                 new QueueCapacity(), new ModelMetaConfig(new ServiceRoute())).report();
 
         verify(lifecycle, never()).trackedRequestStats();
@@ -169,8 +166,7 @@ class RequestOrchestratorsTest {
 
         ModelMetaConfig modelMetaConfig = mock(ModelMetaConfig.class);
         when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of(role));
-        new SchedulerRuntime(requests, registry, reporter, mock(RequestSchedulerReporter.class),
-                service, capacity, modelMetaConfig).report();
+        new SchedulerRuntime(requests, registry, reporter, service, capacity, modelMetaConfig).report();
 
         verify(reporter).reportTotalQueueWaiting(1L);
         verify(reporter).reportSharedSubQueue(role.name(), 1, role == RoleType.PREFILL ? 16L : 20L,
@@ -191,7 +187,7 @@ class RequestOrchestratorsTest {
         when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of(role));
         BatchSchedulerReporter reporter = mock(BatchSchedulerReporter.class);
         SchedulerRuntime runtime = new SchedulerRuntime(mock(RequestRegistry.class), mock(EndpointRegistry.class),
-                reporter, mock(RequestSchedulerReporter.class), service, new QueueCapacity(), modelMetaConfig);
+                reporter, service, new QueueCapacity(), modelMetaConfig);
         when(modelMetaConfig.getRequiredRoles()).thenReturn(Set.of());
 
         runtime.report();
@@ -204,7 +200,7 @@ class RequestOrchestratorsTest {
 
     private static SchedulerRuntime runtime(RequestRegistry requests, EndpointRegistry endpoints) {
         return new SchedulerRuntime(requests, endpoints, mock(BatchSchedulerReporter.class),
-                mock(RequestSchedulerReporter.class), mock(ConfigService.class), new QueueCapacity(),
+                mock(ConfigService.class), new QueueCapacity(),
                 new ModelMetaConfig(new ServiceRoute()));
     }
 

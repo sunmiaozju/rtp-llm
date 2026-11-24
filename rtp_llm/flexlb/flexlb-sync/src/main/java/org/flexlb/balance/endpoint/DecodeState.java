@@ -1752,56 +1752,6 @@ final class DecodeState {
         return confirmedEngineOwnedCount + reservedRequestCount.get();
     }
 
-    /**
-     * Numeric admission metrics without allocating per-request views.
-     */
-    AdmissionStats admissionStats() {
-        lock.lock();
-        try {
-            int reserved = 0;
-            int running = 0;
-            int accepted = 0;
-            for (DecodeRequestState task : decodeRequests.values()) {
-                if (!task.countsTowardCapacity()) {
-                    continue;
-                }
-                if (!task.confirmed()) {
-                    reserved++;
-                } else if (task.phase() == DecodeTaskPhase.RUNNING) {
-                    running++;
-                } else if (task.phase() == DecodeTaskPhase.ACCEPTED_NOT_RUNNING) {
-                    accepted++;
-                }
-            }
-            int inflight = reservedRequestCount.get();
-            int queued = Math.max(0, Math.min(queuedPhaseCount.get(), inflight));
-            return new AdmissionStats(reserved, inputKvReservedTotal.get(), running, accepted,
-                    confirmedEngineOwnedCount + Math.max(0, inflight - queued));
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    record AdmissionStats(int reserved, long inputKvTokens, int running, int accepted, int engineLoad) { }
-
-    Stats stats() {
-        return new Stats(Math.max(0, getInflightCount() - queuedPhaseCount.get()), getTotalLoad(), inputAndMaxOutputKvReservedTotal.get(),
-                inputKvReservedTotal.get(), inflightMaxAgeMs(System.currentTimeMillis()));
-    }
-
-    private long inflightMaxAgeMs(long nowMs) {
-        long oldest = Long.MAX_VALUE;
-        for (DecodeRequestState request : decodeRequests.values()) {
-            if (request.countsTowardCapacity() && !request.confirmed()) {
-                oldest = Math.min(oldest, request.createdAtMs());
-            }
-        }
-        return oldest == Long.MAX_VALUE
-                ? 0L : Math.max(0L, nowMs - oldest);
-    }
-
-    record Stats(int inflight, int totalLoad, long inputAndMaxOutputKvTokens, long inputKvTokens, long oldestAgeMs) { }
-
     // Shared request identity and accounting values.
 
     private DecodeRequestState requestState(String requestId) {

@@ -12,14 +12,12 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import static org.flexlb.constant.MetricConstant.BATCHER_QUEUE_SIZE;
-import static org.flexlb.constant.MetricConstant.DECODE_INPUT_KV_RESERVED_TOKENS;
 import static org.flexlb.constant.MetricConstant.ENGINE_BALANCING_MASTER_DISPATCH_REASON;
 import static org.flexlb.constant.MetricConstant.ENGINE_BALANCING_MASTER_SELECT_DETAIL;
 import static org.flexlb.constant.MetricConstant.ENGINE_SUBQUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.ENGINE_SUBQUEUE_RESIDENCE_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_OLDEST_WAIT_MS;
 import static org.flexlb.constant.MetricConstant.GLOBAL_QUEUE_RESIDENCE_MS;
-import static org.flexlb.constant.MetricConstant.INFLIGHT_MAX_AGE_MS;
 import static org.flexlb.constant.MetricConstant.ROUTE_SUBMIT_TIME_MS;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_LENGTH;
 import static org.flexlb.constant.MetricConstant.ROUTING_QUEUE_MAX_LENGTH;
@@ -58,16 +56,6 @@ class BatchSchedulerReporterTest {
                 FlexPriorityType.NORMAL);
         verify(monitor).report(org.flexlb.constant.MetricConstant.DECODE_RESERVATION_BLOCKED,
                 FlexMetricTags.of("role", "DECODE"), 1.0);
-    }
-
-    @Test
-    void workerInflightUsesSeparateRolesAndWorkerScope() {
-        reporter.reportInflightRequestCount("PREFILL", "prefill:8080", 3);
-        reporter.reportInflightRequestCount("DECODE", "decode:8080", 2);
-        verify(monitor).report(org.flexlb.constant.MetricConstant.INFLIGHT_REQUEST_COUNT,
-                FlexMetricTags.ofEngine("prefill:8080", "role", "PREFILL", "scope", "worker"), 3.0);
-        verify(monitor).report(org.flexlb.constant.MetricConstant.INFLIGHT_REQUEST_COUNT,
-                FlexMetricTags.ofEngine("decode:8080", "role", "DECODE", "scope", "worker"), 2.0);
     }
 
     @Test
@@ -190,13 +178,11 @@ class BatchSchedulerReporterTest {
     }
 
     @Test
-    void should_register_inflight_max_age_and_ttl_expired_metrics_on_init() {
+    void should_register_inflight_ttl_expired_metric_on_init() {
         reporter.init();
 
-        verify(monitor).register(INFLIGHT_MAX_AGE_MS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
         verify(monitor).register(org.flexlb.constant.MetricConstant.WORKER_STATUS_UNCONFIRMED_REQUEST_COUNT,
                 FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
-        verify(monitor).register(DECODE_INPUT_KV_RESERVED_TOKENS, FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
     }
 
     @Test
@@ -219,26 +205,6 @@ class BatchSchedulerReporterTest {
     }
 
     @Test
-    void should_report_inflight_max_age_with_role_and_engine_tags() {
-        reporter.reportInflightMaxAgeMs("DECODE", "10.0.0.1", 42_000L);
-
-        FlexMetricTags tags = FlexMetricTags.of(
-                "engineIp", "10.0.0.1",
-                "role", "DECODE");
-        verify(monitor).report(INFLIGHT_MAX_AGE_MS, tags, 42_000.0);
-    }
-
-    @Test
-    void should_report_scheduler_inflight_max_age_with_scheduler_role() {
-        reporter.reportSchedulerInflightMaxAgeMs(15_000L);
-
-        FlexMetricTags tags = FlexMetricTags.of(
-                "engineIp", "scheduler",
-                "role", "SCHEDULER");
-        verify(monitor).report(INFLIGHT_MAX_AGE_MS, tags, 15_000.0);
-    }
-
-    @Test
     void should_report_scheduler_inflight_size_by_role() {
         reporter.reportTrackedRequestCount(RoleType.PREFILL, 3);
         reporter.reportTrackedRequestCount(RoleType.ENCODER, 2);
@@ -249,13 +215,4 @@ class BatchSchedulerReporterTest {
                 FlexMetricTags.of("role", "ENCODER", "engineIp", "scheduler"), 2.0);
     }
 
-    @Test
-    void should_report_decode_inflight_hard_kv_reserved_with_decode_role() {
-        reporter.reportDecodeInputKvReserved("10.0.0.2", 8_192L);
-
-        FlexMetricTags tags = FlexMetricTags.of(
-                "engineIp", "10.0.0.2",
-                "role", "DECODE");
-        verify(monitor).report(DECODE_INPUT_KV_RESERVED_TOKENS, tags, 8_192.0);
-    }
 }

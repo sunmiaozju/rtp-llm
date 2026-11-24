@@ -102,9 +102,8 @@ class GrpcWorkerStatusRunnerTest {
 
         ArgumentCaptor<Long> latency = ArgumentCaptor.forClass(Long.class);
         verify(reporter).reportStatusCheckerFail(expectedError, status.getMetricIpPort(), RoleType.PREFILL);
-        verify(reporter).reportStatusCheckFailureLatency(org.mockito.ArgumentMatchers.eq(expectedError),
-                org.mockito.ArgumentMatchers.eq(status.getMetricIpPort()),
-                org.mockito.ArgumentMatchers.eq(RoleType.PREFILL), latency.capture());
+        verify(reporter).reportStatusCheckFailureLatency(org.mockito.ArgumentMatchers.eq(RoleType.PREFILL),
+                latency.capture());
         assertTrue(latency.getValue() >= 0L);
     }
 

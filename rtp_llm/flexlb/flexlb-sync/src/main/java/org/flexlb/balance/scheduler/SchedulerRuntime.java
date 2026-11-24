@@ -8,7 +8,6 @@ import org.flexlb.config.FlexlbConfig;
 import org.flexlb.config.ModelMetaConfig;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
-import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.flexlb.util.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -26,7 +25,6 @@ final class SchedulerRuntime {
     private final RequestRegistry requests;
     private final EndpointRegistry endpoints;
     private final BatchSchedulerReporter reporter;
-    private final RequestSchedulerReporter admissionReporter;
     private final ConfigService configService;
     private final QueueCapacity queueCapacity;
     private final Runnable closePlacement;
@@ -35,11 +33,10 @@ final class SchedulerRuntime {
     SchedulerRuntime(RequestRegistry requests,
                      EndpointRegistry endpoints,
                      BatchSchedulerReporter reporter,
-                     RequestSchedulerReporter admissionReporter,
                      ConfigService configService,
                      QueueCapacity queueCapacity,
                      ModelMetaConfig modelMetaConfig) {
-        this(requests, endpoints, reporter, admissionReporter,
+        this(requests, endpoints, reporter,
                 configService, queueCapacity, modelMetaConfig, () -> { });
     }
 
@@ -47,19 +44,17 @@ final class SchedulerRuntime {
     SchedulerRuntime(RequestRegistry requests,
                      EndpointRegistry endpoints,
                      BatchSchedulerReporter reporter,
-                     RequestSchedulerReporter admissionReporter,
                      RequestScheduler scheduler,
                      ConfigService configService,
                      QueueCapacity queueCapacity,
                      ModelMetaConfig modelMetaConfig) {
-        this(requests, endpoints, reporter, admissionReporter, configService, queueCapacity, modelMetaConfig,
+        this(requests, endpoints, reporter, configService, queueCapacity, modelMetaConfig,
                 scheduler::closePlacement);
     }
 
     private SchedulerRuntime(RequestRegistry requests,
                              EndpointRegistry endpoints,
                              BatchSchedulerReporter reporter,
-                             RequestSchedulerReporter admissionReporter,
                              ConfigService configService,
                              QueueCapacity queueCapacity,
                              ModelMetaConfig modelMetaConfig,
@@ -70,7 +65,6 @@ final class SchedulerRuntime {
         this.requests = requests;
         this.endpoints = endpoints;
         this.reporter = reporter;
-        this.admissionReporter = admissionReporter;
         this.configService = configService;
         this.queueCapacity = queueCapacity;
         this.closePlacement = closePlacement;
@@ -96,12 +90,6 @@ final class SchedulerRuntime {
             RequestRegistry.TrackedRequestStats stats = requests.trackedRequestStats();
             reporter.reportTrackedRequestCount(stats.generationRequests());
             reporter.reportTrackedRequestCount(RoleType.ENCODER, stats.encoderRequests());
-            // Age of the oldest scheduler-ledger inflight entry: with a
-            // healthy TTL the size gauge alone cannot distinguish "busy"
-            // from "leaking"; a max age creeping toward the TTL window is
-            // the leak signature.
-            reporter.reportSchedulerInflightMaxAgeMs(
-                    stats.oldestAgeMs());
         } catch (RuntimeException failure) {
             warnIsolated(
                     "Failed to report scheduler inflight metrics", failure);
@@ -145,11 +133,6 @@ final class SchedulerRuntime {
                 endpoint.reportBatchMetrics(reporter);
             } catch (RuntimeException failure) {
                 warnIsolated("Failed to report Decode endpoint metrics: endpoint=" + endpoint.ipPort(), failure);
-            }
-            try {
-                endpoint.reportAdmissionMetrics(admissionReporter);
-            } catch (RuntimeException failure) {
-                warnIsolated("Failed to report Decode admission metrics: endpoint=" + endpoint.ipPort(), failure);
             }
         }
     }

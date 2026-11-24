@@ -9,7 +9,6 @@ import org.flexlb.dao.route.CapacityUsage;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
-import org.flexlb.service.monitor.RequestSchedulerReporter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -533,24 +532,8 @@ public class DecodeEndpoint extends WorkerEndpoint {
     // Metrics and shared lock-free capacity notifications.
 
     public void reportBatchMetrics(BatchSchedulerReporter reporter) {
-        DecodeState.Stats stats = state.stats();
         String engineIp = getStatus().getMetricIpPort();
-        reporter.reportInflightRequestCount(RoleType.DECODE.name(), engineIp, stats.inflight());
-        reporter.reportDecodeTotalLoad(engineIp, stats.totalLoad());
-        reporter.reportDecodeInputAndMaxOutputKvReserved(engineIp, stats.inputAndMaxOutputKvTokens());
-        reporter.reportDecodeInputKvReserved(engineIp, stats.inputKvTokens());
-        reporter.reportInflightMaxAgeMs(RoleType.DECODE.name(), engineIp, stats.oldestAgeMs());
-    }
-
-    public void reportAdmissionMetrics(RequestSchedulerReporter reporter) {
-        DecodeState.AdmissionStats stats = state.admissionStats();
-        String endpoint = getStatus().getMetricIpPort();
-        reporter.reportDecodeReservedCount(endpoint, stats.reserved());
-        reporter.reportDecodeShadowKvReserved(
-                endpoint, stats.inputKvTokens());
-        reporter.reportDecodeRunningCount(endpoint, stats.running());
-        reporter.reportDecodeAcceptedCount(endpoint, stats.accepted());
-        reporter.reportDecodeEngineLoad(endpoint, stats.engineLoad());
+        reporter.reportDecodeTotalLoad(engineIp, state.getTotalLoad());
     }
 
     private void publishCapacityRelease() {
