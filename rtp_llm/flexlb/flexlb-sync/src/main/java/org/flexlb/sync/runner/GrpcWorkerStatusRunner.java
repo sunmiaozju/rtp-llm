@@ -420,34 +420,36 @@ public class GrpcWorkerStatusRunner implements Runnable {
     }
 
     private void logWorkerStatusUpdate(long startTime, WorkerStatus workerStatus) {
-        WorkerStatus.EngineObservation status =
-                workerStatus.committedEngineObservation();
-        WorkerStatus.PollHealth health = workerStatus.pollHealth();
-        Map<String, WorkerStatus.TaskObservation> runningTasks =
-                status.runningTaskList();
-        logger.debug("gRPC Worker Status - {}, role:{}, alive:{}, concurrency:{}, "
-                        + "step_latency_ms:{}, iterate_count:{}, "
-                        + "dp_rank:{}, dp_size:{}, tp_size:{}, "
-                        + "avail_kv_tokens:{}, used_kv_tokens:{}, "
-                        + "waiting_tasks:{}, running_tasks:{}, "
-                        + "version:{}, sync_cost_us:{}",
-                ipPort,
-                status.role(),
-                health.reportedAlive(),
-                status.availableConcurrency(),
-                status.stepLatencyMs(),
-                status.iterateCount(),
-                status.dpRank(),
-                status.dpSize(),
-                status.tpSize(),
-                status.availableKvCacheTokens(),
-                status.totalKvCacheTokens() - status.availableKvCacheTokens(),
-                runningTasks.values().stream()
-                        .filter(t -> t.phase()
-                                != org.flexlb.enums.TaskPhase.RUNNING).count(),
-                runningTasks.size(),
-                workerStatus.appliedStatusCursor().statusVersion(),
-                System.nanoTime() / 1000 - startTime);
+        if (logger.isDebugEnabled()) {
+            WorkerStatus.EngineObservation status =
+                    workerStatus.committedEngineObservation();
+            WorkerStatus.PollHealth health = workerStatus.pollHealth();
+            Map<String, WorkerStatus.TaskObservation> runningTasks =
+                    status.runningTaskList();
+            logger.debug("gRPC Worker Status - {}, role:{}, alive:{}, concurrency:{}, "
+                            + "step_latency_ms:{}, iterate_count:{}, "
+                            + "dp_rank:{}, dp_size:{}, tp_size:{}, "
+                            + "avail_kv_tokens:{}, used_kv_tokens:{}, "
+                            + "waiting_tasks:{}, running_tasks:{}, "
+                            + "version:{}, sync_cost_us:{}",
+                    ipPort,
+                    status.role(),
+                    health.reportedAlive(),
+                    status.availableConcurrency(),
+                    status.stepLatencyMs(),
+                    status.iterateCount(),
+                    status.dpRank(),
+                    status.dpSize(),
+                    status.tpSize(),
+                    status.availableKvCacheTokens(),
+                    status.totalKvCacheTokens() - status.availableKvCacheTokens(),
+                    runningTasks.values().stream()
+                            .filter(t -> t.phase()
+                                    != org.flexlb.enums.TaskPhase.RUNNING).count(),
+                    runningTasks.size(),
+                    workerStatus.appliedStatusCursor().statusVersion(),
+                    System.nanoTime() / 1000 - startTime);
+        }
     }
 
     private void handleException(Throwable ex, long startTime) {
