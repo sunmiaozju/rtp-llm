@@ -148,7 +148,7 @@ public class KvcmGrpcClient {
                                                                             String namespace,
                                                                             QueryType queryType) {
         int maxQueryRetryCount = Math.max(0, config.getMaxQueryRetryCount());
-        Deadline queryDeadline = Deadline.after(config.getRequestTimeoutMs(), TimeUnit.MILLISECONDS);
+        Deadline queryDeadline = Deadline.after(config.getQueryTimeoutMs(), TimeUnit.MILLISECONDS);
         for (int attemptIndex = 0; ; attemptIndex++) {
             try {
                 if (queryDeadline.isExpired()) {

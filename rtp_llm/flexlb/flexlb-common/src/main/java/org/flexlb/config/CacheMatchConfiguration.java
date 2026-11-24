@@ -55,17 +55,14 @@ public class CacheMatchConfiguration {
         }
         KvcmCacheMatchingConfig clientSettings = config.getKvcmAndStandbyConfig();
         cacheMatching = clientSettings;
-        log.info("Applied KVCM cache matching configuration update: requestTimeoutMs={}, "
+        log.info(
+                "Applied KVCM cache matching configuration update: requestTimeoutMs={}, queryTimeoutMs={}, "
                         + "heartbeatFailureThreshold={}, queryFailureThreshold={}, maxQueryRetryCount={}, "
                         + "recoverySuccessThreshold={}, topKHostCount={}, backendTypes={}, medium={}",
-                clientSettings.getRequestTimeoutMs(),
-                clientSettings.getHeartbeatFailureThreshold(),
-                clientSettings.getQueryFailureThreshold(),
-                clientSettings.getMaxQueryRetryCount(),
-                clientSettings.getRecoverySuccessThreshold(),
-                clientSettings.getTopKHostCount(),
-                clientSettings.getBackendTypes(),
-                clientSettings.getMedium());
+                clientSettings.getRequestTimeoutMs(), clientSettings.getQueryTimeoutMs(),
+                clientSettings.getHeartbeatFailureThreshold(), clientSettings.getQueryFailureThreshold(),
+                clientSettings.getMaxQueryRetryCount(), clientSettings.getRecoverySuccessThreshold(),
+                clientSettings.getTopKHostCount(), clientSettings.getBackendTypes(), clientSettings.getMedium());
     }
 
     public CacheMatchMode getConfiguredMode() {
@@ -113,14 +110,14 @@ public class CacheMatchConfiguration {
             KvcmCacheMatchingConfig clientSettings = getKvcmClientSettings();
             log.info(
                     "KVCM cache matching configuration: address={}, namespace={}, "
-                            + "requestTimeoutMs={}, leaderRefreshIntervalMs={}, "
+                            + "requestTimeoutMs={}, queryTimeoutMs={}, leaderRefreshIntervalMs={}, "
                             + "heartbeatFailureThreshold={}, queryFailureThreshold={}, maxQueryRetryCount={}, "
                             + "recoverySuccessThreshold={}, topKHostCount={}, backendTypes={}, medium={}",
                     topology.getAddress(), topology.getNamespace(), clientSettings.getRequestTimeoutMs(),
-                    clientSettings.getLeaderRefreshIntervalMs(), clientSettings.getHeartbeatFailureThreshold(),
-                    clientSettings.getQueryFailureThreshold(), clientSettings.getMaxQueryRetryCount(),
-                    clientSettings.getRecoverySuccessThreshold(), clientSettings.getTopKHostCount(),
-                    clientSettings.getBackendTypes(), clientSettings.getMedium());
+                    clientSettings.getQueryTimeoutMs(), clientSettings.getLeaderRefreshIntervalMs(),
+                    clientSettings.getHeartbeatFailureThreshold(), clientSettings.getQueryFailureThreshold(),
+                    clientSettings.getMaxQueryRetryCount(), clientSettings.getRecoverySuccessThreshold(),
+                    clientSettings.getTopKHostCount(), clientSettings.getBackendTypes(), clientSettings.getMedium());
         }
         if (isLocalStandbyEnabled()) {
             log.info("Local standby cache configuration: autoSwitch={}, "

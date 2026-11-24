@@ -282,10 +282,13 @@ class NacosConfigSourceTest {
                     org.mockito.ArgumentMatchers.eq("flexlb-test"),
                     org.mockito.ArgumentMatchers.eq("FLEXLB_GROUP"), listener.capture());
             listener.getValue().receiveConfigInfo("""
-                    {"schemaVersion":3,"cacheMatching":{"topKHostCount":7,
+                    {"schemaVersion":3,"cacheMatching":{"topKHostCount":7,"queryTimeoutMs":60,
                      "backendTypes":["ST_EVENT_REPORT_L2","ST_TAIRMEMPOOL"]}}
                     """);
             KvcmCacheMatchingConfig updated = configuration.getKvcmClientSettings();
+            assertThat(initial.getQueryTimeoutMs()).isEqualTo(30L);
+            assertThat(updated.getQueryTimeoutMs()).isEqualTo(60L);
+            assertThat(updated.getRequestTimeoutMs()).isEqualTo(500L);
             assertThat(updated.getTopKHostCount()).isEqualTo(7);
             assertThat(updated.getBackendTypes()).containsExactly(
                     KvcmCacheMatchingConfig.BackendType.ST_EVENT_REPORT_L2,
@@ -293,9 +296,9 @@ class NacosConfigSourceTest {
             assertThat(initial.getTopKHostCount()).isEqualTo(3);
             assertThat(initial.getBackendTypes()).isEmpty();
 
-            for (String invalidField : List.of("\"topKHostCount\":-1",
-                    "\"backendTypes\":[\"ST_EVENT_REPORT_L1P5\"]", "\"backendTypes\":[3]",
-                    "\"backendTypes\":null")) {
+            for (String invalidField : List.of("\"topKHostCount\":-1", "\"backendTypes\":[\"ST_EVENT_REPORT_L1P5\"]",
+                    "\"backendTypes\":[3]", "\"backendTypes\":null", "\"queryTimeoutMs\":0", "\"queryTimeoutMs\":-1",
+                    "\"queryTimeoutMs\":2.5", "\"queryTimeoutMs\":null")) {
                 listener.getValue().receiveConfigInfo(
                         "{\"schemaVersion\":3,\"cacheMatching\":{" + invalidField + "}}");
                 assertThat(configuration.getKvcmClientSettings()).isSameAs(updated);
@@ -307,6 +310,7 @@ class NacosConfigSourceTest {
                     """);
             assertThat(configuration.getKvcmClientSettings().getBackendTypes()).isEmpty();
             assertThat(configuration.getKvcmClientSettings().getTopKHostCount()).isEqualTo(7);
+            assertThat(configuration.getKvcmClientSettings().getQueryTimeoutMs()).isEqualTo(60L);
             assertThat(updated.getBackendTypes()).hasSize(2);
         } finally {
             configService.close();

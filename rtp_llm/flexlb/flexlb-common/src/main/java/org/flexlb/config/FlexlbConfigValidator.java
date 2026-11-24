@@ -302,6 +302,7 @@ public final class FlexlbConfigValidator {
         require(kvcm.getQueryType() != QueryType.UNRECOGNIZED,
                 "cacheMatching.queryType", "must be a KVCM QueryType enum name");
         positive(kvcm.getRequestTimeoutMs(), "cacheMatching.requestTimeoutMs");
+        positive(kvcm.getQueryTimeoutMs(), "cacheMatching.queryTimeoutMs");
         positive(kvcm.getLeaderRefreshIntervalMs(),
                 "cacheMatching.leaderRefreshIntervalMs");
         positive(kvcm.getHeartbeatFailureThreshold(),

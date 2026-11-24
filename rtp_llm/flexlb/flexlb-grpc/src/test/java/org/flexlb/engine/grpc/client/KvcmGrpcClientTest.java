@@ -529,7 +529,7 @@ class KvcmGrpcClientTest {
         KvcmCacheMatchingConfig initialConfig = new KvcmCacheMatchingConfig();
         initialConfig.setLeaderRefreshIntervalMs(60_000);
         initialConfig.setMaxQueryRetryCount(0);
-        initialConfig.setRequestTimeoutMs(500L);
+        initialConfig.setQueryTimeoutMs(500L);
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
                 new AtomicReference<>(initialConfig);
         when(configuration.isKvcmEnabled()).thenReturn(true);
@@ -566,7 +566,7 @@ class KvcmGrpcClientTest {
         updatedConfig.setBackendTypes(List.of(BackendType.ST_EVENT_REPORT_L2));
         updatedConfig.setQueryType(QueryType.QT_PREFIX_MATCH_WITH_MAMBA);
         updatedConfig.setMedium(List.of("kvs"));
-        updatedConfig.setRequestTimeoutMs(2000L);
+        updatedConfig.setQueryTimeoutMs(2000L);
         runtimeConfig.set(updatedConfig);
         AtomicLong updatedBudgetMs = new AtomicLong();
         when(metaServiceClient.getHostCacheState(any(), any(), any(Deadline.class))).thenAnswer(invocation -> {
@@ -605,7 +605,7 @@ class KvcmGrpcClientTest {
         initialConfig.setBackendTypes(List.of(BackendType.ST_TAIRMEMPOOL, BackendType.ST_EVENT_REPORT_L2));
         initialConfig.setQueryType(QueryType.QT_PREFIX_MATCH_WITH_MAMBA);
         initialConfig.setMedium(List.of("hbm"));
-        initialConfig.setRequestTimeoutMs(700L);
+        initialConfig.setQueryTimeoutMs(700L);
         AtomicReference<KvcmCacheMatchingConfig> runtimeConfig =
                 new AtomicReference<>(initialConfig);
         when(configuration.isKvcmEnabled()).thenReturn(true);
@@ -629,7 +629,7 @@ class KvcmGrpcClientTest {
                         updatedConfig.setTopKHostCount(9);
                         updatedConfig.setBackendTypes(List.of());
                         updatedConfig.setMedium(List.of("kvs"));
-                        updatedConfig.setRequestTimeoutMs(900L);
+                updatedConfig.setQueryTimeoutMs(900L);
                         runtimeConfig.set(updatedConfig);
                         throw UNAVAILABLE.asRuntimeException();
                     }
@@ -669,7 +669,7 @@ class KvcmGrpcClientTest {
         KvcmCacheMatchingConfig runtimeConfig = new KvcmCacheMatchingConfig();
         runtimeConfig.setLeaderRefreshIntervalMs(60_000);
         runtimeConfig.setMaxQueryRetryCount(5);
-        runtimeConfig.setRequestTimeoutMs(300L);
+        runtimeConfig.setQueryTimeoutMs(300L);
         when(configuration.isKvcmEnabled()).thenReturn(true);
         when(configuration.getKvcmTopology()).thenReturn(new KvcmConfig());
         when(configuration.getKvcmClientSettings()).thenReturn(runtimeConfig);

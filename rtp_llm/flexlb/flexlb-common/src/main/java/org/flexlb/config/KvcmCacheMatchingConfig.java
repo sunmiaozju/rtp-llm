@@ -15,6 +15,7 @@ import java.util.List;
 public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permits LocalStandbyCacheMatchingConfig {
 
     public static final long DEFAULT_REQUEST_TIMEOUT_MS = 500L;
+    public static final long DEFAULT_QUERY_TIMEOUT_MS = 30L;
     public static final long DEFAULT_LEADER_REFRESH_INTERVAL_MS = 10_000L;
     public static final int DEFAULT_HEARTBEAT_FAILURE_THRESHOLD = 3;
     public static final int DEFAULT_QUERY_FAILURE_THRESHOLD = 10;
@@ -31,9 +32,13 @@ public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permi
     }
 
     /**
-     * Total cache-query budget, including retries; also bounds each cluster-info RPC.
+     * Timeout for each GetClusterInfo RPC used to discover the KVCM leader.
      */
     private long requestTimeoutMs = DEFAULT_REQUEST_TIMEOUT_MS;
+    /**
+     * Total budget for GetHostCacheState, including retries.
+     */
+    private long queryTimeoutMs = DEFAULT_QUERY_TIMEOUT_MS;
     /**
      * Fixed when the KVCM client starts; a runtime update requires a restart.
      */

@@ -58,37 +58,14 @@ public class JsonUtils {
                     "outlierRejection")),
             Map.entry("/cacheMatching", List.of("globalKvsHostCount", "enableP2p")));
 
-    private static final Set<String> MODEL_BEHAVIOR_FIELDS = Set.of(
-            "connect_timeout_ms",
-            "connectTimeoutMs",
-            "read_timeout_ms",
-            "readTimeoutMs",
-            "poll_interval_ms",
-            "pollIntervalMs",
-            "max_idle_connections",
-            "maxIdleConnections",
-            "keep_alive_duration_ms",
-            "keepAliveDurationMs",
-            "request_timeout_ms",
-            "requestTimeoutMs",
-            "leader_refresh_interval_ms",
-            "leaderRefreshIntervalMs",
-            "heartbeat_failure_threshold",
-            "heartbeatFailureThreshold",
-            "query_failure_threshold",
-            "queryFailureThreshold",
-            "max_query_retry_count",
-            "maxQueryRetryCount",
-            "recovery_success_threshold",
-            "recoverySuccessThreshold",
-            "query_type",
-            "queryType",
-            "top_k_host_count",
-            "topKHostCount",
-            "backend_types",
-            "backendTypes",
-            "local_standby",
-            "localStandby");
+    private static final Set<String> MODEL_BEHAVIOR_FIELDS = Set.of("connect_timeout_ms", "connectTimeoutMs",
+            "read_timeout_ms", "readTimeoutMs", "poll_interval_ms", "pollIntervalMs", "max_idle_connections",
+            "maxIdleConnections", "keep_alive_duration_ms", "keepAliveDurationMs", "request_timeout_ms",
+            "requestTimeoutMs", "query_timeout_ms", "queryTimeoutMs", "leader_refresh_interval_ms",
+            "leaderRefreshIntervalMs", "heartbeat_failure_threshold", "heartbeatFailureThreshold",
+            "query_failure_threshold", "queryFailureThreshold", "max_query_retry_count", "maxQueryRetryCount",
+            "recovery_success_threshold", "recoverySuccessThreshold", "query_type", "queryType", "top_k_host_count",
+            "topKHostCount", "backend_types", "backendTypes", "local_standby", "localStandby");
 
     private static final ObjectWriter WRITER;
 
