@@ -209,16 +209,23 @@ if [ -z $SETENV_SETTED ]; then
         CPU_COUNT=$(available_cpu_count)
         export CPU_COUNT
 
+        # appctl evaluates SERVICE_OPTS at launch. Only pass decimal integers from the environment.
+        for gcSetting in FLEXLB_JVM_G1_MAX_NEW_SIZE_PERCENT FLEXLB_JVM_MAX_GC_PAUSE_MILLIS \
+            FLEXLB_JVM_PARALLEL_GC_THREADS FLEXLB_JVM_CONC_GC_THREADS; do
+            gcValue=${!gcSetting:-}
+            if [[ -n "$gcValue" && ! "$gcValue" =~ ^[0-9]+$ ]]; then
+                echo "ERROR: $gcSetting must be a decimal integer" >&2
+                exit 1
+            fi
+        done
+
         # Match HotSpot G1 ergonomics to the CPU quota visible to this container.
         if [ "$CPU_COUNT" -le 8 ]; then
           parallelGCThreads=$CPU_COUNT
         else
           parallelGCThreads=$((8 + (CPU_COUNT - 8) * 5 / 8))
         fi
-        concGCThreads=$((parallelGCThreads / 4))
-        if [ "$concGCThreads" -lt 1 ]; then
-          concGCThreads=1
-        fi
+        parallelGCThreads=${FLEXLB_JVM_PARALLEL_GC_THREADS:-$parallelGCThreads}
 
         export SERVICE_PID=$APP_HOME/.default/${APP_NAME}.pid
         export MIDDLEWARE_LOGS="${HOME}/logs"
@@ -249,11 +256,14 @@ if [ -z $SETENV_SETTED ]; then
             largeHeapG1TuningEnabled=true
             # JDK 21 rounds the concurrent worker count instead of truncating it:
             # 24 CPUs use 18/5 parallel/concurrent workers; 32 CPUs use 23/6.
-            concGCThreads=$(((parallelGCThreads + 2) / 4))
-            if [ "$concGCThreads" -lt 1 ]; then
-                concGCThreads=1
-            fi
+            concGCThreads=$(((10#$parallelGCThreads + 2) / 4))
+        else
+            concGCThreads=$((10#$parallelGCThreads / 4))
         fi
+        if [ "$concGCThreads" -lt 1 ]; then
+            concGCThreads=1
+        fi
+        concGCThreads=${FLEXLB_JVM_CONC_GC_THREADS:-$concGCThreads}
         echo "INFO: JVM heap config: -Xms${SERVICE_JVM_XMS} -Xmx${SERVICE_JVM_XMX}"
         SERVICE_OPTS="${SERVICE_OPTS} -Xms${SERVICE_JVM_XMS} -Xmx${SERVICE_JVM_XMX}"
 
@@ -262,7 +272,7 @@ if [ -z $SETENV_SETTED ]; then
         # 使用G1GC
         SERVICE_OPTS="${SERVICE_OPTS} -XX:+UseG1GC"
         SERVICE_OPTS="${SERVICE_OPTS} -XX:+UnlockExperimentalVMOptions"
-        SERVICE_OPTS="${SERVICE_OPTS} -XX:MaxGCPauseMillis=150"
+        SERVICE_OPTS="${SERVICE_OPTS} -XX:MaxGCPauseMillis=${FLEXLB_JVM_MAX_GC_PAUSE_MILLIS:-80}"
         SERVICE_OPTS="${SERVICE_OPTS} -XX:InitiatingHeapOccupancyPercent=40"
         SERVICE_OPTS="${SERVICE_OPTS} -XX:G1HeapRegionSize=32M"
         if [ "$largeHeapG1TuningEnabled" = true ]; then
@@ -271,6 +281,9 @@ if [ -z $SETENV_SETTED ]; then
             SERVICE_OPTS="${SERVICE_OPTS} -XX:+AlwaysPreTouch -XX:G1ReservePercent=20"
         else
             SERVICE_OPTS="${SERVICE_OPTS} -XX:G1NewSizePercent=20"
+        fi
+        if [ -n "${FLEXLB_JVM_G1_MAX_NEW_SIZE_PERCENT:-}" ]; then
+            SERVICE_OPTS="${SERVICE_OPTS} -XX:G1MaxNewSizePercent=${FLEXLB_JVM_G1_MAX_NEW_SIZE_PERCENT}"
         fi
         SERVICE_OPTS="${SERVICE_OPTS} -XX:+ExplicitGCInvokesConcurrent"
         SERVICE_OPTS="${SERVICE_OPTS} -XX:SurvivorRatio=8"

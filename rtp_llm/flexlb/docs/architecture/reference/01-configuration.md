@@ -24,18 +24,27 @@ metaspace、code cache 以及容器内存的 1/8 native 余量约束。显式堆
 native allocation 的实际占用仍取决于负载。
 
 显式堆大小必须携带 `k/m/g` 单位，例如 `2048m` 或 `2g`；不接受无单位数值，避免将业务希望
-配置的 MB 数按 JVM 的字节语义使用。GC 线程数优先采用有效的正整数 CPU 配额；无效或缺失时
+配置的 MB 数按 JVM 的字节语义使用。推导默认 GC 线程数时优先采用有效的正整数 CPU 配额；无效或缺失时
 读取系统 CPU 数，仍不可用时使用 1，确保 G1 的并行 GC 线程数至少为 1。
 
 仅在 JDK 21+ 且最终 Xmx 为 48GiB 或 64GiB 时启用大堆 G1 调优（等价的 `m/k` 单位也支持）。
-其他堆大小保留原有年轻代 20% 下限、GC 线程数和日志配置。所有规格保持 150ms 暂停软目标、
-32MiB region 和初始 IHOP 40；IHOP 后续自适应调整。
+其他堆大小保留原有年轻代 20% 下限、GC 线程数和日志配置。所有规格使用 32MiB region
+和初始 IHOP 40，IHOP 后续自适应调整。
 大堆配置使用默认 5% 年轻代下限，设置 `G1ReservePercent=20` 为对象转移保留堆内余量，
 并启用 `AlwaysPreTouch` 预触初始堆，以启动耗时和更早提交物理内存换取运行期间更少的堆缺页。
 大堆并发 GC 线程数按 JDK 21 的 `(ParallelGCThreads + 2) / 4` 取整，至少为 1：
 24 核使用 18/5 个并行/并发线程，32 核使用 23/6；原有规格分别保持 18/4、23/5。
 使用 `FLEXLB_JVM_HEAP_SIZE=48g` 或 `64g` 可同时设置 Xms/Xmx，仍需通过容器预算校验。
 大堆 `gc.log` 同时记录 GC 和 safepoint 时间，按 20MiB 轮转并保留 5 个归档文件。
+
+以下环境变量在 JVM 启动时优先覆盖对应的 G1 参数，值使用十进制整数。未设置或留空时使用默认行为。
+
+| 环境变量 | JVM 参数 | 默认行为 |
+|---|---|---|
+| `FLEXLB_JVM_G1_MAX_NEW_SIZE_PERCENT` | `G1MaxNewSizePercent` | 由 JVM 决定年轻代上限 |
+| `FLEXLB_JVM_MAX_GC_PAUSE_MILLIS` | `MaxGCPauseMillis` | 80 ms 暂停软目标 |
+| `FLEXLB_JVM_PARALLEL_GC_THREADS` | `ParallelGCThreads` | 按容器可见 CPU 数推导 |
+| `FLEXLB_JVM_CONC_GC_THREADS` | `ConcGCThreads` | 按实际使用的并行 GC 线程数推导，保留上述大堆取整规则 |
 
 KVCM 的缓存和集群信息查询使用独立的 gRPC 客户端 I/O 线程组，不与 `GetWorkerStatus` 等引擎 RPC
 共用；Master 转发仍使用引擎客户端的 I/O 线程组。两个客户端 I/O 线程组、客户端共享回调线程池和
