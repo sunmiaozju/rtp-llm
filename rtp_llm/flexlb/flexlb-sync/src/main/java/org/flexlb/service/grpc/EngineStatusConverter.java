@@ -109,8 +109,7 @@ public class EngineStatusConverter {
         if (taskInfoPBList == null || taskInfoPBList.isEmpty()) {
             return Map.of();
         }
-        Map<String, TaskObservation> tasks = new HashMap<>(
-                taskInfoPBList.size());
+        Map<String, TaskObservation> tasks = HashMap.newHashMap(taskInfoPBList.size());
 
         for (EngineRpcService.TaskInfoPB task : taskInfoPBList) {
             long errorCode = task.hasErrorInfo()
