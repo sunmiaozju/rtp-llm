@@ -1,4 +1,4 @@
-FROM hub.docker.alibaba-inc.com/aone-base-global/flexlb_base_arm64:2026_10_21_21_20_97feca2_arm64
+FROM hub.docker.alibaba-inc.com/aone-base-global/flexlb_base_arm64:2026_11_24_23_53_8b49cb3_arm64
 
 ARG APP_NAME=ai-whale
 ENV APP_NAME=${APP_NAME}
