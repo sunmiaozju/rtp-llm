@@ -25,7 +25,6 @@ public final class DecodeQueue {
             return;
         }
         waiting.add(request);
-        wake();
     }
 
     public void removeWaiting(Request request) {
@@ -42,7 +41,8 @@ public final class DecodeQueue {
             Request request = waiting.pollFirst();
             if (request == null) {
                 if (running.getAsBoolean()) {
-                    awaitChange(version);
+                    //noinspection BusyWait
+                    Thread.sleep(10);
                 }
             } else if (request.stage() == Stage.DECODE_WAITING) {
                 return request;
@@ -58,15 +58,6 @@ public final class DecodeQueue {
     public synchronized void wake() {
         changeVersion++;
         notifyAll();
-    }
-
-    /**
-     * 版本检查避免检查容量与开始等待之间丢通知；50ms 兜底未发送通知的变化。
-     */
-    public synchronized void awaitChange(long version) throws InterruptedException {
-        if (version == changeVersion) {
-            wait(50L);
-        }
     }
 
 }

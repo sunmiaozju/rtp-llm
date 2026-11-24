@@ -622,7 +622,6 @@ class DecodeQueueConsumerTest {
         assertNull(decode.reservationHandle("1"));
 
         register(otherDecode);
-        decodeQueue.wake();
 
         assertTrue(response(request).isSuccess());
         pool.close();

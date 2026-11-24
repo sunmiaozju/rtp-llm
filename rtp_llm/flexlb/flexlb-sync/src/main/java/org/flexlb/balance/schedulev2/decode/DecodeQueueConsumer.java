@@ -112,7 +112,8 @@ public final class DecodeQueueConsumer implements Runnable {
                 }
                 // 恢复等待阶段，等待容量变化后重试，避免没有可用 Decode 时忙循环。
                 request.moveTo(Stage.DECODE_RESERVED, Stage.DECODE_WAITING);
-                decodeQueue.awaitChange(version);
+                //noinspection BusyWait
+                Thread.sleep(10);
             }
         } catch (InterruptedException interrupted) {
             throw interrupted; // 交给 run() 停线程，不误杀请求

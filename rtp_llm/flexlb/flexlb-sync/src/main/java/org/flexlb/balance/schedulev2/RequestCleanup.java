@@ -47,7 +47,6 @@ public final class RequestCleanup {
             prefillQueue.removeDispatched(request);
         }
         decodeQueue.removeWaiting(request);
-        decodeQueue.wake();
         releaseQueueSlot(request);
         queueCapacity.decreaseTotalQueueCount(request.future());
         requestTable.remove(request);

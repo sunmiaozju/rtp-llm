@@ -1,7 +1,6 @@
 package org.flexlb.balance.schedulev2.decode;
 
 import org.flexlb.balance.scheduler.PlacementAvailability;
-import org.flexlb.dao.route.RoleType;
 import org.flexlb.util.Logger;
 
 import java.util.ArrayList;
@@ -27,12 +26,7 @@ public final class DecodeQueueConsumerPoll {
                                    PlacementAvailability placementAvailability,
                                    Supplier<DecodeQueueConsumer> consumerFactory) {
         this.placementAvailability = placementAvailability;
-        this.availabilityListener = event -> {
-            RoleType role = event.key().role();
-            if (role == RoleType.DECODE || role == RoleType.PREFILL || role == RoleType.PDFUSION) {
-                queue.wake();
-            }
-        };
+        this.availabilityListener = event -> {};
         for (int i = 0; i < count; i++) {
             DecodeQueueConsumer consumer = consumerFactory.get();
             consumers.add(consumer);

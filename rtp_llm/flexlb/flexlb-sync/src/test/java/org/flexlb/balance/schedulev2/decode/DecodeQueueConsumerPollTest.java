@@ -3,6 +3,7 @@ package org.flexlb.balance.schedulev2.decode;
 import org.flexlb.balance.scheduler.PlacementAvailability;
 import org.flexlb.dao.route.RoleType;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
 class DecodeQueueConsumerPollTest {
@@ -63,26 +65,24 @@ class DecodeQueueConsumerPollTest {
     }
 
     @Test
-    void wakesForClusterCapacityAndRemovesListenerOnClose() {
+    void keepsClusterListenerWithoutWakingConsumersAndRemovesItOnClose() {
         DecodeQueue queue = new DecodeQueue(false);
-        PlacementAvailability availability = new PlacementAvailability();
+        PlacementAvailability availability = spy(new PlacementAvailability());
         DecodeQueueConsumerPoll pool =
                 new DecodeQueueConsumerPoll(1, queue, availability, () -> mock(DecodeQueueConsumer.class));
         pool.start();
         try {
             long version = queue.changeVersion();
             availability.capacityChanged(RoleType.DECODE, "g", "d2");
-            assertEquals(version + 1L, queue.changeVersion());
             availability.topologyChanged(RoleType.DECODE, "g", "d3");
-            assertEquals(version + 2L, queue.changeVersion());
             availability.capacityChanged(RoleType.PREFILL, "g", "p1");
-            assertEquals(version + 3L, queue.changeVersion());
+            assertEquals(version, queue.changeVersion());
         } finally {
             pool.close();
         }
-        long closedVersion = queue.changeVersion();
-        availability.capacityChanged(RoleType.DECODE, "g", "d2");
-        assertEquals(closedVersion, queue.changeVersion());
+        var listener = ArgumentCaptor.forClass(PlacementAvailability.Listener.class);
+        verify(availability).addListener(listener.capture());
+        verify(availability).removeListener(listener.getValue());
     }
 
     @Test

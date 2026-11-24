@@ -98,7 +98,7 @@ public class RequestSchedulerV2 {
         this.mainQueueConsumerPool = new MainQueueConsumerPool(mainQueue, dispatcher, cleanup, queueCapacity,
                 endpointRegistry, placementAvailability, configService, router, prefillStrategy, prefillQueues,
                 prefillRole, queueReporter);
-        Runnable capacityWake = decodeQueue::wake;
+        Runnable capacityWake = () -> {};
         this.decodeQueueConsumerPoll =
                 new DecodeQueueConsumerPoll(configService.loadBalanceConfig().getDispatcher().getDecodeQueueThreads(),
                         decodeQueue, placementAvailability, () -> new DecodeQueueConsumer(decodeQueue, cleanup,
@@ -110,7 +110,7 @@ public class RequestSchedulerV2 {
         });
         this.deadlineTimer.setRemoveOnCancelPolicy(true);
         prefillQueues.start(queue -> {
-            queue.onCapacityChanged(decodeQueue::wake);
+            queue.onCapacityChanged(capacityWake);
             return new PrefillQueueLoop(queue, prefillQueues, cleanup, mainQueue, endpointRegistry, configService,
                     this::sendToDecodeQueue, queueReporter);
         });
