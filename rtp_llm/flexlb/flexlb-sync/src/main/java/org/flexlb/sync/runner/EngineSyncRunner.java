@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.IntSupplier;
 import java.util.stream.Collectors;
 
 public class EngineSyncRunner implements Runnable {
@@ -59,6 +60,8 @@ public class EngineSyncRunner implements Runnable {
 
     private final long statusStaleAfterUs;
 
+    private final IntSupplier statusPollFailureThreshold;
+
     public EngineSyncRunner(WorkerDirectory workerDirectory,
                             WorkerAddressService workerAddressService,
                             ExecutorService statusCheckExecutor,
@@ -71,10 +74,12 @@ public class EngineSyncRunner implements Runnable {
                             LongAdder syncCount,
                             Long syncEngineStatusInterval,
                             boolean cacheFullSnapshotDebugMode,
-                            long statusStaleAfterUs) {
+                            long statusStaleAfterUs,
+                            IntSupplier statusPollFailureThreshold) {
         this(workerDirectory, workerAddressService, statusCheckExecutor, engineHealthReporter, engineGrpcService,
                 roleType, cacheAwareService, cacheIntervalService, syncRequestTimeoutMs, syncCount,
-                syncEngineStatusInterval, false, cacheFullSnapshotDebugMode, statusStaleAfterUs);
+                syncEngineStatusInterval, false, cacheFullSnapshotDebugMode, statusStaleAfterUs,
+                statusPollFailureThreshold);
     }
 
     public EngineSyncRunner(WorkerDirectory workerDirectory,
@@ -90,7 +95,8 @@ public class EngineSyncRunner implements Runnable {
                             Long syncEngineStatusInterval,
                             boolean kvcmEnabled,
                             boolean cacheFullSnapshotDebugMode,
-                            long statusStaleAfterUs) {
+                            long statusStaleAfterUs,
+                            IntSupplier statusPollFailureThreshold) {
 
         this.workerAddressService = workerAddressService;
         this.workerDirectory = workerDirectory;
@@ -110,6 +116,7 @@ public class EngineSyncRunner implements Runnable {
                     "statusStaleAfterUs must be positive");
         }
         this.statusStaleAfterUs = statusStaleAfterUs;
+        this.statusPollFailureThreshold = statusPollFailureThreshold;
     }
 
     @Override
@@ -181,10 +188,11 @@ public class EngineSyncRunner implements Runnable {
                     boolean handedOff = false;
                     try {
                         logger.debug("Submitting GrpcWorkerStatusRunner for worker: {}, site: {}", workerIpPort, site);
-                        GrpcWorkerStatusRunner grpcWorkerStatusRunner = new GrpcWorkerStatusRunner(workerIpPort,
-                                host.getWorkerStatusPort(), site, roleType, host.getGroup(), workerStatus,
-                                statusPollLease, workerDirectory, engineHealthReporter, engineGrpcService,
-                                syncRequestTimeoutMs, cacheAwareService, statusCheckExecutor);
+                        GrpcWorkerStatusRunner grpcWorkerStatusRunner =
+                                new GrpcWorkerStatusRunner(workerIpPort, host.getWorkerStatusPort(), site, roleType,
+                                        host.getGroup(), workerStatus, statusPollLease, workerDirectory,
+                                        engineHealthReporter, engineGrpcService, syncRequestTimeoutMs,
+                                        cacheAwareService, statusCheckExecutor, statusPollFailureThreshold);
                         statusCheckExecutor.submit(grpcWorkerStatusRunner);
                         handedOff = true;
                     } catch (RejectedExecutionException e) {

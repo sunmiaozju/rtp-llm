@@ -158,23 +158,13 @@ class FileDiscoveryDynamicScaleEndToEndTest extends FlexLBMockTestBase {
         EngineSyncRunner prefillSyncRunner = new EngineSyncRunner(
                 // Share the fixture's directory so discovery retires and
                 // republishes the exact generations used by routing.
-                engineWorkerStatus,
-                workerAddressService,
-                statusCheckExecutor,
-                healthReporter,
-                engineGrpcService,
-                RoleType.PREFILL,
-                cacheAwareService,
-                cacheIntervalService,
-                5_000L,
-                new LongAdder(),
-                1L,
-                false,
-                STATUS_STALE_AFTER_US);
+                engineWorkerStatus, workerAddressService, statusCheckExecutor, healthReporter, engineGrpcService,
+                RoleType.PREFILL, cacheAwareService, cacheIntervalService, 5_000L, new LongAdder(), 1L, false,
+                STATUS_STALE_AFTER_US, () -> 10);
 
         EngineSyncRunner decodeSyncRunner = new EngineSyncRunner(engineWorkerStatus, workerAddressService,
                 statusCheckExecutor, healthReporter, engineGrpcService, RoleType.DECODE, cacheAwareService,
-                cacheIntervalService, 5_000L, new LongAdder(), 1L, false, STATUS_STALE_AFTER_US);
+                cacheIntervalService, 5_000L, new LongAdder(), 1L, false, STATUS_STALE_AFTER_US, () -> 10);
 
         syncScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread thread = new Thread(r, "e2e-engine-sync");

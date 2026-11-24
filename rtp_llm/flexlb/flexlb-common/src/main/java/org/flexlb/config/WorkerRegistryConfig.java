@@ -15,6 +15,7 @@ public final class WorkerRegistryConfig {
     public static final class HealthConfig {
         private long statusPollIntervalMs = 20;
         private long statusRpcTimeoutMs = 5000;
+        private int statusPollFailureThreshold = 10;
         private long statusStaleAfterMs = 10_000;
         private long cleanupIntervalMs = 3000;
     }

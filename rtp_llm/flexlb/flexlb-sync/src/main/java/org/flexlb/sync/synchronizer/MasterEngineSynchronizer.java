@@ -23,6 +23,7 @@ import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
+import java.util.function.IntSupplier;
 
 import static org.flexlb.constant.MetricConstant.ENGINE_BALANCING_THREAD_POOL_INFO;
 
@@ -46,6 +47,7 @@ public final class MasterEngineSynchronizer {
     private final LongAdder syncCount = new LongAdder();
     private final Long syncEngineStatusInterval;
     private final long statusStaleAfterUs;
+    private final IntSupplier statusPollFailureThreshold;
     private final ScheduledThreadPoolExecutor scheduler;
     private final ThreadPoolExecutor statusCheckExecutor;
     private final ThreadPoolExecutor engineSyncExecutor;
@@ -63,6 +65,8 @@ public final class MasterEngineSynchronizer {
         this.engineHealthReporter = engineHealthReporter;
         this.workerDirectory = workerDirectory;
         this.flexlbConfig = configService.loadBalanceConfig();
+        this.statusPollFailureThreshold =
+                () -> configService.loadBalanceConfig().getWorkerRegistry().getHealth().getStatusPollFailureThreshold();
         this.engineGrpcService = engineGrpcService;
         this.cacheAwareService = cacheAwareService;
         this.cacheIntervalService = cacheIntervalService;
@@ -121,8 +125,8 @@ public final class MasterEngineSynchronizer {
                         statusCheckExecutor, engineHealthReporter, engineGrpcService, roleType, cacheAwareService,
                         cacheIntervalService, syncRequestTimeoutMs, syncCount, syncEngineStatusInterval,
                         flexlbConfig.isKvcmAndStandbyEnabled(),
-                        flexlbConfig.getWorkerRegistry().getCacheStatus().isFullSnapshotDebugMode(),
-                        statusStaleAfterUs));
+                        flexlbConfig.getWorkerRegistry().getCacheStatus().isFullSnapshotDebugMode(), statusStaleAfterUs,
+                        statusPollFailureThreshold));
             }
         } catch (Exception e) {
             logger.error("sync engine prefill status error", e);

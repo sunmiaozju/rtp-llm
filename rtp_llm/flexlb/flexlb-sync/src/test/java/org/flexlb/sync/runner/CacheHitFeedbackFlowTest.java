@@ -416,7 +416,7 @@ class CacheHitFeedbackFlowTest {
         var lease = status.tryBeginStatusPoll();
         assertNotNull(lease);
         new GrpcWorkerStatusRunner(status.getLogicalIpPort(), "test", RoleType.PREFILL, "group", status, lease,
-                directory, reporter, grpc, 5000, cache, Runnable::run).run();
+                directory, reporter, grpc, 5000, cache, Runnable::run, () -> 10).run();
     }
 
     private List<JsonNode> events(String event) throws Exception {

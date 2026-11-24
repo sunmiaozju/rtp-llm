@@ -61,12 +61,14 @@ class GrpcWorkerStatusRunnerTest {
                                  .build())
                         : CompletableFuture.failedFuture(io.grpc.Status.UNAVAILABLE.asRuntimeException()));
 
-        for (int failure = 1; failure <= 3; failure++) {
+        var health = config.loadBalanceConfig().getWorkerRegistry().getHealth();
+        for (int failure = 1; failure <= 10; failure++) {
             WorkerStatus.PollLease lease = status.tryBeginStatusPoll();
             assertNotNull(lease);
             new GrpcWorkerStatusRunner(status.getLogicalIpPort(), "test-site", role, null, status, lease, directory,
-                    mock(EngineHealthReporter.class), grpc, 5_000L, cache, Runnable::run).run();
-            if (failure < 3) {
+                    mock(EngineHealthReporter.class), grpc, 5_000L, cache, Runnable::run,
+                    health::getStatusPollFailureThreshold).run();
+            if (failure < 10) {
                 assertSame(status, directory.getStatusBy(role).get(status.getLogicalIpPort()));
                 assertSame(endpoint, registry.get(role, status.getLogicalIpPort()));
                 verifyNoInteractions(cache);
@@ -98,7 +100,7 @@ class GrpcWorkerStatusRunnerTest {
 
         new GrpcWorkerStatusRunner(status.getLogicalIpPort(), "test-site", RoleType.PREFILL, null, status,
                 status.tryBeginStatusPoll(), directory, reporter, grpc, 5000L, mock(CacheAwareService.class),
-                Runnable::run).run();
+                Runnable::run, () -> 10).run();
 
         ArgumentCaptor<Long> latency = ArgumentCaptor.forClass(Long.class);
         verify(reporter).reportStatusCheckerFail(expectedError, status.getMetricIpPort(), RoleType.PREFILL);
@@ -141,7 +143,7 @@ class GrpcWorkerStatusRunnerTest {
             when(grpc.getWorkerStatusAsync(anyString(), anyInt(), anyLong(), anyLong(), any()))
                     .thenReturn(CompletableFuture.completedFuture(response.build()));
             new GrpcWorkerStatusRunner(ipPort, "test-site", RoleType.DECODE, null, status, status.tryBeginStatusPoll(),
-                    directory, reporter, grpc, 5000L, mock(CacheAwareService.class), Runnable::run).run();
+                    directory, reporter, grpc, 5000L, mock(CacheAwareService.class), Runnable::run, () -> 10).run();
         }
         var observed = ArgumentCaptor.forClass(WorkerStatus.StepMetrics.class);
         verify(reporter, org.mockito.Mockito.times(2)).reportWorkerStepMetrics(
@@ -192,7 +194,8 @@ class GrpcWorkerStatusRunnerTest {
                 .thenReturn(CompletableFuture.completedFuture(response));
 
         new GrpcWorkerStatusRunner(ipPort, "test-site", RoleType.DECODE, null, status, pollLease, directory,
-                mock(EngineHealthReporter.class), grpc, 5_000L, mock(CacheAwareService.class), Runnable::run).run();
+                mock(EngineHealthReporter.class), grpc, 5_000L, mock(CacheAwareService.class), Runnable::run, () -> 10)
+                .run();
 
         assertTrue(publicationHeldLock.get(),
                 "publication must commit under the generation lock");
@@ -238,7 +241,8 @@ class GrpcWorkerStatusRunnerTest {
                 anyString(), anyInt(), anyLong(), anyLong(), any()))
                 .thenReturn(CompletableFuture.completedFuture(response));
         new GrpcWorkerStatusRunner(ipPort, "test-site", RoleType.DECODE, null, status, pollLease, directory,
-                mock(EngineHealthReporter.class), grpc, 5_000L, mock(CacheAwareService.class), Runnable::run).run();
+                mock(EngineHealthReporter.class), grpc, 5_000L, mock(CacheAwareService.class), Runnable::run, () -> 10)
+                .run();
 
         ArgumentCaptor<WorkerStatus.StatusObservation> observation =
                 ArgumentCaptor.forClass(WorkerStatus.StatusObservation.class);

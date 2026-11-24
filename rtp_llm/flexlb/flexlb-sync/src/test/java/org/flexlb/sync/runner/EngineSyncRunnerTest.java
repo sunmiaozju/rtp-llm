@@ -94,21 +94,9 @@ class EngineSyncRunnerTest {
             }
         }
         workerDirectory = new WorkerDirectory(endpointRegistry);
-        engineSyncRunner = new EngineSyncRunner(
-                workerDirectory,
-                workerAddressService,
-                statusCheckExecutor,
-                engineHealthReporter,
-                engineGrpcService,
-                roleType,
-                cacheAwareService,
-                cacheIntervalService,
-                syncRequestTimeoutMs,
-                syncCount,
-                syncEngineStatusInterval,
-                false,
-                STATUS_STALE_AFTER_US
-        );
+        engineSyncRunner = new EngineSyncRunner(workerDirectory, workerAddressService, statusCheckExecutor,
+                engineHealthReporter, engineGrpcService, roleType, cacheAwareService, cacheIntervalService,
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US, () -> 10);
     }
 
     @Test
@@ -122,21 +110,10 @@ class EngineSyncRunnerTest {
 
     @Test
     void should_handle_null_worker_status_gracefully() {
-        EngineSyncRunner runnerWithEmptyDirectory = new EngineSyncRunner(
-                new WorkerDirectory(endpointRegistry),
-                workerAddressService,
-                statusCheckExecutor,
-                engineHealthReporter,
-                engineGrpcService,
-                roleType,
-                cacheAwareService,
-                cacheIntervalService,
-                syncRequestTimeoutMs,
-                syncCount,
-                syncEngineStatusInterval,
-                false,
-                STATUS_STALE_AFTER_US
-        );
+        EngineSyncRunner runnerWithEmptyDirectory = new EngineSyncRunner(new WorkerDirectory(endpointRegistry),
+                workerAddressService, statusCheckExecutor, engineHealthReporter, engineGrpcService, roleType,
+                cacheAwareService, cacheIntervalService, syncRequestTimeoutMs, syncCount, syncEngineStatusInterval,
+                false, STATUS_STALE_AFTER_US, () -> 10);
 
         // Execute
         runnerWithEmptyDirectory.run();
@@ -152,7 +129,7 @@ class EngineSyncRunnerTest {
                 .thenReturn(List.of(WorkerHost.of("127.0.0.1", 8080)));
         EngineSyncRunner runner = new EngineSyncRunner(workerDirectory, workerAddressService, statusCheckExecutor,
                 engineHealthReporter, engineGrpcService, RoleType.VIT, cacheAwareService, cacheIntervalService,
-                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US);
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US, () -> 10);
 
         runner.run();
 
@@ -169,7 +146,7 @@ class EngineSyncRunnerTest {
                 .thenThrow(new RejectedExecutionException("full"));
         EngineSyncRunner runner = new EngineSyncRunner(workerDirectory, workerAddressService, statusCheckExecutor,
                 engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
-                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US);
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US, () -> 10);
 
         runner.run();
 
@@ -203,7 +180,7 @@ class EngineSyncRunnerTest {
 
         EngineSyncRunner runner = new EngineSyncRunner(directory, workerAddressService, statusCheckExecutor,
                 engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
-                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, 1_000_000L);
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, 1_000_000L, () -> 10);
         runner.run();
 
         assertFalse(status.isActiveGeneration());
@@ -252,7 +229,7 @@ class EngineSyncRunnerTest {
             assertNotNull(originalEndpoint);
             EngineSyncRunner runner = new EngineSyncRunner(directory, addresses, statusCheckExecutor,
                     engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
-                    syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, 1_000_000L);
+                    syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, 1_000_000L, () -> 10);
 
             runner.run();
 
@@ -278,21 +255,9 @@ class EngineSyncRunnerTest {
                 .thenReturn(org.flexlb.balance.scheduler.SchedulingTestConfig.newConfig());
         EndpointRegistry registry = RunnerTestSupport.endpointRegistry(configService);
         WorkerDirectory directory = new WorkerDirectory(registry);
-        EngineSyncRunner runner = new EngineSyncRunner(
-                directory,
-                workerAddressService,
-                statusCheckExecutor,
-                engineHealthReporter,
-                engineGrpcService,
-                RoleType.PREFILL,
-                cacheAwareService,
-                cacheIntervalService,
-                syncRequestTimeoutMs,
-                syncCount,
-                syncEngineStatusInterval,
-                false,
-                STATUS_STALE_AFTER_US
-        );
+        EngineSyncRunner runner = new EngineSyncRunner(directory, workerAddressService, statusCheckExecutor,
+                engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US, () -> 10);
         when(workerAddressService.getEngineWorkerList(RoleType.PREFILL))
                 .thenReturn(List.of(new WorkerHost("127.0.0.1", 61000)));
 
@@ -381,7 +346,7 @@ class EngineSyncRunnerTest {
     private EngineSyncRunner varianceRunner(WorkerDirectory directory) {
         return new EngineSyncRunner(directory, workerAddressService, statusCheckExecutor, engineHealthReporter,
                 engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService, syncRequestTimeoutMs,
-                syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US);
+                syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US, () -> 10);
     }
 
     private void assertTopologyReplacement(String oldGroup, String newGroup) {
@@ -407,19 +372,9 @@ class EngineSyncRunnerTest {
                 newGroup);
         when(workerAddressService.getEngineWorkerList(RoleType.PREFILL)).thenReturn(List.of(replacement));
 
-        EngineSyncRunner runner = new EngineSyncRunner(
-                directory,
-                workerAddressService,
-                statusCheckExecutor,
-                engineHealthReporter,
-                engineGrpcService,
-                RoleType.PREFILL,
-                cacheAwareService,
-                cacheIntervalService,
-                syncRequestTimeoutMs,
-                syncCount,
-                syncEngineStatusInterval,
-                false, STATUS_STALE_AFTER_US);
+        EngineSyncRunner runner = new EngineSyncRunner(directory, workerAddressService, statusCheckExecutor,
+                engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, STATUS_STALE_AFTER_US, () -> 10);
         try {
             // First discovery pass retires the old topology generation: it
             // detaches the endpoint, marks the status RETIRING, and removes the
@@ -476,7 +431,8 @@ class EngineSyncRunnerTest {
                 .thenReturn(new java.util.concurrent.CompletableFuture<>());
         EngineSyncRunner runner = new EngineSyncRunner(workerDirectory, workerAddressService, statusCheckExecutor,
                 engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
-                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, false, STATUS_STALE_AFTER_US);
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, false, false, STATUS_STALE_AFTER_US,
+                () -> 10);
 
         runner.run();
 
@@ -538,7 +494,8 @@ class EngineSyncRunnerTest {
                 .thenReturn(List.of(new WorkerHost("127.0.0.1", 8080)));
         EngineSyncRunner runner = new EngineSyncRunner(workerDirectory, workerAddressService, statusCheckExecutor,
                 engineHealthReporter, engineGrpcService, RoleType.PREFILL, cacheAwareService, cacheIntervalService,
-                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, true, false, STATUS_STALE_AFTER_US);
+                syncRequestTimeoutMs, syncCount, syncEngineStatusInterval, true, false, STATUS_STALE_AFTER_US,
+                () -> 10);
 
         runner.run();
 

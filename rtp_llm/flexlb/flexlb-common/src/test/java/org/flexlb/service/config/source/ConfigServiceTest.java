@@ -318,6 +318,26 @@ class ConfigServiceTest {
     }
 
     @Test
+    void nacosUpdatesStatusPollFailureThresholdAndKeepsLastValidConfig() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, "{\"schemaVersion\":3}");
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        assertThat(service.loadBalanceConfig().getWorkerRegistry().getHealth().getStatusPollFailureThreshold())
+                .isEqualTo(10);
+
+        String update = """
+                {"schemaVersion":3,"workerRegistry":{"health":{"statusPollFailureThreshold":%s}}}
+                """;
+        source.emit(update.formatted(4));
+        FlexlbConfig updated = service.loadBalanceConfig();
+        assertThat(updated.getWorkerRegistry().getHealth().getStatusPollFailureThreshold()).isEqualTo(4);
+
+        for (String invalid : List.of("0", "-1", "2.5", "\"4\"", "null")) {
+            source.emit(update.formatted(invalid));
+            assertThat(service.loadBalanceConfig()).isSameAs(updated);
+        }
+    }
+
+    @Test
     void runtimeUpdateChangesHighPriorityThreshold() {
         FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
                 {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}},

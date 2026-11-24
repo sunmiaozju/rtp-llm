@@ -17,6 +17,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.function.IntSupplier;
 
 import static org.flexlb.constant.CommonConstants.DEADLINE_EXCEEDED_MESSAGE;
 
@@ -38,7 +39,7 @@ public class GrpcWorkerStatusRunner implements Runnable {
     private final long createTimeUs = System.nanoTime() / 1000;
     private final String id = IdUtils.fastUuid();
     private final long syncRequestTimeoutMs;
-    private static final int MAX_CONSECUTIVE_FAILURES = 3;
+    private final IntSupplier statusPollFailureThreshold;
     private final CacheAwareService cacheAwareService;
     private final Executor callbackExecutor;
 
@@ -54,7 +55,8 @@ public class GrpcWorkerStatusRunner implements Runnable {
                                   EngineGrpcService engineGrpcService,
                                   long syncRequestTimeoutMs,
                                   CacheAwareService cacheAwareService,
-                                  Executor callbackExecutor) {
+                                  Executor callbackExecutor,
+                                  IntSupplier statusPollFailureThreshold) {
         this.ipPort = ipPort;
         this.ip = workerStatus.getIp();
         this.workerStatusPort = workerStatusPort;
@@ -69,6 +71,7 @@ public class GrpcWorkerStatusRunner implements Runnable {
         this.syncRequestTimeoutMs = syncRequestTimeoutMs;
         this.cacheAwareService = cacheAwareService;
         this.callbackExecutor = callbackExecutor;
+        this.statusPollFailureThreshold = statusPollFailureThreshold;
     }
 
     public GrpcWorkerStatusRunner(String ipPort,
@@ -82,10 +85,11 @@ public class GrpcWorkerStatusRunner implements Runnable {
                                   EngineGrpcService engineGrpcService,
                                   long syncRequestTimeoutMs,
                                   CacheAwareService cacheAwareService,
-                                  Executor callbackExecutor) {
+                                  Executor callbackExecutor,
+                                  IntSupplier statusPollFailureThreshold) {
         this(ipPort, defaultWorkerStatusPort(workerStatus), site, roleType, ignoredGroup, workerStatus, pollLease,
                 workerDirectory, engineHealthReporter, engineGrpcService, syncRequestTimeoutMs, cacheAwareService,
-                callbackExecutor);
+                callbackExecutor, statusPollFailureThreshold);
     }
 
     private static int defaultWorkerStatusPort(WorkerStatus workerStatus) {
@@ -326,8 +330,9 @@ public class GrpcWorkerStatusRunner implements Runnable {
     }
 
     private void recordStatusCheckFailure(Throwable failure) {
-        EndpointRegistry.DetachedGeneration endpointToRetire = null;
-        boolean generationRetiring = false;
+        EndpointRegistry.DetachedGeneration endpointToRetire;
+        long failures;
+        int failureThreshold;
         workerStatus.lock.lock();
         try {
             if (!workerDirectory.isCurrentStatus(
@@ -339,27 +344,21 @@ public class GrpcWorkerStatusRunner implements Runnable {
             }
             WorkerStatus.PollHealth health =
                     workerStatus.recordTransportFailure();
-            long failures = health.consecutiveTransportFailures();
-            logger.debug("Worker status check failed, consecutiveFailures={}/{}, msg={}",
-                    failures, MAX_CONSECUTIVE_FAILURES, failure.getMessage());
-            if (failures < MAX_CONSECUTIVE_FAILURES) {
+            failures = health.consecutiveTransportFailures();
+            failureThreshold = statusPollFailureThreshold.getAsInt();
+            logger.debug("Worker status check failed, consecutiveFailures={}/{}, msg={}", failures, failureThreshold,
+                    failure.getMessage());
+            if (failures < failureThreshold) {
                 return;
             }
             endpointToRetire = workerDirectory.beginRetirement(
                     roleType, ipPort, workerStatus);
-            generationRetiring = true;
-            if (failures == MAX_CONSECUTIVE_FAILURES) {
-                logger.error("worker {} marked dead after {} consecutive status check failures",
-                        ipPort, failures);
-            }
         } finally {
             workerStatus.lock.unlock();
         }
-        if (generationRetiring) {
-            workerDirectory.completeRetirement(
-                    roleType, ipPort, workerStatus,
-                    endpointToRetire, cacheAwareService, logger);
-        }
+        logger.error("worker {} marked dead after {} consecutive status check failures (threshold={})", ipPort,
+                failures, failureThreshold);
+        workerDirectory.completeRetirement(roleType, ipPort, workerStatus, endpointToRetire, cacheAwareService, logger);
     }
 
     private static RuntimeException propagate(Throwable failure) {

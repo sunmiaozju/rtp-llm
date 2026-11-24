@@ -216,6 +216,9 @@ UniConfig / Nacos 的 v3 部分更新示例：
 - `router`：角色 availability、execution estimator、selector、cache affinity 和
   group selector。
 - `workerRegistry`：worker health 与 cache-status 刷新策略。
+  `health.statusPollFailureThreshold` 控制 WorkerStatus 连续探测失败的摘除次数，默认 `10`，必须是正整数。
+  Nacos 热更新在下一次处理失败时生效，不清零已有计数；探测成功仍会清零。
+  `health.statusStaleAfterMs` 独立生效，可能在达到失败次数阈值前摘除 Worker。
 - `observability.cacheHit`：recent-key window、指标和理论命中日志。理论命中查询、历史池更新、
   池容量指标与请求日志由独立单线程按入队顺序处理；请求线程仅提交任务。
   理论命中 Tokens 保存在请求的异步结果中，随 worker status 反馈统一上报。

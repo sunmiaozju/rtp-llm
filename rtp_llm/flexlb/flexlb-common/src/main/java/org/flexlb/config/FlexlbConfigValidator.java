@@ -234,6 +234,8 @@ public final class FlexlbConfigValidator {
                 "workerRegistry.health.statusPollIntervalMs");
         positive(workers.getHealth().getStatusRpcTimeoutMs(),
                 "workerRegistry.health.statusRpcTimeoutMs");
+        positive(workers.getHealth().getStatusPollFailureThreshold(),
+                "workerRegistry.health.statusPollFailureThreshold");
         positive(workers.getHealth().getCleanupIntervalMs(),
                 "workerRegistry.health.cleanupIntervalMs");
         require(workers.getHealth().getStatusRpcTimeoutMs()

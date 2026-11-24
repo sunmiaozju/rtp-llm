@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -34,6 +35,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class DpGroupHealthTest {
+
+    private final AtomicInteger statusPollFailureThreshold = new AtomicInteger(10);
 
     @BeforeEach
     void clearRegisteredEndpoints() {
@@ -90,7 +93,7 @@ class DpGroupHealthTest {
 
     @ParameterizedTest
     @CsvSource({"PREFILL,2", "DECODE,4"})
-    void thirdConsecutiveRpcFailureRetiresWholeGroupAndSuccessResetsCounter(RoleType role, int size) {
+    void successResetsFailuresAndLowerThresholdRetiresWholeGroupOnNextFailure(RoleType role, int size) {
         ConfigService config = mock(ConfigService.class);
         when(config.loadBalanceConfig()).thenReturn(SchedulingTestConfig.newConfig());
         WorkerDirectory directory = new WorkerDirectory(RunnerTestSupport.endpointRegistry(config));
@@ -105,8 +108,16 @@ class DpGroupHealthTest {
         assertEquals(0, failed.pollHealth().consecutiveTransportFailures());
         for (int attempt = 1; attempt <= 3; attempt++) {
             poll(directory, failed, CompletableFuture.failedFuture(io.grpc.Status.UNAVAILABLE.asRuntimeException()));
-            assertEquals(attempt < 3 ? size + 1 : 1, candidates(directory, role).size());
+            assertEquals(size + 1, candidates(directory, role).size());
         }
+
+        var inFlightPoll = new CompletableFuture<EngineRpcService.WorkerStatusPB>();
+        poll(directory, failed, inFlightPoll);
+        statusPollFailureThreshold.set(2);
+        assertEquals(3, failed.pollHealth().consecutiveTransportFailures());
+        assertEquals(size + 1, candidates(directory, role).size());
+        inFlightPoll.completeExceptionally(io.grpc.Status.UNAVAILABLE.asRuntimeException());
+
         assertEquals(List.of(other.getLogicalIpPort()), candidates(directory, role));
         for (WorkerStatus rank : ranks) {
             assertFalse(rank.isActiveGeneration());
@@ -155,7 +166,7 @@ class DpGroupHealthTest {
         when(grpc.getWorkerStatusAsync(anyString(), anyInt(), anyLong(), anyLong(), any())).thenReturn(response);
         new GrpcWorkerStatusRunner(status.getLogicalIpPort(), "test", status.getRole(), "default", status,
                 status.tryBeginStatusPoll(), directory, mock(EngineHealthReporter.class), grpc, 5000L,
-                mock(CacheAwareService.class), Runnable::run).run();
+                mock(CacheAwareService.class), Runnable::run, statusPollFailureThreshold::get).run();
     }
 
     private List<String> candidates(WorkerDirectory directory, RoleType role) {
