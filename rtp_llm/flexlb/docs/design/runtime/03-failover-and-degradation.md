@@ -33,7 +33,7 @@ flowchart LR
 ```
 
 - **当次查询。** 缺少必要的 worker 元数据、找不到 KVCM leader 或 RPC 最终失败，都走 2b。RPC 默认最多重试一次，共用 500 ms 的预算。关闭 `cacheMatching.localStandby.autoSwitch` 不影响当次兜底。
-- **切换阈值。** 预热后，同一副本连续查询失败 `queryFailureThreshold` 次（默认 10），或连续心跳失败 `heartbeatFailureThreshold` 次（默认 3），就判为不健康。一次请求的内部重试不单独计数。只有开启 `autoSwitch`（默认开启）才切换默认来源。
+- **切换阈值。** 预热后，同一副本连续查询失败 `queryFailureThreshold` 次（默认 15,000，可通过 Nacos 热更新），或连续心跳失败 `heartbeatFailureThreshold` 次（默认 3），就判为不健康。一次请求的内部重试不单独计数。只有开启 `autoSwitch`（默认开启）才切换默认来源。
 - **恢复阈值。** 心跳或查询中的任一种连续成功 `recoverySuccessThreshold` 次（默认 3）即可恢复，两种计数不相加。切走后没有 KVCM 查询流量，仍有心跳探测。显式配置 `type=LOCAL_STANDBY` 则固定查本机，只有改回 `KVCM` 才重新选源。
 
 源码：[单次查询与兜底](../../../flexlb-cache/src/main/java/org/flexlb/cache/match/CacheMatchQueryOrchestrator.java)、[失败与恢复计数](../../../flexlb-grpc/src/main/java/org/flexlb/engine/grpc/client/KvcmGrpcClient.java)、[配置与健康状态如何决定默认来源](../../../flexlb-cache/src/main/java/org/flexlb/cache/match/CacheMatchFailoverManager.java)。

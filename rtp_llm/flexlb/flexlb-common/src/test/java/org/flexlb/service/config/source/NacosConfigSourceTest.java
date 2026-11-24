@@ -274,6 +274,7 @@ class NacosConfigSourceTest {
             ModelMetaConfig modelMetaConfig = new ModelMetaConfig(route);
             CacheMatchConfiguration configuration = new CacheMatchConfiguration(modelMetaConfig, configService);
             KvcmCacheMatchingConfig initial = configuration.getKvcmClientSettings();
+            assertThat(initial.getQueryFailureThreshold()).isEqualTo(15_000);
             assertThat(initial.getTopKHostCount()).isEqualTo(3);
             assertThat(initial.getBackendTypes()).isEmpty();
 
@@ -283,11 +284,12 @@ class NacosConfigSourceTest {
                     org.mockito.ArgumentMatchers.eq("FLEXLB_GROUP"), listener.capture());
             listener.getValue().receiveConfigInfo("""
                     {"schemaVersion":3,"cacheMatching":{"topKHostCount":7,"queryTimeoutMs":60,
-                     "backendTypes":["ST_EVENT_REPORT_L2","ST_TAIRMEMPOOL"]}}
+                     "queryFailureThreshold":500,"backendTypes":["ST_EVENT_REPORT_L2","ST_TAIRMEMPOOL"]}}
                     """);
             KvcmCacheMatchingConfig updated = configuration.getKvcmClientSettings();
             assertThat(initial.getQueryTimeoutMs()).isEqualTo(30L);
             assertThat(updated.getQueryTimeoutMs()).isEqualTo(60L);
+            assertThat(updated.getQueryFailureThreshold()).isEqualTo(500);
             assertThat(updated.getRequestTimeoutMs()).isEqualTo(500L);
             assertThat(updated.getTopKHostCount()).isEqualTo(7);
             assertThat(updated.getBackendTypes()).containsExactly(
@@ -298,7 +300,7 @@ class NacosConfigSourceTest {
 
             for (String invalidField : List.of("\"topKHostCount\":-1", "\"backendTypes\":[\"ST_EVENT_REPORT_L1P5\"]",
                     "\"backendTypes\":[3]", "\"backendTypes\":null", "\"queryTimeoutMs\":0", "\"queryTimeoutMs\":-1",
-                    "\"queryTimeoutMs\":2.5", "\"queryTimeoutMs\":null")) {
+                    "\"queryTimeoutMs\":2.5", "\"queryTimeoutMs\":null", "\"queryFailureThreshold\":0")) {
                 listener.getValue().receiveConfigInfo(
                         "{\"schemaVersion\":3,\"cacheMatching\":{" + invalidField + "}}");
                 assertThat(configuration.getKvcmClientSettings()).isSameAs(updated);

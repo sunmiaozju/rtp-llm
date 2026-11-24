@@ -19,7 +19,7 @@ public sealed class KvcmCacheMatchingConfig implements CacheMatchingConfig permi
     public static final long DEFAULT_LEADER_REFRESH_INTERVAL_MS = 30_000L;
     public static final int DEFAULT_QUERY_CHANNELS_PER_LEADER = 8;
     public static final int DEFAULT_HEARTBEAT_FAILURE_THRESHOLD = 3;
-    public static final int DEFAULT_QUERY_FAILURE_THRESHOLD = 10;
+    public static final int DEFAULT_QUERY_FAILURE_THRESHOLD = 15_000;
     public static final int DEFAULT_MAX_QUERY_RETRY_COUNT = 1;
     public static final int DEFAULT_RECOVERY_SUCCESS_THRESHOLD = 3;
     public static final int DEFAULT_TOP_K_HOST_COUNT = 3;

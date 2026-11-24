@@ -49,8 +49,8 @@ class ConfigServiceTest {
     }
 
     @Test
-    void requestPrepareThreadsDefaultsToAvailableProcessorsAndAllowsOverride() {
-        assertEquals(Runtime.getRuntime().availableProcessors(),
+    void requestPrepareThreadsDefaultsToTwiceAvailableProcessorsAndAllowsOverride() {
+        assertEquals(2 * Runtime.getRuntime().availableProcessors(),
                 ConfigTestFixtures.parse("{}").getDispatcher().getRequestPrepareThreads());
         assertEquals(8, ConfigTestFixtures.parse("""
                 {"dispatcher":{"requestPrepareThreads":8}}

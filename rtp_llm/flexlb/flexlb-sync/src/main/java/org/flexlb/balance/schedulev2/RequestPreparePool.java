@@ -48,8 +48,8 @@ public final class RequestPreparePool implements AutoCloseable {
             thread.setDaemon(true);
             return thread;
         };
-        return new ThreadPoolExecutor(coreThreads, maxThreads, 60L, TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(coreThreads), threadFactory, new ThreadPoolExecutor.AbortPolicy());
+        return new ThreadPoolExecutor(coreThreads, maxThreads, 60L, TimeUnit.SECONDS, new ArrayBlockingQueue<>(15_000),
+                threadFactory, new ThreadPoolExecutor.AbortPolicy());
     }
 
     public void submit(Request request, String group) {

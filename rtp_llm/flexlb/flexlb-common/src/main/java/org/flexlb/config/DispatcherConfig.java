@@ -25,7 +25,7 @@ public final class DispatcherConfig {
     private Type type = Type.NON_BATCH_V2;
     private int decodeQueueThreads = Runtime.getRuntime().availableProcessors();
     private int mainQueueConsumerThreads = Runtime.getRuntime().availableProcessors();
-    private int requestPrepareThreads = Runtime.getRuntime().availableProcessors();
+    private int requestPrepareThreads = 2 * Runtime.getRuntime().availableProcessors();
     private int requestPrepareMaxThreads = 1_000;
     private int maxInflightPerPrefillWorker = DEFAULT_MAX_INFLIGHT_PER_PREFILL_WORKER;
     /** Shared waiting capacity = endpoint count * in-flight limit * this multiplier. */
