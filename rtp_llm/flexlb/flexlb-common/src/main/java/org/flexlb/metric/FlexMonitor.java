@@ -3,6 +3,8 @@ package org.flexlb.metric;
 import org.flexlb.enums.FlexMetricType;
 import org.flexlb.enums.FlexPriorityType;
 
+import java.util.function.ObjDoubleConsumer;
+
 /**
  * FlexMonitor - Unified monitoring interface
  *
@@ -52,6 +54,13 @@ public interface FlexMonitor extends AutoCloseable {
      * @param value       Metric value
      */
     void report(String metricName, FlexMetricTags metricsTags, double value);
+
+    /**
+     * Reuse the same tags when reporting multiple samples.
+     */
+    default ObjDoubleConsumer<String> withTags(FlexMetricTags metricsTags) {
+        return (metricName, value) -> report(metricName, metricsTags, value);
+    }
 
     /**
      * Prepare a tagged metric before it enters a hot reporting path.

@@ -34,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -47,6 +48,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -66,37 +69,52 @@ class EngineHealthReporterTest {
     private final LoopResources loopResources = mock(LoopResources.class);
     private final WorkerDirectory workerDirectory = mock(WorkerDirectory.class);
 
+    private final ScheduledExecutorService taskMetricScheduler = mock(ScheduledExecutorService.class);
     private EngineHealthReporter reporter;
 
     @BeforeEach
     void setUp() {
+        when(monitor.withTags(any(FlexMetricTags.class))).thenCallRealMethod();
         when(loopResources.onServer(true)).thenReturn(mock(EventLoopGroup.class));
         when(loopResources.onServerSelect(true)).thenReturn(mock(EventLoopGroup.class));
         when(engineGrpcClient.getEventLoopGroup()).thenReturn(mock(EventLoopGroup.class));
-        reporter = new EngineHealthReporter(
-                monitor, cacheMetricsReporter, engineGrpcClient,
-                loopResources, workerDirectory, mock(EventLoopGroup.class));
+        reporter = new EngineHealthReporter(monitor, cacheMetricsReporter, engineGrpcClient, loopResources,
+                workerDirectory, mock(EventLoopGroup.class), taskMetricScheduler);
     }
 
     @Test
-    void reportsStepSamplesByRoleGroupAndPhase() {
+    void reportsStepAveragesByRoleGroupAndPhaseEveryTwentySeconds() {
         reporter.init();
         WorkerStatus worker = WorkerStatus.createDiscovered(
                 RoleType.PDFUSION, "test-group", "10.0.0.1", 8080, 8081, null, null, 1, 2);
-        for (int prefillRequests : new int[]{2, 0}) {
-            var step = new WorkerStatus.StepMetrics(42, 1700000000000L, 16000,
-                    prefillRequests, prefillRequests > 0 ? 15000 : 0, 32000, 0.5);
-            reporter.reportWorkerStepMetrics(worker, step);
-            var tags = FlexMetricTags.of("role", "PDFUSION", "group", "test-group", "phase",
-                    prefillRequests > 0 ? "prefill" : "decode");
-            verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_TOTAL_SCHEDULED_TOKENS, tags, 16000.0);
-            verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_PREFILL_REQUEST_COUNT, tags, (double) prefillRequests);
-            verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_PREFILL_TOKENS, tags, prefillRequests > 0 ? 15000.0 : 0.0);
-            verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_TOKEN_BUDGET, tags, 32000.0);
-            verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_BUDGET_FILL_RATIO, tags, 0.5);
-        }
-        verify(monitor).register(MetricConstant.ENGINE_WORKER_STEP_BUDGET_FILL_RATIO,
-                FlexMetricType.GAUGE, FlexStatisticsType.SUMMARY);
+        reporter.recordWorkerStepMetrics(worker,
+                new WorkerStatus.StepMetrics(42, 1700000000000L, 16000, 2, 15000, 32000, 0.5));
+        reporter.recordWorkerStepMetrics(worker,
+                new WorkerStatus.StepMetrics(43, 1700000000001L, 32000, 4, 21000, 32000, 1.0));
+        reporter.recordWorkerStepMetrics(worker,
+                new WorkerStatus.StepMetrics(44, 1700000000002L, 16000, 0, 0, 32000, 0.5));
+        var prefillTags = FlexMetricTags.of("role", "PDFUSION", "group", "test-group", "phase", "prefill");
+        var decodeTags = FlexMetricTags.of("role", "PDFUSION", "group", "test-group", "phase", "decode");
+        verify(monitor, never()).report(eq(MetricConstant.ENGINE_WORKER_STEP_TOTAL_SCHEDULED_TOKENS), any(),
+                anyDouble());
+
+        reportWorkerStatusAverages();
+        reportWorkerStatusAverages();
+
+        verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_TOTAL_SCHEDULED_TOKENS, prefillTags, 24000.0);
+        verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_PREFILL_REQUEST_COUNT, prefillTags, 3.0);
+        verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_PREFILL_TOKENS, prefillTags, 18000.0);
+        verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_TOKEN_BUDGET, prefillTags, 32000.0);
+        verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_BUDGET_FILL_RATIO, prefillTags, 0.75);
+        verify(monitor).report(MetricConstant.ENGINE_WORKER_STEP_PREFILL_REQUEST_COUNT, decodeTags, 0.0);
+        verify(monitor).register(MetricConstant.ENGINE_WORKER_STEP_BUDGET_FILL_RATIO, FlexMetricType.GAUGE,
+                FlexPriorityType.NORMAL);
+    }
+
+    private void reportWorkerStatusAverages() {
+        var task = ArgumentCaptor.forClass(Runnable.class);
+        verify(taskMetricScheduler).scheduleAtFixedRate(task.capture(), eq(20L), eq(20L), eq(TimeUnit.SECONDS));
+        task.getValue().run();
     }
 
     @Test
@@ -164,13 +182,15 @@ class EngineHealthReporterTest {
 
     @Test
     void lifecycleMetricsRetainMissingLabelsAsEmptyValues() {
+        reporter.init();
         WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
                 "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
                 TaskPhase.RUNNING, 0, null,
                 true, 900, 0, 0, 1000, 1042, 0, 1100,
                 0, 0, 1, 1, 1, 0, 0, null, null, null);
 
-        reporter.reportPrefillWorkerStatusTask(null, null, null, task);
+        reporter.recordPrefillWorkerStatusTasks(null, null, List.of(task));
+        reportWorkerStatusAverages();
 
         FlexMetricTags tags = FlexMetricTags.of("role", "", "group", "");
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_ENGINE_OBSERVED_WAITING_TO_RUNNING_MS,
@@ -334,7 +354,7 @@ class EngineHealthReporterTest {
         reporter.init();
 
         verify(monitor).register(MetricConstant.ENGINE_WORKER_STATUS_ENGINE_OBSERVED_WAITING_TO_RUNNING_MS,
-                FlexMetricType.GAUGE, FlexStatisticsType.SUMMARY);
+                FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
     }
 
     @Test
@@ -342,7 +362,7 @@ class EngineHealthReporterTest {
         reporter.init();
 
         verify(monitor).register(MetricConstant.ENGINE_WORKER_STATUS_ENGINE_OBSERVED_RECEIVED_TO_WAITING_MS,
-                FlexMetricType.GAUGE, FlexStatisticsType.SUMMARY);
+                FlexMetricType.GAUGE, FlexPriorityType.NORMAL);
     }
 
     @Test
@@ -354,14 +374,16 @@ class EngineHealthReporterTest {
                 true, 900, 1000, 1100, 1200, 1600, 200, 1900,
                 512, 256, 1, 3, 3, 128, 256, null, null, null);
 
-        reporter.reportPrefillWorkerStatusTask(
-                "10.0.0.1:8080@0", "PREFILL", "test-group", task);
+        reporter.recordPrefillWorkerStatusTasks(RoleType.PREFILL, "test-group", List.of(task));
+        reportWorkerStatusAverages();
 
         FlexMetricTags expectedTags = FlexMetricTags.of(
                 "role", "PREFILL",
                 "group", "test-group");
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_INPUT_QUEUE_WAIT_MS, expectedTags, 100.0);
-        verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_SCHEDULER_TO_RUNNING_MS, expectedTags, 400.0);
+        verify(monitor, never()).register(eq("app.engine.worker.status.scheduler.to.running.ms"), any(),
+                eq(FlexStatisticsType.SUMMARY));
+        verify(monitor, never()).report(eq("app.engine.worker.status.scheduler.to.running.ms"), any(), anyDouble());
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_ENGINE_OBSERVED_RECEIVED_TO_WAITING_MS, expectedTags, 300.0);
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_ENGINE_OBSERVED_WAITING_TO_RUNNING_MS, expectedTags, 400.0);
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_SCHEDULER_WAIT_MS, expectedTags, 200.0);
@@ -380,18 +402,20 @@ class EngineHealthReporterTest {
 
     @Test
     void shouldExcludeRequestsWithoutNonfinalChunksFromChunkMetrics() {
+        reporter.init();
         WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
                 "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
                 TaskPhase.RUNNING, 0, null,
                 true, 900, 1000, 1100, 1200, 1600, 0, 1900,
                 0, 0, 1, 1, 1, 0, 0, null, null, null);
 
-        reporter.reportPrefillWorkerStatusTask(
-                "10.0.0.1:8080@0", "PREFILL", "test-group", task);
+        reporter.recordPrefillWorkerStatusTasks(RoleType.PREFILL, "test-group", List.of(task, task));
+        reportWorkerStatusAverages();
 
         FlexMetricTags expectedTags = FlexMetricTags.of(
                 "role", "PREFILL",
                 "group", "test-group");
+        verify(monitor).withTags(expectedTags);
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_PREFILL_STEP_COUNT, expectedTags, 1.0);
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_HBM_LOCAL_MATCH_TOKENS, expectedTags, 0.0);
         verify(monitor, never()).report(
@@ -429,12 +453,14 @@ class EngineHealthReporterTest {
 
     @Test
     void remoteKvZeroRemainsALegitimateDurationWithoutTimestampPresence() {
+        reporter.init();
         WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
                 "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
                 TaskPhase.RUNNING, 0, null,
                 true, 0, 0, 0, 0, 0, 0, 1900, 0, 0, 1, 1, 1, 0, 0, null, null, null);
 
-        reporter.reportPrefillWorkerStatusTask("10.0.0.1:8080", "PREFILL", "test-group", task);
+        reporter.recordPrefillWorkerStatusTasks(RoleType.PREFILL, "test-group", List.of(task));
+        reportWorkerStatusAverages();
 
         FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL", "group", "test-group");
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_REMOTE_KV_WAIT_MS, tags, 0.0);
@@ -445,12 +471,14 @@ class EngineHealthReporterTest {
 
     @Test
     void zeroRemoteKvWaitPreservesFullSchedulerWait() {
+        reporter.init();
         WorkerStatus.TaskObservation task = new WorkerStatus.TaskObservation(
                 "request-1", 0, 0, 0, 0, 0, 0, 0, 0, "", 0,
                 TaskPhase.RUNNING, 0, null,
                 true, 900, 1000, 1100, 1200, 1600, 0, 1900, 0, 0, 1, 1, 1, 0, 0, null, null, null);
 
-        reporter.reportPrefillWorkerStatusTask("10.0.0.1:8080", "PREFILL", "test-group", task);
+        reporter.recordPrefillWorkerStatusTasks(RoleType.PREFILL, "test-group", List.of(task));
+        reportWorkerStatusAverages();
 
         FlexMetricTags tags = FlexMetricTags.of("role", "PREFILL", "group", "test-group");
         verify(monitor).report(MetricConstant.ENGINE_WORKER_STATUS_REMOTE_KV_WAIT_MS, tags, 0.0);

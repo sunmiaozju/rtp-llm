@@ -647,14 +647,13 @@ class KvcmGrpcClientTest {
                             .build());
                 });
 
-        client = createClient(
-                configuration,
-                metaServiceClient,
-                leaderResolver,
-                metadataResolver,
-                mock(GrpcReporter.class));
+        GrpcReporter reporter = mock(GrpcReporter.class);
+        client = createClient(configuration, metaServiceClient, leaderResolver, metadataResolver, reporter);
         client.findMatchingEngines(
                 "request-6", List.of(11L), 2192L, RoleType.PREFILL, "default");
+
+        verify(reporter).reportCallMetrics(eq("KVCM_GET_HOST_CACHE_STATE"), anyLong(), eq(0), eq(false));
+        verify(reporter).reportCallMetrics(eq("KVCM_GET_HOST_CACHE_STATE"), anyLong(), anyInt(), eq(true));
 
         ArgumentCaptor<GetHostCacheStateRequest> sentRequest =
                 ArgumentCaptor.forClass(GetHostCacheStateRequest.class);

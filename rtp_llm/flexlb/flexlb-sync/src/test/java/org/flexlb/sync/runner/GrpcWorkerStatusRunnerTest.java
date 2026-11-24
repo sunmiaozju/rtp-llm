@@ -146,8 +146,8 @@ class GrpcWorkerStatusRunnerTest {
                     directory, reporter, grpc, 5000L, mock(CacheAwareService.class), Runnable::run, () -> 10).run();
         }
         var observed = ArgumentCaptor.forClass(WorkerStatus.StepMetrics.class);
-        verify(reporter, org.mockito.Mockito.times(2)).reportWorkerStepMetrics(
-                org.mockito.Mockito.eq(status), observed.capture());
+        verify(reporter, org.mockito.Mockito.times(2)).recordWorkerStepMetrics(org.mockito.Mockito.eq(status),
+                observed.capture());
         assertEquals(java.util.List.of(42L, 43L),
                 observed.getAllValues().stream().map(WorkerStatus.StepMetrics::stepId).toList());
     }

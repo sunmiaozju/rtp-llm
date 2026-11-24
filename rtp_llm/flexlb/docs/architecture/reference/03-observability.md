@@ -203,10 +203,13 @@ Step 延迟方差单位为 ms²。上述指标保留原有名称，通过标签�
 全局命中率使用同一窗口内的命中 Token 增量除以输入 Token 增量，不能求单请求命中率的平均值。
 `app.engine.zk.master.event` 保留按事件类型上报 `1.0` 的既有 Gauge 口径；
 独立的 `app.engine.zk.master.event.time.ms` 用 epoch-ms Gauge 展示最近事件时间。
-`app.engine.worker.status.scheduler.to.running.ms` 中的 scheduler 是 Engine 调度器；该值
-与 `app.engine.worker.status.engine.waiting.to.running.ms` 相同，均取 Engine 的
-`running_entered_time_ms - waiting_entered_time_ms`。前者保留已有展示口径，后者显式标明观测来源；
-不能将二者相加或作为 Master 与 Engine 的两端耗时比较。
+`app.engine.worker.status.engine.waiting.to.running.ms` 取 Engine 的
+`running_entered_time_ms - waiting_entered_time_ms`。
+`app.engine.worker.status.scheduler.wait.ms` 对每个任务扣除远程 KV 等待后再上报，最小值为 0。
+完成任务和 Step 的上述指标按原有标签累加样本和与样本数，每 20 秒上报一条平均值。
+WorkerStatus 回调更新累计值，定时线程读取差值。窗口边界的并发写入可能造成相邻两轮的平均值偏差。
+无有效样本时不发点。非末 chunk 的 min/max 分别表示窗口内逐请求 min/max 的平均值。
+gRPC 客户端的调用耗时、响应大小和次数按 `service/retry` 上报，`retry=true` 表示重试。
 `remote_kv_wait_ms` 是引擎报告的时长，0ms 可以表示没有远程 KV 等待，仍作为有效样本。
 phase 时间戳的 0 表示未知，缺少时间戳时不报告相减得到的耗时。
 
@@ -292,28 +295,28 @@ Encoder 和保留逐端点的记账指标在 N=1 使用 physical `ip:http_port`�
 WorkerStatus 的 `last_step_metrics` 表示最近完成的非空 scheduler step，包含 step ID、完成时间、
 总调度 Token 数、Prefill 请求数、Prefill Token 数、Token 预算及预算填充率。
 字段缺失表示引擎尚无可用 step 观测；纯 Decode step 的 Prefill 请求数和 Token 数为 0。
-FlexLB 按逻辑 Worker 和 step ID 去重后，通过 `app.engine.worker.step.*` 上报五项数值。
-`phase=prefill` 表示该 step 含 Prefill，`phase=decode` 表示纯 Decode；角色、组和
-phase 标签保留，跨引擎汇总采样。预算填充率为总调度 Token 数 / Token 预算，包含 Decode Token。
+FlexLB 按逻辑 Worker 比较相邻轮询的 step ID，只记录新观察到的 step。每 20 秒按
+`role/group/phase` 跨引擎汇总，通过 `app.engine.worker.step.*` 为每项指标上报一个 Gauge 均值。
+`phase=prefill` 表示该 step 含 Prefill，`phase=decode` 表示纯 Decode。预算填充率为总调度 Token 数
+除以 Token 预算，包含 Decode Token。
 
-这些指标是 WorkerStatus 轮询采样，轮询之间完成的中间 step 不会全部保留。KMonitor 使用
-GAUGE + SUMMARY 聚合实际采样值；Micrometer provider 只暴露最近上报值，不提供逐 step 分布。
-指标标签不包含 step ID 或完成时间。凑批比较应筛选 `phase=prefill`，避免纯 Decode step
-稀释 Prefill 预算填充率。Turbo 转发后的指标前缀为 `dashscope_turbo_backend_flexlb_app_engine_worker_step_`。
+轮询之间完成的中间 step 可能未被采到。KMonitor 接收窗口均值，Micrometer 暴露最新一次上报的窗口均值，
+两种 provider 均不提供逐 step 分布。指标标签不包含 step ID 或完成时间。凑批比较应筛选
+`phase=prefill`，避免纯 Decode step 稀释 Prefill 预算填充率。Turbo 转发后的指标前缀为
+`dashscope_turbo_backend_flexlb_app_engine_worker_step_`。
 
 ### Prefill 非末块 Token 数
 
 完成 Prefill 请求后，`app.engine.worker.status.prefill.nonfinal.chunk.min.tokens` 和
-`app.engine.worker.status.prefill.nonfinal.chunk.max.tokens` 分别上报该请求内非末块 Chunk 的
-最小、最大 Token 数。末块可能不足一个完整 Chunk，不参与统计；没有非末块样本的请求不向
-这两个指标报告 0，仍正常报告 `app.engine.worker.status.prefill.step.count`。
+`app.engine.worker.status.prefill.nonfinal.chunk.max.tokens` 分别记录该请求内非末块 Chunk 的
+最小、最大 Token 数。末块可能不足一个完整 Chunk，不参与统计。没有非末块样本的请求跳过
+这两个指标，仍记录 `app.engine.worker.status.prefill.step.count`。
 例如分为 8192、8192、616 Tokens 的请求，Step 数为 3，非末块最小和最大值均为 8192。
 
-两个指标保留请求内统计口径，以 GAUGE + TRIVIAL 注册，KMonitor 每 60 秒发送一次聚合结果，
-不生成额外的 SUMMARY 分位指标；显式配置的 `FLEXLB_MONITOR_PRIORITY` 可覆盖此周期。
-曲线均值分别是有非末块样本请求的最小值均值、最大值均值，不是所有 Chunk 的均值或窗口极值。
-业务调用只更新本地统计，不逐请求发送网络数据，也不额外抽样。指标名以单位 `tokens` 结尾，
-请求内最小、最大值由 `min` / `max` 中间段区分。
+FlexLB 每 20 秒按 `role/group` 分别上报有非末块样本请求的最小值均值和最大值均值。
+两个指标以 GAUGE + TRIVIAL 注册，KMonitor 默认每 60 秒导出一次聚合结果，对收到的窗口均值等权计算。
+各窗口的有效请求量不同时，导出均值可能与按请求量加权的均值不同。
+显式配置的 `FLEXLB_MONITOR_PRIORITY` 可覆盖 KMonitor 的导出周期。
 
 监控迁移配置在 `tools/monitoring/metric_migration.json`；
 `python3 tools/monitoring/migrate_metrics.py --input dashboard.json --output dashboard-migrated.json`

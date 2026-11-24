@@ -392,11 +392,10 @@ public class GrpcWorkerStatusRunner implements Runnable {
         }
     }
 
-    private void reportSuccessfulStatus(
-            WorkerStatus.StatusObservation observation,
-            long startTime,
-            WorkerEndpoint endpoint,
-            WorkerStatus.StepMetrics previousStep) {
+    private void reportSuccessfulStatus(WorkerStatus.StatusObservation observation,
+                                        long startTime,
+                                        WorkerEndpoint endpoint,
+                                        WorkerStatus.StepMetrics previousStep) {
         try {
             engineHealthReporter.reportStatusCheckRemoteInfo(
                     workerStatus, startTime);
@@ -408,18 +407,11 @@ public class GrpcWorkerStatusRunner implements Runnable {
             WorkerStatus.StepMetrics step = observation.engine().lastStepMetrics();
             if (step != null
                     && (previousStep == null || step.stepId() != previousStep.stepId())) {
-                engineHealthReporter.reportWorkerStepMetrics(
-                        workerStatus, step);
+                engineHealthReporter.recordWorkerStepMetrics(workerStatus, step);
             }
             if (observation.role() == RoleType.PREFILL || observation.role() == RoleType.PDFUSION) {
-                for (WorkerStatus.TaskObservation task : observation.finishedTasks().values()) {
-                    if (task.firstTokenTimeMs() > 0) {
-                        engineHealthReporter.reportPrefillWorkerStatusTask(
-                                workerStatus.getMetricIpPort(),
-                                observation.role().name(), workerStatus.getGroup(),
-                                task);
-                    }
-                }
+                engineHealthReporter.recordPrefillWorkerStatusTasks(observation.role(), workerStatus.getGroup(),
+                        observation.finishedTasks().values());
             }
         } catch (Throwable telemetryFailure) {
             logger.warn("Worker status telemetry failed after commit for {}: {}",

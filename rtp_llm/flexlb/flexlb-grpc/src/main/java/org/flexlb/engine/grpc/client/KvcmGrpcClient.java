@@ -158,8 +158,8 @@ public class KvcmGrpcClient {
                 if (queryDeadline.isExpired()) {
                     throw new KvcmQueryException("KVCM cache query timed out");
                 }
-                Map<String, org.flexlb.dao.cache.HostCacheMatch> result = queryOnce(
-                        config, queryDeadline, requestId, blockCacheKeys, namespace, queryType, attemptIndex + 1);
+                Map<String, org.flexlb.dao.cache.HostCacheMatch> result = queryOnce(config, queryDeadline, requestId,
+                        blockCacheKeys, namespace, queryType, attemptIndex > 0);
                 recordQuerySuccess();
                 return result;
             } catch (RuntimeException failure) {
@@ -177,14 +177,13 @@ public class KvcmGrpcClient {
         }
     }
 
-    private Map<String, org.flexlb.dao.cache.HostCacheMatch> queryOnce(
-            KvcmCacheMatchingConfig config,
-            Deadline queryDeadline,
-            String requestId,
-            List<Long> blockCacheKeys,
-            String namespace,
-            QueryType queryType,
-            int attempt) {
+    private Map<String, org.flexlb.dao.cache.HostCacheMatch> queryOnce(KvcmCacheMatchingConfig config,
+                                                                       Deadline queryDeadline,
+                                                                       String requestId,
+                                                                       List<Long> blockCacheKeys,
+                                                                       String namespace,
+                                                                       QueryType queryType,
+                                                                       boolean retry) {
         GrpcTarget currentLeader = leaderResolver.resolve();
         if (currentLeader == null) {
             requestImmediateRefresh();
@@ -218,11 +217,8 @@ public class KvcmGrpcClient {
                     "KVCM GetHostCacheState gRPC request failed", error);
         } finally {
             try {
-                grpcReporter.reportCallMetrics(
-                        "KVCM_GET_HOST_CACHE_STATE",
-                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNanos),
-                        responseBytes,
-                        attempt > 1);
+                grpcReporter.reportCallMetrics(GrpcReporter.KVCM_GET_HOST_CACHE_STATE,
+                        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTimeNanos), responseBytes, retry);
             } catch (RuntimeException error) {
                 log.warn("Failed to report KVCM gRPC call metrics", error);
             }

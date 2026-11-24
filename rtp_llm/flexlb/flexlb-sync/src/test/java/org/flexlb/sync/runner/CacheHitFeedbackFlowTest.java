@@ -34,6 +34,7 @@ import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.engine.grpc.client.EngineGrpcClient;
+import org.flexlb.metric.FlexMetricTags;
 import org.flexlb.metric.FlexMonitor;
 import org.flexlb.service.grpc.EngineGrpcService;
 import org.flexlb.service.grpc.EngineStatusConverter;
@@ -50,6 +51,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_RATIO;
 import static org.flexlb.constant.MetricConstant.CACHE_HIT_COMPARISON_ACTUAL_TOKENS;
@@ -78,6 +81,7 @@ import static org.mockito.Mockito.when;
 
 class CacheHitFeedbackFlowTest {
     private final ListAppender<ILoggingEvent> pv = new ListAppender<>();
+    private final ScheduledExecutorService taskMetricScheduler = mock(ScheduledExecutorService.class);
     private final FlexMonitor monitor = mock(FlexMonitor.class);
     private final LocalStandbyCacheMatchProvider standby = mock(LocalStandbyCacheMatchProvider.class);
     private final CacheMatchFailoverManager failover = mock(CacheMatchFailoverManager.class);
@@ -92,6 +96,7 @@ class CacheHitFeedbackFlowTest {
 
     @BeforeEach
     void setUp() {
+        when(monitor.withTags(any(FlexMetricTags.class))).thenCallRealMethod();
         for (RoleType role : RoleType.values()) {
             var endpoints = EndpointRegistry.getEndpointsByRole(role);
             if (endpoints != null) {
@@ -134,8 +139,8 @@ class CacheHitFeedbackFlowTest {
         when(engineClient.getEventLoopGroup()).thenReturn(mock(io.netty.channel.EventLoopGroup.class));
         when(loops.onServer(true)).thenReturn(mock(io.netty.channel.EventLoopGroup.class));
         when(loops.onServerSelect(true)).thenReturn(mock(io.netty.channel.EventLoopGroup.class));
-        reporter = new EngineHealthReporter(
-                monitor, cacheMetrics, engineClient, loops, directory, mock(io.netty.channel.EventLoopGroup.class));
+        reporter = new EngineHealthReporter(monitor, cacheMetrics, engineClient, loops, directory,
+                mock(io.netty.channel.EventLoopGroup.class), taskMetricScheduler);
         strategy = new CostBasedPrefillStrategy(directory, cache, reporter, new EndpointRoundRobin());
         pv.start();
         ((ch.qos.logback.classic.Logger) LoggerFactory.getLogger("pvLogger")).addAppender(pv);
@@ -197,6 +202,10 @@ class CacheHitFeedbackFlowTest {
         assertEquals(1000, comparison.path("inputTokens").asLong());
         assertEquals(500, comparison.path("actualHitTokens").asLong());
         verify(monitor, times(1)).report(eq(CACHE_HIT_COMPARISON_ACTUAL_RATIO), any(), eq(0.5));
+        reporter.init();
+        var metricTask = ArgumentCaptor.forClass(Runnable.class);
+        verify(taskMetricScheduler).scheduleAtFixedRate(metricTask.capture(), eq(20L), eq(20L), eq(TimeUnit.SECONDS));
+        metricTask.getValue().run();
         verify(monitor).report(eq("app.engine.worker.status.running.to.first.token.ms"),
                 any(), eq(100.0));
         assertEquals(1, events("prefill_worker_status").size());

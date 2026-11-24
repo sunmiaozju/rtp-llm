@@ -17,6 +17,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.netty.resources.LoopResources;
 
+import java.util.concurrent.ScheduledExecutorService;
+
 import static org.flexlb.constant.MetricConstant.PREFILL_SELECTED_ESTIMATED_TTFT_MS;
 import static org.flexlb.constant.MetricConstant.PREFILL_SELECTED_EXECUTION_TIME_MS;
 import static org.mockito.Mockito.verify;
@@ -45,6 +47,8 @@ class EngineHealthReporterSelectionMetricTest {
     private EventLoopGroup kvcmEventLoopGroup;
     @Mock
     private WorkerDirectory workerDirectory;
+    @Mock
+    private ScheduledExecutorService taskMetricScheduler;
 
     private EngineHealthReporter reporter;
 
@@ -53,9 +57,8 @@ class EngineHealthReporterSelectionMetricTest {
         when(loopResources.onServer(true)).thenReturn(serverWorker);
         when(loopResources.onServerSelect(true)).thenReturn(serverSelector);
         when(engineGrpcClient.getEventLoopGroup()).thenReturn(grpcEventLoop);
-        reporter = new EngineHealthReporter(
-                monitor, cacheMetricsReporter, engineGrpcClient,
-                loopResources, workerDirectory, kvcmEventLoopGroup);
+        reporter = new EngineHealthReporter(monitor, cacheMetricsReporter, engineGrpcClient, loopResources,
+                workerDirectory, kvcmEventLoopGroup, taskMetricScheduler);
     }
 
     @Test

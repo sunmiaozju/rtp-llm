@@ -266,8 +266,6 @@ public class MetricConstant {
             "app.engine.worker.status.engine.received.to.waiting.ms";
     public static final String ENGINE_WORKER_STATUS_INPUT_QUEUE_WAIT_MS =
             "app.engine.worker.status.input.queue.wait.ms";
-    public static final String ENGINE_WORKER_STATUS_SCHEDULER_TO_RUNNING_MS =
-            "app.engine.worker.status.scheduler.to.running.ms";
     public static final String ENGINE_WORKER_STATUS_SCHEDULER_WAIT_MS =
             "app.engine.worker.status.scheduler.wait.ms";
     public static final String ENGINE_WORKER_STATUS_REMOTE_KV_WAIT_MS =

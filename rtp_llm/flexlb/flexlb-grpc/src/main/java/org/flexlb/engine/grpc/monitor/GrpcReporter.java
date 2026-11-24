@@ -7,6 +7,10 @@ import org.flexlb.metric.FlexMonitor;
 import org.springframework.stereotype.Component;
 
 import javax.annotation.PostConstruct;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.ObjDoubleConsumer;
 
 import static org.flexlb.constant.MetricConstant.GRPC_CALL_COUNT;
 import static org.flexlb.constant.MetricConstant.GRPC_CALL_DURATION;
@@ -25,10 +29,22 @@ import static org.flexlb.constant.MetricConstant.GRPC_RESPONSE_SIZE;
 @Component
 public class GrpcReporter {
 
+    public static final String GET_WORKER_STATUS = "GetWorkerStatus";
+    public static final String GET_CACHE_STATUS = "GetCacheStatus";
+    public static final String ENQUEUE_BATCH = "EnqueueBatch";
+    public static final String KVCM_GET_HOST_CACHE_STATE = "KVCM_GET_HOST_CACHE_STATE";
+
     private final FlexMonitor monitor;
+    private final Map<String, CallReporters> callReporters = new HashMap<>();
+
+    private record CallReporters(ObjDoubleConsumer<String> firstAttempt, ObjDoubleConsumer<String> retry) {
+    }
 
     public GrpcReporter(FlexMonitor monitor) {
         this.monitor = monitor;
+        for (String service : List.of(GET_WORKER_STATUS, GET_CACHE_STATUS, ENQUEUE_BATCH, KVCM_GET_HOST_CACHE_STATE)) {
+            callReporters.put(service, new CallReporters(withCallTags(service, false), withCallTags(service, true)));
+        }
     }
 
     @PostConstruct
@@ -55,22 +71,20 @@ public class GrpcReporter {
      * @param serviceType Service type
      * @param duration Call duration in milliseconds
      * @param responseSize Response body size in bytes
-     * @param isRetry Whether this is a retry call
+     * @param retry Whether the call was retried
      */
-    public void reportCallMetrics(String serviceType, long duration, int responseSize, boolean isRetry) {
-        FlexMetricTags tags = FlexMetricTags.of(
-            "service", serviceType,
-            "retry", String.valueOf(isRetry)
-        );
+    public void reportCallMetrics(String serviceType, long duration, int responseSize, boolean retry) {
+        CallReporters reporters = callReporters.get(serviceType);
+        ObjDoubleConsumer<String> report = reporters == null
+                ? withCallTags(serviceType, retry)
+                : (retry ? reporters.retry() : reporters.firstAttempt());
+        report.accept(GRPC_CALL_DURATION, duration);
+        report.accept(GRPC_RESPONSE_SIZE, responseSize);
+        report.accept(GRPC_CALL_COUNT, 1);
+    }
 
-        // Report call duration
-        monitor.report(GRPC_CALL_DURATION, tags, duration);
-
-        // Report response body size
-        monitor.report(GRPC_RESPONSE_SIZE, tags, responseSize);
-
-        // Report call count
-        monitor.report(GRPC_CALL_COUNT, tags, 1);
+    private ObjDoubleConsumer<String> withCallTags(String service, boolean retry) {
+        return monitor.withTags(FlexMetricTags.of("service", service, "retry", String.valueOf(retry)));
     }
 
     /**

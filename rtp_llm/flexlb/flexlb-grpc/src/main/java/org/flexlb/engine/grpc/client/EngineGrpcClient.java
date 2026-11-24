@@ -351,10 +351,10 @@ public class EngineGrpcClient implements EngineAddressResolver.Listener {
     }
 
     enum ServiceType {
-        WORKER_STATUS("worker", "GetWorkerStatus"),
-        CACHE_STATUS("cache", "GetCacheStatus"),
-        MULTIMODAL_WORKER_STATUS("multimodal_worker", "GetWorkerStatus"),
-        MULTIMODAL_CACHE_STATUS("multimodal_cache", "GetCacheStatus"), BATCH_ENQUEUE("batch_enqueue", "EnqueueBatch");
+        WORKER_STATUS("worker", GrpcReporter.GET_WORKER_STATUS), CACHE_STATUS("cache", GrpcReporter.GET_CACHE_STATUS),
+        MULTIMODAL_WORKER_STATUS("multimodal_worker", GrpcReporter.GET_WORKER_STATUS),
+        MULTIMODAL_CACHE_STATUS("multimodal_cache", GrpcReporter.GET_CACHE_STATUS),
+        BATCH_ENQUEUE("batch_enqueue", GrpcReporter.ENQUEUE_BATCH);
 
         private final String suffix;
         private final String operationName;
