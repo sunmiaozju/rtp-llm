@@ -4,9 +4,11 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.balance.eviction.DecodeEndpointSnapshot;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.CapacityLimit;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.engine.grpc.EngineRpcService.TaskInfoPB;
 import org.flexlb.engine.grpc.EngineRpcService.WorkerStatusPB;
+import org.flexlb.enums.DecodeMode;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
 import org.flexlb.service.grpc.WorkerStatusPBs;
@@ -19,6 +21,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -329,15 +333,19 @@ class DecodeEndpointLayeredViewTest {
     // ==================== snapshot capture: layered lists ====================
 
     @Test
-    void snapshotCapture_splitsLayersAndExcludesCancelRequested() {
+    void returnSnapshot_splitsLayersAndExcludesIneligibleRequests() {
         reserve(1L, 500, 508, 30);
         reserve(2L, 400, 408, 30);
         reserve(3L, 300, 308, 30);
+        endpoint.reserve("4", 100, 108, 20);
+        reserve(5L, 100, 108, 70);
         updateStatus(Map.of("2", runningTask(2L, TaskPhase.KV_ALLOCATED, 256),
-                "3", runningTask(3L, TaskPhase.RUNNING, 512)), null, 10_000);
+                "3", runningTask(3L, TaskPhase.RUNNING, 512),
+                "6", runningTask(6L, TaskPhase.RUNNING, 128)), null, 10_000);
 
-        DecodeEndpointSnapshot snapshot =
-                DecodeEndpointSnapshot.capture(endpoint, new CapacityLimit(4L, 90L));
+        DecodeEndpointSnapshot snapshot = returnSnapshot(6L);
+        assertNotNull(snapshot);
+        assertEquals(endpoint.routingView().placementUsage(), snapshot.usage());
         assertEquals(List.of("1"), ids(snapshot.reserved()));
         assertEquals(List.of("2"), ids(snapshot.accepted()));
         assertEquals(List.of("3"), ids(snapshot.running()));
@@ -347,14 +355,32 @@ class DecodeEndpointLayeredViewTest {
 
         // A cancel-requested entry is claimed by an in-flight eviction and
         // must not be offered to planning again.
-        beginPreemption(101L, List.of(2L),
-                20L, 64, 72, 70);
-        beginPreemption(102L, List.of(3L),
-                30L, 64, 72, 70);
-        DecodeEndpointSnapshot after =
-                DecodeEndpointSnapshot.capture(endpoint, new CapacityLimit(4L, 90L));
+        assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
+                beginPreemption(101L, List.of(2L), 20L, 64, 72, 70));
+        assertEquals(DecodeEndpoint.PreemptionBeginResult.SUCCESS,
+                beginPreemption(102L, List.of(3L), 30L, 64, 72, 70));
+        DecodeEndpointSnapshot after = returnSnapshot(6L);
+        assertNotNull(after);
         assertTrue(after.accepted().isEmpty());
         assertTrue(after.running().isEmpty());
+    }
+
+    @Test
+    void returnSnapshot_skipsWhenPlacementFitsOrThereAreNoVictims() {
+        var lowerPriority = reserve(1L, 100, 108, 30);
+        reserve(2L, 100, 108, 70);
+
+        assertNull(returnSnapshot(3L));
+        assertNotNull(returnSnapshot(2L));
+
+        endpoint.release(lowerPriority, DecodeEndpoint.ReleaseReason.LOCAL_ROLLBACK);
+        assertNull(returnSnapshot(1L));
+    }
+
+    private DecodeEndpointSnapshot returnSnapshot(long maxEngineRequests) {
+        var requirement = new DecodeRequirement("99", 70, 64L, 72L, new CapacityLimit(maxEngineRequests, 90L),
+                DecodeMode.PREEMPT_AT_PLACEMENT, null);
+        return DecodeEndpointSnapshot.captureForReturn(endpoint, requirement);
     }
 
     // ==================== helpers ====================

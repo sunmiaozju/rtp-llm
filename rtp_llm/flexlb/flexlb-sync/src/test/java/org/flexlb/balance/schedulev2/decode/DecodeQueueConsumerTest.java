@@ -1,6 +1,7 @@
 package org.flexlb.balance.schedulev2.decode;
 
 import org.flexlb.balance.endpoint.DecodeEndpoint;
+import org.flexlb.balance.endpoint.DecodeEndpoint.PreemptionBeginResult;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.eviction.DecodePreemptionCoordinator;
 import org.flexlb.balance.scheduler.CancelReason;
@@ -48,6 +49,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -515,6 +517,70 @@ class DecodeQueueConsumerTest {
         pool.close();
         assertNull(decode.reservationHandle("2"));
         verify(queueReporter, times(1)).decodePreempted(80, 30, DecodeTaskPhase.ENGINE_MAY_HAVE_SEEN, decode.ipPort());
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = PreemptionBeginResult.class, names = {"VICTIM_GONE", "VICTIM_ALREADY_CLAIMED"})
+    void stalePreemptionPlanLeavesNoReservationOrVictimIds(PreemptionBeginResult expectedRejection) throws Exception {
+        config.queueScheduler().getOrdering().setType(QueueOrderingConfig.Type.PRIORITY);
+        updateDecodeStatus(otherDecode, Map.of(), Map.of(), false);
+        var plannedVictims = new CompletableFuture<List<DecodeEndpoint.ReservationHandle>>();
+        var commitResult = new CompletableFuture<PreemptionBeginResult>();
+        var allowCommit = new CountDownLatch(1);
+        var allowRetry = new CountDownLatch(1);
+        doAnswer(call -> {
+            List<DecodeEndpoint.ReservationHandle> victims = call.getArgument(1);
+            plannedVictims.complete(victims);
+            assertTrue(allowCommit.await(5, TimeUnit.SECONDS));
+            var result = (PreemptionBeginResult) call.callRealMethod();
+            commitResult.complete(result);
+            return result;
+        }).when(decode).beginReturnedPreemption(anyLong(), any(), eq("2"), anyLong(), anyLong(), anyInt(), any());
+        when(selector.select(any(), any())).thenAnswer(call -> {
+            if (commitResult.isDone()) {
+                assertTrue(allowRetry.await(5, TimeUnit.SECONDS));
+                return success(otherDecode);
+            }
+            return success(decode);
+        });
+        Request low = addWaiting("1", 30);
+        start(1);
+        assertTrue(response(low).isSuccess());
+        var victim = low.decodeChoice().reservation();
+        assertNotNull(victim);
+        updateDecodeStatus(decode, Map.of("1", task("1", TaskPhase.RUNNING)), Map.of(), false);
+        assertTrue(decode.isAcceptedByEngine(victim));
+        Request high = addWaiting("2", 80);
+        try {
+            assertEquals(List.of(victim), plannedVictims.get(5, TimeUnit.SECONDS));
+            if (expectedRejection == PreemptionBeginResult.VICTIM_GONE) {
+                updateDecodeStatus(decode, Map.of(), Map.of("1", task("1", TaskPhase.RUNNING)), false);
+                assertTrue(decode.resourceSnapshot().confirmed().isEmpty());
+            } else {
+                var requirement = high.ctx().getDecodeRequirement();
+                assertEquals(PreemptionBeginResult.SUCCESS,
+                        decode.beginReturnedPreemption(101L, List.of(victim), "3", requirement.inputKvTokens(),
+                                requirement.inputAndMaxOutputKvTokens(), 90, requirement.capacity()));
+            }
+            var beforeCommit = decode.resourceSnapshot();
+            allowCommit.countDown();
+
+            assertEquals(expectedRejection, commitResult.get(5, TimeUnit.SECONDS));
+            assertNull(decode.reservationHandle("2"));
+            assertEquals(beforeCommit, decode.resourceSnapshot());
+            assertFalse(high.future().isDone());
+        } finally {
+            allowCommit.countDown();
+            allowRetry.countDown();
+            decodeQueue.wake();
+        }
+
+        Response result = response(high);
+        assertTrue(result.isSuccess());
+        var decodeStatus = result.getServerStatus().getLast();
+        assertEquals(otherDecode.getIp(), decodeStatus.getServerIp());
+        assertTrue(decodeStatus.getPreemptRequestIds().isEmpty());
+        verify(queueReporter, never()).decodePreempted(anyInt(), anyInt(), any(), any());
     }
 
     @Test

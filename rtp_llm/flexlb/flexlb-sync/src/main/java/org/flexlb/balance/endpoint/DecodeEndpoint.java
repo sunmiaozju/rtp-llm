@@ -6,6 +6,7 @@ import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.dao.route.CapacityRelease;
 import org.flexlb.dao.route.CapacityUsage;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.service.monitor.BatchSchedulerReporter;
@@ -398,6 +399,14 @@ public class DecodeEndpoint extends WorkerEndpoint {
 
     public LayeredAdmissionView resourceSnapshot() { return state.resourceSnapshot(); }
 
+    /**
+     * Reads placement usage and lower-priority engine-facing requests under the same node lock.
+     * Returns null when placement has capacity or there are no candidates.
+     */
+    public ReturnPreemptionCandidates collectReturnPreemptionCandidates(DecodeRequirement requirement) {
+        return state.collectReturnPreemptionCandidates(requirement);
+    }
+
     public long realKvAvailable() { return state.realKvAvailable(); }
 
     public boolean isEmptyForSelection(WorkerStatus.EngineObservation engine) {
@@ -415,6 +424,11 @@ public class DecodeEndpoint extends WorkerEndpoint {
     public int getInflightCount() { return state.getInflightCount(); }
 
     public OptionalLong getLoadMetric() { return OptionalLong.of(state.getTotalLoad()); }
+
+    public record ReturnPreemptionCandidates(CapacityUsage usage,
+                                             List<DecodeRequestView> reserved,
+                                             List<DecodeRequestView> accepted,
+                                             List<DecodeRequestView> running) {}
 
     public record LayeredAdmissionView(DecodeRoutingView routing,
                                        Map<String, DecodeRequestView> reserved,

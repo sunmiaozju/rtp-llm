@@ -284,7 +284,10 @@ public final class DecodeQueueConsumer implements Runnable {
         if (configured == null || !returnPreemptionAllowed(requirement, configured)) {
             return null;
         }
-        DecodeEndpointSnapshot snapshot = DecodeEndpointSnapshot.capture(endpoint, requirement.capacity());
+        DecodeEndpointSnapshot snapshot = DecodeEndpointSnapshot.captureForReturn(endpoint, requirement);
+        if (snapshot == null) {
+            return null;
+        }
         DecodeEvictionProposal proposal = EvictionPlanner.planDecode(requirement.priority(),
                 requirement.inputKvTokens(), requirement.inputAndMaxOutputKvTokens(), List.of(snapshot),
                 V2_RETURN_PREEMPTION, new HashMap<>());

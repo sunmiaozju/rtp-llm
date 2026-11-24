@@ -4,9 +4,8 @@ import org.flexlb.balance.endpoint.DecodeEndpoint;
 import org.flexlb.balance.endpoint.DecodeEndpoint.DecodeRequestView;
 import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.dao.route.CapacityUsage;
-import org.flexlb.enums.DecodeTaskPhase;
+import org.flexlb.dao.route.DecodeRequirement;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /** Victims and placement occupancy captured under one endpoint admission lock. */
@@ -18,32 +17,13 @@ public record DecodeEndpointSnapshot(DecodeEndpoint endpoint,
                                      List<DecodeRequestView> accepted,
                                      List<DecodeRequestView> running) {
 
-    public static DecodeEndpointSnapshot capture(DecodeEndpoint endpoint, CapacityLimit policy) {
-        DecodeEndpoint.LayeredAdmissionView view = endpoint.resourceSnapshot();
-        DecodeEndpoint.DecodeRoutingView routing = view.routing();
-        List<DecodeRequestView> reserved = new ArrayList<>();
-        view.reserved().forEach((requestId, entry) -> {
-            if (entry.claimedForPreemption()) {
-                return;
-            }
-            reserved.add(entry);
-        });
-        List<DecodeRequestView> accepted = new ArrayList<>();
-        List<DecodeRequestView> running = new ArrayList<>();
-        for (DecodeRequestView task : view.confirmed()) {
-            // A cancel-requested confirmed entry is already claimed by an
-            // in-flight eviction, regardless of whether it has started running.
-            if (task.claimedForPreemption()) {
-                continue;
-            }
-            if (task.phase() == DecodeTaskPhase.ACCEPTED_NOT_RUNNING) {
-                accepted.add(task);
-            } else if (task.phase() == DecodeTaskPhase.RUNNING) {
-                running.add(task);
-            }
+    public static DecodeEndpointSnapshot captureForReturn(DecodeEndpoint endpoint, DecodeRequirement requirement) {
+        var candidates = endpoint.collectReturnPreemptionCandidates(requirement);
+        if (candidates == null) {
+            return null;
         }
-        return new DecodeEndpointSnapshot(endpoint, endpoint.ipPort(), policy, routing.placementUsage(), reserved,
-                accepted, running);
+        return new DecodeEndpointSnapshot(endpoint, endpoint.ipPort(), requirement.capacity(), candidates.usage(),
+                candidates.reserved(), candidates.accepted(), candidates.running());
     }
 
 }

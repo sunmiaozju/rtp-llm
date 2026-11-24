@@ -10,12 +10,14 @@ import org.flexlb.balance.endpoint.DecodeEndpoint.PreemptionBeginResult;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReleaseReason;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationHandle;
 import org.flexlb.balance.endpoint.DecodeEndpoint.ReservationReleaseResult;
+import org.flexlb.balance.endpoint.DecodeEndpoint.ReturnPreemptionCandidates;
 import org.flexlb.balance.schedulev2.RequestStatusTimeout;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.CapacityLimit;
 import org.flexlb.dao.route.CapacityRelease;
 import org.flexlb.dao.route.CapacityUsage;
+import org.flexlb.dao.route.DecodeRequirement;
 import org.flexlb.dao.route.RoleType;
 import org.flexlb.enums.DecodeTaskPhase;
 import org.flexlb.enums.TaskPhase;
@@ -1675,30 +1677,17 @@ final class DecodeState {
     LayeredAdmissionView resourceSnapshot() {
         lock.lock();
         try {
-            Map<String, DecodeRequestView> reserved = new HashMap<>(
-                    reservedRequestCount.get());
-            List<DecodeRequestView> confirmed = new java.util.ArrayList<>(
-                    Math.max(0, confirmedEngineOwnedCount));
+            Map<String, DecodeRequestView> reserved = new HashMap<>(reservedRequestCount.get());
+            List<DecodeRequestView> confirmed = new ArrayList<>(Math.max(0, confirmedEngineOwnedCount));
             decodeRequests.forEach((requestId, task) -> {
                 if (!task.countsTowardCapacity()) {
                     return;
                 }
-                boolean protectedRequest = task.hasProtocolOwner();
+                DecodeRequestView view = requestView(requestId, task);
                 if (task.confirmed()) {
-                    confirmed.add(new DecodeRequestView(
-                            requestId, task.priority(), task.kvTokens(),
-                            task.kvTokens(), task.phase(), task.priorityKnown(),
-                            task.reservationToken(), false, protectedRequest));
+                    confirmed.add(view);
                 } else {
-                    reserved.put(requestId, new DecodeRequestView(
-                            requestId, task.priority(), task.releasableKvTokens(),
-                            task.kvBudgetTokens(),
-                            task.queued()
-                                    ? DecodeTaskPhase.MASTER_QUEUED_NOT_DISPATCHED
-                                    : DecodeTaskPhase.ENGINE_MAY_HAVE_SEEN,
-                            true,
-                            task.reservationToken(), task.queued(),
-                            protectedRequest));
+                    reserved.put(requestId, view);
                 }
             });
             return new LayeredAdmissionView(routingViewLocked(), reserved, confirmed, queuedPhaseCount.get(),
@@ -1706,6 +1695,59 @@ final class DecodeState {
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * 在节点锁内先检查 placement 容量，容量足够时直接返回。
+     * 容量不足时扫描请求账本，只为符合 RETURN 条件的低优先级引擎侧请求创建视图，并按阶段分组。
+     * 有候选时返回容量和候选快照，供解锁后的 planner 使用。无候选时返回 {@code null}。
+     */
+    ReturnPreemptionCandidates collectReturnPreemptionCandidates(DecodeRequirement requirement) {
+        lock.lock();
+        try {
+            CapacityUsage usage = routingViewLocked().placementUsage();
+            if (requirement.capacity().evaluate(usage, requirement.inputKvTokens(),
+                    requirement.inputAndMaxOutputKvTokens()).hasCapacity()) {
+                return null;
+            }
+
+            List<DecodeRequestView> reserved = new ArrayList<>();
+            List<DecodeRequestView> accepted = new ArrayList<>();
+            List<DecodeRequestView> running = new ArrayList<>();
+            decodeRequests.forEach((requestId, task) -> {
+                if (!task.countsTowardCapacity() || task.hasProtocolOwner()
+                        || !PriorityNormalizer.hasPriority(task.priority()) || task.priority() >= requirement.priority()) {
+                    return;
+                }
+                if (task.confirmed() ? !task.priorityKnown() : task.queued()) {
+                    return;
+                }
+                switch (task.phase()) {
+                    case ENGINE_MAY_HAVE_SEEN -> reserved.add(requestView(requestId, task));
+                    case ACCEPTED_NOT_RUNNING -> accepted.add(requestView(requestId, task));
+                    case RUNNING -> running.add(requestView(requestId, task));
+                    case MASTER_QUEUED_NOT_DISPATCHED -> { }
+                }
+            });
+            if (reserved.isEmpty() && accepted.isEmpty() && running.isEmpty()) {
+                return null;
+            }
+            return new ReturnPreemptionCandidates(usage, Collections.unmodifiableList(reserved),
+                    Collections.unmodifiableList(accepted), Collections.unmodifiableList(running));
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    private static DecodeRequestView requestView(String requestId, DecodeRequestState task) {
+        if (task.confirmed()) {
+            return new DecodeRequestView(requestId, task.priority(), task.kvTokens(), task.kvTokens(), task.phase(),
+                    task.priorityKnown(), task.reservationToken(), false, task.hasProtocolOwner());
+        }
+        DecodeTaskPhase phase = task.queued()
+                ? DecodeTaskPhase.MASTER_QUEUED_NOT_DISPATCHED : DecodeTaskPhase.ENGINE_MAY_HAVE_SEEN;
+        return new DecodeRequestView(requestId, task.priority(), task.releasableKvTokens(), task.kvBudgetTokens(),
+                phase, true, task.reservationToken(), task.queued(), task.hasProtocolOwner());
     }
 
     DecodeRoutingView routingView() {
