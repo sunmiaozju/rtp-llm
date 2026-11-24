@@ -253,7 +253,7 @@ public class RequestSchedulerV2 {
     }
 
     public int queuedRequestCount() {
-        return requestTable.waitingCount();
+        return mainQueue.size();
     }
 
     public int blockedRequestCount() {

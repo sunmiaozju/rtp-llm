@@ -33,19 +33,6 @@ public final class RequestTable {
         return requests.size();
     }
 
-    /**
-     * 还在等待发布的请求数。
-     */
-    public int waitingCount() {
-        int count = 0;
-        for (Request request : requests.values()) {
-            if (request.stage().isWaiting()) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     public List<Request> list() {
         return new ArrayList<>(requests.values());
     }

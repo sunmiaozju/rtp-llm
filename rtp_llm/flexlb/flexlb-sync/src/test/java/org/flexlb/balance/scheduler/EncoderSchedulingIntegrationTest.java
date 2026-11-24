@@ -33,6 +33,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -221,11 +222,7 @@ class EncoderSchedulingIntegrationTest {
 
         assertTrue(queue.offer(context, pending));
 
-        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
-            while (queue.size() != 0) {
-                Thread.sleep(5L);
-            }
-        });
+        awaitEncoderQueueEmpty(queue);
         assertFalse(pending.isDone());
     }
 
@@ -242,11 +239,7 @@ class EncoderSchedulingIntegrationTest {
         EncoderQueueCoordinator queue = new EncoderQueueCoordinator(router, registry, false);
         try {
             assertTrue(queue.offer(context, pending));
-            assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
-                while (queue.size() != 0) {
-                    Thread.sleep(5L);
-                }
-            });
+            awaitEncoderQueueEmpty(queue);
 
             verify(router).selectEncoder(context);
             verify(registry).publishDecisionResponseAsync(
@@ -265,6 +258,7 @@ class EncoderSchedulingIntegrationTest {
         when(directory.endpointAddressView(RoleType.ENCODER)).thenReturn(List.of("busy"));
         CompletableFuture<Response> waiting = scheduler.submit(context(8, 100, 0L));
         assertFalse(waiting.isDone());
+        assertEquals(0, scheduler.getQueuedRequestCount());
 
         scheduler.closePlacement();
 
@@ -382,6 +376,24 @@ class EncoderSchedulingIntegrationTest {
 
         assertEquals(StrategyErrorType.RESOURCE_EXHAUSTED.getErrorCode(), response.getCode());
         assertNotNull(requests.requestSlot("5", RequestPhase.ENCODER));
+    }
+
+    private static void awaitEncoderQueueEmpty(EncoderQueueCoordinator coordinator) {
+        var queue = (OrderedRequestQueue) ReflectionTestUtils.getField(coordinator, "queue");
+        var lock = (ReentrantLock) ReflectionTestUtils.getField(coordinator, "lock");
+        assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+            while (true) {
+                lock.lockInterruptibly();
+                try {
+                    if (queue.size() == 0) {
+                        return;
+                    }
+                } finally {
+                    lock.unlock();
+                }
+                Thread.sleep(5L);
+            }
+        });
     }
 
     private EncoderEndpoint worker(String ip,

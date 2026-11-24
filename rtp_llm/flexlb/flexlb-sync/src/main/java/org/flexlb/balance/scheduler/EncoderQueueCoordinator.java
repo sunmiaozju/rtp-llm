@@ -66,15 +66,6 @@ final class EncoderQueueCoordinator implements AutoCloseable {
         }
     }
 
-    int size() {
-        lock.lock();
-        try {
-            return queue.size();
-        } finally {
-            lock.unlock();
-        }
-    }
-
     int blockedSize() {
         lock.lock();
         try {

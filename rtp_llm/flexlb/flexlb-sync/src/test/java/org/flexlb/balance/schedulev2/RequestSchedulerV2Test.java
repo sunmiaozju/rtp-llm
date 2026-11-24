@@ -76,7 +76,11 @@ class RequestSchedulerV2Test {
         var estimate = RequestWorkLoadEstimateResult.success(CacheMatchResult.empty(CacheMatchSource.LOCAL_SYNC),
                 List.of(new PrefillCandidateWork(endpoint.ipPort(), endpoint, 0L, 0L, 10L, 16L)));
         CostBasedPrefillStrategy prefillStrategy = mock(CostBasedPrefillStrategy.class);
-        when(prefillStrategy.prepare(any(), any(), any())).thenReturn(estimate);
+        CompletableFuture<Integer> queueSizeDuringPreparation = new CompletableFuture<>();
+        when(prefillStrategy.prepare(any(), any(), any())).thenAnswer(ignored -> {
+            queueSizeDuringPreparation.complete(scheduler.queuedRequestCount());
+            return estimate;
+        });
         when(prefillStrategy.selectPrepared(any(), any(), any(), any(), any())).thenReturn(choice);
         scheduler = new RequestSchedulerV2(configService, queueCapacity, endpointRegistry, new PlacementAvailability(),
                 mock(DefaultRouter.class), prefillStrategy, mock(DecodeSelector.class), prefillQueues, modelMetaConfig,
@@ -86,6 +90,7 @@ class RequestSchedulerV2Test {
         Response response = scheduler.submit(context).get(5, TimeUnit.SECONDS);
 
         assertTrue(response.isSuccess());
+        assertEquals(0, queueSizeDuringPreparation.get(5, TimeUnit.SECONDS));
         assertEquals(List.of(choice.serverStatus()), response.getServerStatus());
         assertEquals(16L, context.getMetrics().getEstimatedPrefillComputeTokens());
         assertEquals(1L, endpoint.prefillQueue().inflightCount());
@@ -109,6 +114,7 @@ class RequestSchedulerV2Test {
         assertEquals(RequestState.Phase.CANCELLED, cancelled.state());
         assertEquals(StrategyErrorType.REQUEST_CANCELLED.getErrorCode(), future.join().getCode());
         assertEquals(0, scheduler.trackedRequestCount());
+        assertEquals(0, scheduler.queuedRequestCount());
         assertEquals(0L, queueCapacity.globalQueueAndEngineSubQueueCount());
     }
 

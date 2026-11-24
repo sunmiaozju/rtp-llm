@@ -48,13 +48,6 @@ public enum Stage {
     }
 
     /**
-     * 是否还在等待发布。
-     */
-    public boolean isWaiting() {
-        return this == MAIN_WAITING || this == PREFILL_WAITING || this == DECODE_WAITING || this == DECODE_RESERVED;
-    }
-
-    /**
      * 能否从当前阶段进入 next。
      */
     public boolean canMoveTo(Stage next) {

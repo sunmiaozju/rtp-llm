@@ -138,7 +138,7 @@ class DecodeQueueConsumerTest {
         }
         pool.close();
         assertEquals(32, decode.getInflightCount());
-        assertEquals(0, requestTable.waitingCount());
+        assertEquals(0, requestTable.size());
         assertEquals(0, decodeQueue.waitingCount());
     }
 
@@ -235,7 +235,8 @@ class DecodeQueueConsumerTest {
         assertTrue(selecting.await(5, TimeUnit.SECONDS));
         assertEquals(1L, prefillQueue.inflightCount());
         verify(prefillCheck, never()).release(request);
-        assertEquals(1, requestTable.waitingCount());
+        assertEquals(Stage.DECODE_WAITING, request.stage());
+        assertEquals(1, requestTable.size());
         assertEquals(0, decodeQueue.waitingCount());
 
         request.cancel(cancelReason);

@@ -94,8 +94,11 @@ public final class RequestScheduler {
         return requestRegistry.trackedRequestCount() + schedulerV2.trackedRequestCount();
     }
 
+    /**
+     * Returns the number of requests currently in the generation main queue.
+     */
     public int getQueuedRequestCount() {
-        return schedulerV2.queuedRequestCount() + (encoderQueue == null ? 0 : encoderQueue.size());
+        return schedulerV2.queuedRequestCount();
     }
 
     public int getBlockedRequestCount() {
