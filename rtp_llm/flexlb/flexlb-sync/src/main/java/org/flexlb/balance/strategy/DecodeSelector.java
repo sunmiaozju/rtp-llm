@@ -40,6 +40,7 @@ public class DecodeSelector {
         Map<String, DpGroupMembers> dpGroups = null;
         var emptyWorkers = new ArrayList<Map.Entry<String, DecodeEndpoint>>(lastEmptyWorkerPeakSize);
         var lowestCostWorkers = new ArrayList<Map.Entry<String, DecodeEndpoint>>(lastLowestCostWorkerPeakSize);
+        var fullWorkers = new ArrayList<Map.Entry<String, DecodeEndpoint>>();
         double lowestCost = Double.POSITIVE_INFINITY;
         for (var entry : directory) {
             WorkerStatus status = entry.getValue().getStatus();
@@ -60,19 +61,24 @@ public class DecodeSelector {
                 lastSeenDpSize = dpSize;
             }
 
-            lowestCost = collectCandidate(entry, engine, requirement, emptyWorkers, lowestCostWorkers, lowestCost);
+            lowestCost = collectCandidate(entry, engine, requirement, emptyWorkers, lowestCostWorkers, fullWorkers,
+                    lowestCost);
         }
 
         if (dpGroups != null) {
             boolean hadLowestCostWorkers = !lowestCostWorkers.isEmpty();
             removeIncompleteDpWorkers(emptyWorkers, dpGroups);
             removeIncompleteDpWorkers(lowestCostWorkers, dpGroups);
-            if (hadLowestCostWorkers && emptyWorkers.isEmpty() && lowestCostWorkers.isEmpty()) {
-                return selectForDpFallBack(context, group, directory, dpGroups, emptyWorkers, lowestCostWorkers,
-                        requirement);
+            if (emptyWorkers.isEmpty() && lowestCostWorkers.isEmpty()) {
+                if (hadLowestCostWorkers) {
+                    // 最低分节点所在的 DP 组不完整，完整组里可能还有能接单的节点。
+                    return selectForDpFallBack(context, group, directory, dpGroups, emptyWorkers, lowestCostWorkers,
+                            requirement);
+                }
+                removeIncompleteDpWorkers(fullWorkers, dpGroups);
             }
         }
-        return chooseFromCandidates(context, emptyWorkers, lowestCostWorkers, lowestCost, requirement);
+        return chooseFromCandidates(context, emptyWorkers, lowestCostWorkers, fullWorkers, lowestCost, requirement);
     }
 
     private SelectedDecode selectForDpFallBack(BalanceContext context,
@@ -82,6 +88,7 @@ public class DecodeSelector {
                                                List<Map.Entry<String, DecodeEndpoint>> emptyWorkers,
                                                List<Map.Entry<String, DecodeEndpoint>> lowestCostWorkers,
                                                DecodeRequirement requirement) {
+        var fullWorkers = new ArrayList<Map.Entry<String, DecodeEndpoint>>();
         double lowestCost = Double.POSITIVE_INFINITY;
         for (var entry : directory) {
             WorkerStatus status = entry.getValue().getStatus();
@@ -93,9 +100,10 @@ public class DecodeSelector {
                 continue;
             }
 
-            lowestCost = collectCandidate(entry, engine, requirement, emptyWorkers, lowestCostWorkers, lowestCost);
+            lowestCost = collectCandidate(entry, engine, requirement, emptyWorkers, lowestCostWorkers, fullWorkers,
+                    lowestCost);
         }
-        return chooseFromCandidates(context, emptyWorkers, lowestCostWorkers, lowestCost, requirement);
+        return chooseFromCandidates(context, emptyWorkers, lowestCostWorkers, fullWorkers, lowestCost, requirement);
     }
 
     private double collectCandidate(Map.Entry<String, DecodeEndpoint> entry,
@@ -103,6 +111,7 @@ public class DecodeSelector {
                                     DecodeRequirement requirement,
                                     List<Map.Entry<String, DecodeEndpoint>> emptyWorkers,
                                     List<Map.Entry<String, DecodeEndpoint>> lowestCostWorkers,
+                                    List<Map.Entry<String, DecodeEndpoint>> fullWorkers,
                                     double lowestCost) {
         DecodeEndpoint endpoint = entry.getValue();
         if (endpoint.isEmptyForSelection(engine)) {
@@ -111,9 +120,17 @@ public class DecodeSelector {
             return lowestCost;
         }
 
+        var usage = endpoint.placementUsageForSelection(engine);
+        // 放不下这笔请求的节点不参与打分，只留作全满时的抢占候选。
+        if (!requirement.capacity()
+                .evaluate(usage, requirement.inputKvTokens(), requirement.inputAndMaxOutputKvTokens())
+                .hasCapacity()) {
+            fullWorkers.add(entry);
+            return lowestCost;
+        }
         double cost = requirement.costFormula()
-                .evaluate(endpoint.totalLoad(), requirement.capacity().maxEngineRequests(),
-                        endpoint.placementKvUsed(engine), Math.max(0L, engine.totalKvCacheTokens()));
+                .evaluate(usage.occupiedRequests(), requirement.capacity().maxEngineRequests(),
+                        usage.kvBudgetUsedTokens(), usage.totalKvTokens());
         // Retain invalid scores until DP filtering can distinguish them from no routable workers.
         if (!Double.isFinite(cost)) {
             cost = Double.POSITIVE_INFINITY;
@@ -132,13 +149,18 @@ public class DecodeSelector {
     private static SelectedDecode chooseFromCandidates(BalanceContext context,
                                                        List<Map.Entry<String, DecodeEndpoint>> emptyWorkers,
                                                        List<Map.Entry<String, DecodeEndpoint>> lowestCostWorkers,
+                                                       List<Map.Entry<String, DecodeEndpoint>> fullWorkers,
                                                        double lowestCost,
                                                        DecodeRequirement requirement) {
         if (!emptyWorkers.isEmpty()) {
             return choose(context, emptyWorkers, true);
         }
         if (lowestCostWorkers.isEmpty()) {
-            return null;
+            if (fullWorkers.isEmpty()) {
+                return null;
+            }
+            context.recordSelectionReason(RoleType.DECODE, "DECODE_ALL_CANDIDATES_FULL");
+            return SelectedDecode.whenAllCandidatesFull(chooseRandomWorker(fullWorkers));
         }
         if (!Double.isFinite(lowestCost)) {
             throw new IllegalStateException(
@@ -150,11 +172,14 @@ public class DecodeSelector {
     private static SelectedDecode choose(BalanceContext context,
                                          List<Map.Entry<String, DecodeEndpoint>> workers,
                                          boolean selectedAsEmpty) {
-        int count = workers.size();
-        int index = count == 1 ? 0 : ThreadLocalRandom.current().nextInt(count);
         String reason = selectedAsEmpty ? "DECODE_EMPTY_WORKER" : "DECODE_MIN_COST";
         context.recordSelectionReason(RoleType.DECODE, reason);
-        return new SelectedDecode(workers.get(index).getValue(), selectedAsEmpty);
+        return new SelectedDecode(chooseRandomWorker(workers), selectedAsEmpty);
+    }
+
+    private static DecodeEndpoint chooseRandomWorker(List<Map.Entry<String, DecodeEndpoint>> workers) {
+        int index = workers.size() == 1 ? 0 : ThreadLocalRandom.current().nextInt(workers.size());
+        return workers.get(index).getValue();
     }
 
     private static void removeIncompleteDpWorkers(List<Map.Entry<String, DecodeEndpoint>> workers,

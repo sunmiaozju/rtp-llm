@@ -33,7 +33,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Selection ranks nodes; only locked reservation acquires placement capacity.
+ * Selection filters and ranks nodes; only locked reservation acquires placement capacity.
  */
 class DecodeSelectionAdmissionContractTest {
     private static final String QUEUED_IP = "127.0.0.1";
@@ -53,7 +53,7 @@ class DecodeSelectionAdmissionContractTest {
 
     @ParameterizedTest
     @MethodSource("preemptionCases")
-    void cheaperBusyWorkerIsSelectedButCannotReserve(Policy policy, CapacityDimension dimension) {
+    void cheaperFullWorkerIsSkippedEvenWhenPreemptionIsEnabled(Policy policy, CapacityDimension dimension) {
         try (Fixture fixture = new Fixture(policy, dimension)) {
             fixture.assertPlacementAndDispatchDisagree();
             var queuedUsage = fixture.queued.routingView().placementUsage();
@@ -63,11 +63,11 @@ class DecodeSelectionAdmissionContractTest {
                 BalanceContext context = fixture.context(requestId);
                 SelectedDecode result = fixture.strategy.select(context, null);
                 assertNotNull(result);
-                DecodeEndpoint endpoint = result.endpoint();
-                assertEquals(QUEUED_IP, endpoint.getIp());
+                assertFalse(result.allCandidatesFull());
+                assertEquals(FREE_IP, result.endpoint().getIp());
                 fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
                 DecodeRequirement request = context.getDecodeRequirement();
-                assertNull(endpoint.reserveForDispatch(request.requestId(), request.inputKvTokens(),
+                assertNull(fixture.queued.reserveForDispatch(request.requestId(), request.inputKvTokens(),
                         request.inputAndMaxOutputKvTokens(), request.priority(), request.capacity()));
                 fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
             }
@@ -76,7 +76,7 @@ class DecodeSelectionAdmissionContractTest {
 
     @ParameterizedTest(name = "{0}: {1}")
     @MethodSource("dispatchAdmissionCases")
-    void selectionDoesNotReserveWhenTheCheapestWorkerIsBusy(Policy policy, CapacityDimension dimension) {
+    void selectionDoesNotReserveOnTheAvailableWorker(Policy policy, CapacityDimension dimension) {
         try (Fixture fixture = new Fixture(policy, dimension)) {
             fixture.assertPlacementAndDispatchDisagree();
             var queuedUsage = fixture.queued.routingView().placementUsage();
@@ -86,11 +86,12 @@ class DecodeSelectionAdmissionContractTest {
             for (long requestId = 200L; requestId < 206L; requestId++) {
                 SelectedDecode result = fixture.strategy.select(fixture.context(requestId), null);
                 assertNotNull(result);
+                assertFalse(result.allCandidatesFull());
                 selectedCounts.merge(result.endpoint().getIp(), 1, Integer::sum);
                 fixture.assertSelectionHasNoReservation(requestId, queuedUsage, freeUsage);
             }
 
-            assertEquals(Map.of(QUEUED_IP, 6), selectedCounts);
+            assertEquals(Map.of(FREE_IP, 6), selectedCounts);
         }
     }
 

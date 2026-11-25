@@ -771,8 +771,19 @@ final class DecodeState {
                 + activeEngineDispatchPermitCount;
     }
 
-    long placementKvUsed(WorkerStatus.EngineObservation engine) {
-        return placementKvUsed(engine, inputAndMaxOutputKvReservedTotal.get());
+    // 这些计数不保证来自同一时刻，只用于筛选；真正预占时会在节点锁内复核。
+    CapacityUsage placementUsageForSelection(WorkerStatus.EngineObservation engine) {
+        return placementUsage(engine, getTotalLoad(), inputKvReservedTotal.get(),
+                inputAndMaxOutputKvReservedTotal.get());
+    }
+
+    private CapacityUsage placementUsage(WorkerStatus.EngineObservation engine,
+                                         int totalLoad,
+                                         long reservedInputKv,
+                                         long reservedBudgetKv) {
+        return new CapacityUsage(totalLoad, Math.max(0L, engine.totalKvCacheTokens()),
+                Math.max(0L, engine.availableKvCacheTokens()), placementReservedInputKv(reservedInputKv),
+                placementKvUsed(engine, reservedBudgetKv));
     }
 
     private long placementKvUsed(WorkerStatus.EngineObservation engine, long reservedBudgetKv) {
@@ -1770,9 +1781,7 @@ final class DecodeState {
         int engineLoad = confirmedEngineOwnedCount + Math.max(0, inflight - queued);
         long reservedInputKv = inputKvReservedTotal.get();
         long reservedInputAndMaxOutputKv = inputAndMaxOutputKvReservedTotal.get();
-        CapacityUsage placementUsage = new CapacityUsage(totalLoad, Math.max(0L, fields.totalKvCacheTokens()),
-                Math.max(0L, fields.availableKvCacheTokens()), placementReservedInputKv(reservedInputKv),
-                placementKvUsed(fields, reservedInputAndMaxOutputKv));
+        CapacityUsage placementUsage = placementUsage(fields, totalLoad, reservedInputKv, reservedInputAndMaxOutputKv);
         CapacityUsage dispatchUsage = dispatchCapacityUsage(fields);
         return new DecodeRoutingView(status.getIpPort(), status.getGenerationId(), topology, committed, version,
                 totalLoad, engineLoad, placementUsage, dispatchUsage, reservedInputKv, reservedInputAndMaxOutputKv);

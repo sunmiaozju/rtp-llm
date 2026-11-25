@@ -417,8 +417,8 @@ public class DecodeEndpoint extends WorkerEndpoint {
         return state.getTotalLoad();
     }
 
-    public long placementKvUsed(WorkerStatus.EngineObservation engine) {
-        return state.placementKvUsed(engine);
+    public CapacityUsage placementUsageForSelection(WorkerStatus.EngineObservation engine) {
+        return state.placementUsageForSelection(engine);
     }
 
     public int getInflightCount() { return state.getInflightCount(); }

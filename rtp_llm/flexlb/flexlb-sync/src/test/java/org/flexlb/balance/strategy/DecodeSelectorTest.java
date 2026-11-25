@@ -353,7 +353,7 @@ class DecodeSelectorTest {
     }
 
     @Test
-    void cacheCostKeepsUsageRatiosAboveOneDistinctForBusyWorkers() {
+    void workersOverKvBudgetAreOnlyPreemptionCandidates() {
         registerWorker("127.0.0.1", 1_000L, 100L);
         registerWorker("127.0.0.2", 1_000L, 100L);
         EndpointRegistry registry = decodeRegistry();
@@ -361,8 +361,9 @@ class DecodeSelectorTest {
         reserveQueued(decodeEndpoint(registry, "127.0.0.2:8080"), 92L, 0L, 200L, 50);
         DecodeSelector strategy = availableStrategy(registry);
         for (int i = 0; i < 4; i++) {
-            assertEquals("127.0.0.2", selectEndpoint(strategy, context(100L, 1_001L + i), null).getIp(),
-                    "110% KV usage must remain cheaper than 210%");
+            var selected = strategy.select(context(100L, 1_001L + i), null);
+            assertTrue(selected.allCandidatesFull());
+            assertTrue(List.of("127.0.0.1", "127.0.0.2").contains(selected.endpoint().getIp()));
         }
     }
 
@@ -410,24 +411,22 @@ class DecodeSelectorTest {
     }
 
     @Test
-    void selectsTheLowestCostInOneScanWhenAllWorkersAreBusy() {
+    void filtersCapacityAndScoresInOneScan() {
         registerWorker("127.0.0.1", 1_000L, 50L);
-        registerWorker("127.0.0.2", 1_000L, 100L);
+        registerWorker("127.0.0.2", 1_000L, 150L);
         EndpointRegistry registry = decodeRegistry();
         try {
             var entries = Mockito.spy(new ArrayList<>(registry.decodeRoutingEntries()));
             WorkerDirectory directory = Mockito.mock(WorkerDirectory.class);
             Mockito.when(directory.decodeRoutingEntries()).thenReturn(entries);
-            var context = context(100L, 1_001L);
+            var context = context(40L, 1_001L);
             var selected = new DecodeSelector(directory).select(context, null);
 
             assertFalse(selected.selectedAsEmpty());
+            assertFalse(selected.allCandidatesFull());
             assertEquals("127.0.0.2", selected.endpoint().getIp());
             Mockito.verify(entries).iterator();
-            var request = context.getDecodeRequirement();
-            assertNull(selected.endpoint()
-                    .reserveForDispatch(request.requestId(), request.inputKvTokens(),
-                            request.inputAndMaxOutputKvTokens(), request.priority(), request.capacity()));
+            assertNull(selected.endpoint().reservationHandle(context.getRequestId()));
         } finally {
             registry.close();
         }
@@ -474,15 +473,15 @@ class DecodeSelectorTest {
         reserveQueued(decodeEndpoint(registry, "127.0.0.2:8080"), 92L, 0L, 0L, 50);
         reserveQueued(decodeEndpoint(registry, "127.0.0.2:8080"), 93L, 0L, 0L, 50);
 
-        DecodeEndpoint selected = selectEndpoint(availableStrategy(registry), context(100L, 1_001L), null);
+        var selected = availableStrategy(registry).select(context(100L, 1_001L), null);
 
-        assertEquals("127.0.0.1", selected.getIp(),
-                "QUEUE sees both workers full and selects a blocked placement candidate");
+        assertTrue(selected.allCandidatesFull());
+        assertTrue(List.of("127.0.0.1", "127.0.0.2").contains(selected.endpoint().getIp()));
     }
 
     @ParameterizedTest
     @ValueSource(strings = {"kvcache_used_ratio", "running_size"})
-    void picksLowestCostWithoutFilteringByAvailableKv(String expression) {
+    void filtersWorkersWithoutEnoughKvBeforeScoring(String expression) {
         configureCost(expression);
         registerWorker("127.0.0.1", 1_000, 100);
         registerWorker("127.0.0.2", 1_000, 800);
@@ -491,10 +490,10 @@ class DecodeSelectorTest {
         DecodeSelector decodeSelector = availableStrategy(registry);
         BalanceContext balanceContext = context(500, 2_000L);
 
-        DecodeEndpoint status = selectEndpoint(decodeSelector, balanceContext, null);
+        var selected = decodeSelector.select(balanceContext, null);
 
-        assertNotNull(status);
-        assertEquals(expression.equals("running_size") ? "127.0.0.1" : "127.0.0.2", status.getIp());
+        assertFalse(selected.allCandidatesFull());
+        assertEquals("127.0.0.2", selected.endpoint().getIp());
     }
 
     @ParameterizedTest
@@ -509,6 +508,7 @@ class DecodeSelectorTest {
 
         var selected = strategy.select(context, null);
         assertFalse(selected.selectedAsEmpty());
+        assertTrue(selected.allCandidatesFull());
         var request = context.getDecodeRequirement();
         assertNull(selected.endpoint()
                 .reserveForDispatch(request.requestId(), request.inputKvTokens(), request.inputAndMaxOutputKvTokens(),
@@ -571,7 +571,7 @@ class DecodeSelectorTest {
     @Test
     void runningCostCanSelectACheaperBusyWorker() {
         configureCost("running_size / max_running_size");
-        registerWorker("127.0.0.1", 1_000, 200);
+        registerWorker("127.0.0.1", 1_000, 500);
         registerWorker("127.0.0.2", 1_000, 1_000);
         EndpointRegistry registry = decodeRegistry();
         reserveQueued(
@@ -591,23 +591,24 @@ class DecodeSelectorTest {
     void queueSelectsFeasibleEndpointsBeforeWaitingForTransientCapacity(QueuePolicy policy) {
         configureQueue(policy);
         configureCost("running_size / max_running_size");
-        registerWorker("127.0.0.1", 1000, 100);
-        registerWorker("127.0.0.2", 1000, 100);
+        registerWorker("127.0.0.1", 1000, 900);
+        registerWorker("127.0.0.2", 1000, 850);
         EndpointRegistry registry = decodeRegistry();
         DecodeSelector strategy = availableStrategy(registry);
         for (int index = 0; index < 10; index++) {
             long requestId = 123L + index;
-            DecodeEndpoint selected = selectEndpoint(strategy, context(100L, requestId), null);
+            var selected = strategy.select(context(100L, requestId), null);
             assertNotNull(selected);
-            assertTrue(List.of("127.0.0.1", "127.0.0.2").contains(selected.getIp()));
-            assertFalse(selected.resourceSnapshot().isQueued(Long.toString(requestId)),
+            assertFalse(selected.allCandidatesFull());
+            assertTrue(List.of("127.0.0.1", "127.0.0.2").contains(selected.endpoint().getIp()));
+            assertFalse(selected.endpoint().resourceSnapshot().isQueued(Long.toString(requestId)),
                     "selection cannot claim capacity");
         }
     }
 
     @ParameterizedTest
     @EnumSource(QueuePolicy.class)
-    void selectionLeavesTheSingleWorkerBudgetCheckToReservation(QueuePolicy policy) {
+    void oversizedRequestMarksAllCandidatesFull(QueuePolicy policy) {
         configureQueue(policy);
         configureCost("running_size / max_running_size");
         registerWorker("127.0.0.1", 100L, 100L);
@@ -616,9 +617,11 @@ class DecodeSelectorTest {
         reserveQueued(decodeEndpoint(registry, "127.0.0.2:8080"), 91L, 0L, 0L, 50);
         DecodeSelector strategy = availableStrategy(registry);
         for (long requestId = 200L; requestId < 204L; requestId++) {
-            DecodeEndpoint selected = selectEndpoint(strategy, context(200L, requestId), null);
+            BalanceContext context = context(200L, requestId);
+            var selected = strategy.select(context, null);
             assertNotNull(selected);
-            assertEquals("127.0.0.1", selected.getIp());
+            assertTrue(selected.allCandidatesFull());
+            assertEquals("DECODE_ALL_CANDIDATES_FULL", context.selectionReason(RoleType.DECODE));
         }
     }
 

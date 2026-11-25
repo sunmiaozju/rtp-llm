@@ -291,6 +291,7 @@ class DecodeQueueConsumerTest {
             DecodeRequirement requirement = call.<BalanceContext>getArgument(0).getDecodeRequirement();
             if ("2".equals(requirement.requestId())) {
                 tried.countDown();
+                return SelectedDecode.whenAllCandidatesFull(decode);
             }
             return success(decode);
         }).when(selector).select(any(), any());
@@ -483,8 +484,44 @@ class DecodeQueueConsumerTest {
     }
 
     @Test
+    void reservationRaceReselectsAnotherDecodeWithoutPreemption() throws Exception {
+        config.queueScheduler().getOrdering().setType(QueueOrderingConfig.Type.PRIORITY);
+        config.getRouter().getRoles().getDecode().getCostEstimator().setExpression("kvcache_used_ratio");
+        var running = WorkerStatusPB.newBuilder()
+                .setAlive(true)
+                .setStatusVersion(1L)
+                .setRoleType(WorkerStatusPBs.role(RoleType.DECODE))
+                .setTotalKvCache(1000L)
+                .setAvailableKvCache(1000L)
+                .setRunningQueryLen(1);
+        updateDecodeStatus(decode, running, false);
+        updateDecodeStatus(otherDecode, running.setAvailableKvCache(900L), false);
+        register(decode);
+        register(otherDecode);
+        DecodeSelector realSelector = new DecodeSelector(workerDirectory);
+        when(selector.select(any(), any()))
+                .thenAnswer(call -> realSelector.select(call.getArgument(0), call.getArgument(1)));
+        doAnswer(call -> {
+            assertNotNull(decode.reserveUnqueued("2", 16L, 16L, 30));
+            return call.callRealMethod();
+        }).when(decode).reserveForDispatch(eq("1"), anyLong(), anyLong(), anyInt(), any());
+
+        Request request = addWaiting("1", 80);
+        start(1);
+
+        Response result = response(request);
+        assertTrue(result.isSuccess());
+        pool.close();
+        assertEquals(otherDecode.getIp(), result.getServerStatus().getLast().getServerIp());
+        assertTrue(result.getServerStatus().getLast().getPreemptRequestIds().isEmpty());
+        verify(selector, times(2)).select(eq(request.ctx()), eq("g"));
+        verify(decode, never()).collectReturnPreemptionCandidates(any());
+    }
+
+    @Test
     void higherPriorityRequestPreemptsPublishedRequest() throws Exception {
         config.queueScheduler().getOrdering().setType(QueueOrderingConfig.Type.PRIORITY);
+        doReturn(success(decode), SelectedDecode.whenAllCandidatesFull(decode)).when(selector).select(any(), any());
         Request low = addWaiting("1", 30);
         start(1);
         assertTrue(response(low).isSuccess());
@@ -499,6 +536,7 @@ class DecodeQueueConsumerTest {
     @Test
     void cancelledPreemptionDoesNotReportVictimAndCanBeRetried() throws Exception {
         config.queueScheduler().getOrdering().setType(QueueOrderingConfig.Type.PRIORITY);
+        doReturn(success(decode), SelectedDecode.whenAllCandidatesFull(decode)).when(selector).select(any(), any());
         Request low = addWaiting("1", 30);
         doAnswer(call -> {
             DecodeEndpoint.ReservationHandle reservation = call.getArgument(0);
@@ -540,6 +578,9 @@ class DecodeQueueConsumerTest {
             if (commitResult.isDone()) {
                 assertTrue(allowRetry.await(5, TimeUnit.SECONDS));
                 return success(otherDecode);
+            }
+            if ("2".equals(call.<BalanceContext>getArgument(0).getRequestId())) {
+                return SelectedDecode.whenAllCandidatesFull(decode);
             }
             return success(decode);
         });

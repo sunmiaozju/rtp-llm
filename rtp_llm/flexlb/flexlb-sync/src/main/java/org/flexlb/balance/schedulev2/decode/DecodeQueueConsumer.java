@@ -42,6 +42,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
  */
 public final class DecodeQueueConsumer implements Runnable {
 
+    private static final long DECODE_RETRY_WAIT_MS = 5L;
+
+    private enum AttemptResult {
+        PUBLISHED, RESELECT_NOW, WAIT
+    }
+
     private final DecodeQueue decodeQueue;
     private final RequestCleanup cleanup;
     private final DecodeSelector decodeSelector;
@@ -105,15 +111,20 @@ public final class DecodeQueueConsumer implements Runnable {
                     returnToMain = true;
                     break;
                 }
-                // 尝试前记下通知版本；尝试期间的容量变化不应再睡眠。
-                long version = decodeQueue.changeVersion();
-                if (selectAndPublish(request, group)) { // 发布成功，本次处理完成
+                AttemptResult result = selectAndPublish(request, group);
+                if (result == AttemptResult.PUBLISHED) {
                     break;
                 }
-                // 恢复等待阶段，等待容量变化后重试，避免没有可用 Decode 时忙循环。
                 request.moveTo(Stage.DECODE_RESERVED, Stage.DECODE_WAITING);
-                //noinspection BusyWait
-                Thread.sleep(10);
+                if (result == AttemptResult.RESELECT_NOW) {
+                    // 单台预占失败不代表全满，立即按新的容量和负载重新选路。
+                    continue;
+                }
+                if (request.stage() == Stage.DECODE_WAITING) {
+                    // 只在需要退避且请求仍在等待时休眠，避免满载时空转。
+                    //noinspection BusyWait
+                    Thread.sleep(DECODE_RETRY_WAIT_MS);
+                }
             }
         } catch (InterruptedException interrupted) {
             throw interrupted; // 交给 run() 停线程，不误杀请求
@@ -134,20 +145,22 @@ public final class DecodeQueueConsumer implements Runnable {
         }
     }
 
-    private boolean selectAndPublish(Request request, String group) {
+    private AttemptResult selectAndPublish(Request request, String group) {
         SelectedDecode selected = decodeSelector.select(request.ctx(), group);
         if (selected == null) {
             queueReporter.blocked(request, Stage.DECODE_WAITING, QueueBlockReason.NO_AVAILABLE_DECODE, "all");
-            return false;
+            return AttemptResult.WAIT;
         }
         return selected.selectedAsEmpty()
                 ? placeOnEmptyDecode(request, selected.endpoint())
-                : reserve(request, selected.endpoint());
+                : reserve(request, selected.endpoint(), selected.allCandidatesFull());
     }
 
-    private boolean reserve(Request request, DecodeEndpoint endpoint) {
+    private AttemptResult reserve(Request request, DecodeEndpoint endpoint, boolean allCandidatesFull) {
         if (endpoint.isRetired()) {
-            return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING);
+            return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING)
+                    ? AttemptResult.PUBLISHED
+                    : AttemptResult.WAIT;
         }
         endpoint.addEngineDispatchCapacityListener(capacityWake);
         List<DecodeEndpoint.DecodeRequestView> preemptedRequests = new ArrayList<>();
@@ -155,15 +168,18 @@ public final class DecodeQueueConsumer implements Runnable {
         DecodeEndpoint.DispatchReservation reserved =
                 endpoint.reserveForDispatch(request.requestId(), requirement.inputKvTokens(),
                         requirement.inputAndMaxOutputKvTokens(), requirement.priority(), requirement.capacity());
-        if (reserved == null) {
+        if (reserved == null && allCandidatesFull) {
+            // 抽中的节点可能刚释放容量；只有普通预占仍失败时才尝试抢占。
             reserved = preempt(request, endpoint, requirement, preemptedRequests);
-            if (reserved == null) {
-                if (endpoint.isRetired()) {
-                    return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING);
-                }
-                reportCapacityBlock(request, endpoint, requirement);
-                return false;
+        }
+        if (reserved == null) {
+            if (endpoint.isRetired()) {
+                return publish(request, new DecodeChoice(endpoint, null), null, Stage.DECODE_WAITING)
+                        ? AttemptResult.PUBLISHED
+                        : AttemptResult.WAIT;
             }
+            reportCapacityBlock(request, endpoint, requirement);
+            return allCandidatesFull ? AttemptResult.WAIT : AttemptResult.RESELECT_NOW;
         }
         DecodeChoice selectedDecode = new DecodeChoice(endpoint, reserved.reservation(), preemptedRequests);
         request.setDecodeChoice(selectedDecode);
@@ -171,28 +187,30 @@ public final class DecodeQueueConsumer implements Runnable {
         // 先记录预占再推进阶段；取消先赢 CAS 时直接归还刚取得的预占。
         if (!request.moveTo(Stage.DECODE_WAITING, Stage.DECODE_RESERVED)) {
             releaseDecode(request);
-            return false;
+            return AttemptResult.WAIT;
         }
 
-        return publish(request, selectedDecode, reserved.permit(), Stage.DECODE_RESERVED);
+        return publish(request, selectedDecode, reserved.permit(), Stage.DECODE_RESERVED)
+                ? AttemptResult.PUBLISHED
+                : AttemptResult.WAIT;
     }
 
     /**
      * 空机放行不取 permit，预占仍记入节点账本；空机确认和预占在节点锁内完成。
      */
-    private boolean placeOnEmptyDecode(Request request, DecodeEndpoint endpoint) {
+    private AttemptResult placeOnEmptyDecode(Request request, DecodeEndpoint endpoint) {
         if (endpoint.isRetired()) {
-            return false;
+            return AttemptResult.WAIT;
         }
         DecodeRequirement requirement = request.ctx().getDecodeRequirement();
         var reservation = endpoint.reserveIfEmpty(request.requestId(), requirement.inputKvTokens(),
                 requirement.inputAndMaxOutputKvTokens(), requirement.priority());
         if (reservation == null) {
-            return false;
+            return AttemptResult.RESELECT_NOW;
         }
         var choice = new DecodeChoice(endpoint, reservation);
         request.setDecodeChoice(choice);
-        return publish(request, choice, null, Stage.DECODE_WAITING);
+        return publish(request, choice, null, Stage.DECODE_WAITING) ? AttemptResult.PUBLISHED : AttemptResult.WAIT;
     }
 
     private boolean publish(Request request,
