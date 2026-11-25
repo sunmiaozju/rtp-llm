@@ -582,6 +582,22 @@ class ConfigServiceTest {
     }
 
     @Test
+    void runtimeUpdateChangesSharedSlotRetryAndRejectsZero() {
+        FakeConfigSource source = new FakeConfigSource("Nacos", 200, """
+                {"schemaVersion":3,"requestLifecycle":{"request":{"timeoutMs":60000}}}
+                """);
+        ConfigService service = createService(List.of(environmentSource(Map.of()), source));
+        assertThat(service.loadBalanceConfig().getDispatcher().getSharedSlotRetryMs()).isEqualTo(5L);
+
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"sharedSlotRetryMs\":20}}");
+        FlexlbConfig updated = service.loadBalanceConfig();
+        assertThat(updated.getDispatcher().getSharedSlotRetryMs()).isEqualTo(20L);
+
+        source.emit("{\"schemaVersion\":3,\"dispatcher\":{\"sharedSlotRetryMs\":0}}");
+        assertThat(service.loadBalanceConfig()).isSameAs(updated);
+    }
+
+    @Test
     void arraysReplaceAsAWholeAndJsonNullIsRejected() {
         FakeConfigSource source = new FakeConfigSource(
                 "Nacos",

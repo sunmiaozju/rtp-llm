@@ -104,7 +104,8 @@ UniConfig 和 Nacos 的内容直接使用同一种配置 JSON，不增加包装�
 `min(scheduler.maxQueuedRequests, 当前形态的逻辑端点数 × maxInflightPerPrefillWorker × 倍数)` 个待交付名额。
 PREFILL 与 PDFUSION 的端点和待交付名额不合并计算。
 共享名额满时，已选 Prefill 的请求由主队列消费者持有，不在有序队列中，但仍计入全局排队数。
-消费者读取当前配置重试申请名额；如果发现所选 Prefill 已摘流，请求退回主队列重选。
+消费者按 `dispatcher.sharedSlotRetryMs` 等待后重试申请名额，默认 5 ms，取值为正整数，支持 Nacos 热更新。
+如果发现所选 Prefill 已摘流，请求退回主队列重选。
 `scheduler.maxQueuedRequests` 限制尚未发布的 Generation 请求总数，包括准备中、消费者持有、
 等待 Prefill 或 Decode 的请求。调低上限不会撤销已有占位；排队数降到新上限以下后才有空位可用于准入。
 

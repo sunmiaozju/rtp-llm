@@ -30,6 +30,7 @@ public final class DispatcherConfig {
     private int maxInflightPerPrefillWorker = DEFAULT_MAX_INFLIGHT_PER_PREFILL_WORKER;
     /** Shared waiting capacity = endpoint count * in-flight limit * this multiplier. */
     private int prefillSubqueueLimitMultiplier = DEFAULT_PREFILL_SUBQUEUE_LIMIT_MULTIPLIER;
+    private long sharedSlotRetryMs = 5L;
     private int maxInflightPerEncoderWorker = DEFAULT_MAX_INFLIGHT_PER_ENCODER_WORKER;
     /**
      * 仅用于兼容旧配置，不再影响出队顺序。
@@ -69,6 +70,9 @@ public final class DispatcherConfig {
         if (prefillSubqueueLimitMultiplier <= 0) {
             throw new ConfigValidationException("dispatcher.prefillSubqueueLimitMultiplier",
                     "must be greater than zero");
+        }
+        if (sharedSlotRetryMs <= 0L) {
+            throw new ConfigValidationException("dispatcher.sharedSlotRetryMs", "must be greater than zero");
         }
         if (maxInflightPerEncoderWorker <= 0) {
             throw new ConfigValidationException("dispatcher.maxInflightPerEncoderWorker",

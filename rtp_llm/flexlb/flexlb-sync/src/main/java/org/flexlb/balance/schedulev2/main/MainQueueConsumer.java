@@ -36,7 +36,6 @@ final class MainQueueConsumer {
      * 没事可做时最多等这么久再扫一遍，兜底没有发出变化通知的情况。
      */
     static final long IDLE_WAIT_MS = 50L;
-    private static final long SHARED_SLOT_RETRY_MS = 50L;
 
     private final MainQueue mainQueue;
     private final RequestCleanup cleanup;
@@ -154,7 +153,7 @@ final class MainQueueConsumer {
                 }
                 queueReporter.blocked(request, Stage.MAIN_WAITING, QueueBlockReason.SHARED_QUEUE_FULL,
                         choice.endpoint().ipPort());
-                Thread.sleep(SHARED_SLOT_RETRY_MS);
+                Thread.sleep(config.getDispatcher().getSharedSlotRetryMs());
                 config = configService.loadBalanceConfig();
                 continue;
             }
