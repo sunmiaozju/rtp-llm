@@ -82,7 +82,7 @@ class VitCacheDirectoryTest {
     }
 
     private WorkerStatus worker(String ip, String group) {
-        return WorkerStatus.createDiscovered(RoleType.VIT, group, ip, 8000, 8001, "");
+        return WorkerStatus.createDiscovered(RoleType.VIT, group, ip, 8000, 8001, "", null, 0, 1, false);
     }
 
     private BalanceContext context(String... keys) {

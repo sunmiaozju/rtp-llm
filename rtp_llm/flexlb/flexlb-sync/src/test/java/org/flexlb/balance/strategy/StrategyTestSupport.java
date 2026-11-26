@@ -48,8 +48,8 @@ final class StrategyTestSupport {
                                      boolean alive,
                                      long availableKv,
                                      long totalKv) {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                role, group, ip, httpPort, grpcPort, "test-site");
+        WorkerStatus status =
+                WorkerStatus.createDiscovered(role, group, ip, httpPort, grpcPort, "test-site", null, 0, 1, false);
         WorkerStatusPB.Builder response = response(role, alive, availableKv, totalKv,
                 Math.max(1L, status.appliedStatusCursor().statusVersion() + 1L));
         publish(status, response);
@@ -80,21 +80,13 @@ final class StrategyTestSupport {
         }
     }
 
-    static WorkerEndpoint publishEndpoint(
-            EndpointRegistry registry,
-            RoleType role,
-            String address,
-            WorkerStatus source) {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                role,
-                source.getGroup(),
-                source.getIp(),
-                source.getPort(),
-                source.getGrpcPort(),
-                source.getSite(),
-                source.getDeploymentName(),
-                source.getEngineIndex(),
-                source.getMultiEngineNum());
+    static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+                                          RoleType role,
+                                          String address,
+                                          WorkerStatus source) {
+        WorkerStatus status = WorkerStatus.createDiscovered(role, source.getGroup(), source.getIp(), source.getPort(),
+                source.getGrpcPort(), source.getSite(), source.getDeploymentName(), source.getEngineIndex(),
+                source.getMultiEngineNum(), false);
         WorkerStatus.StatusObservation observation =
                 status.bindStatusObservation(
                         source.committedEngineObservation(),

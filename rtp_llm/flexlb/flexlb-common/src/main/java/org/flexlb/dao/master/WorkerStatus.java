@@ -332,6 +332,7 @@ public class WorkerStatus {
     private final AtomicReference<TopologySnapshot> topology;
 
     private final WorkerIdentity workerIdentity;
+    private final boolean pp0RoutingEnabled;
 
     private final AtomicReference<CommittedWorkerStatus> committedStatus;
 
@@ -377,10 +378,9 @@ public class WorkerStatus {
         }
     }
 
-    private WorkerStatus(
-            TopologySnapshot initialTopology,
-            EngineObservation initialStatus) {
+    private WorkerStatus(TopologySnapshot initialTopology, EngineObservation initialStatus, boolean pp0RoutingEnabled) {
         topology = new AtomicReference<>(initialTopology);
+        this.pp0RoutingEnabled = pp0RoutingEnabled;
         workerIdentity = new WorkerIdentity(
                 initialTopology.ip(), initialTopology.port(), initialTopology.engineIndex());
         committedStatus = new AtomicReference<>(new CommittedWorkerStatus(
@@ -391,40 +391,19 @@ public class WorkerStatus {
                 discoveredAtUs, 0L, 0L, false));
     }
 
-    /** Create one fully initialized service-discovery generation. */
-    public static WorkerStatus createDiscovered(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site) {
-        return createDiscovered(
-                role, group, ip, port, grpcPort, site, null);
-    }
-
-    public static WorkerStatus createDiscovered(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site,
-            String deploymentName) {
-        return createDiscovered(
-                role, group, ip, port, grpcPort, site, deploymentName, 0, 1);
-    }
-
-    public static WorkerStatus createDiscovered(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site,
-            String deploymentName,
-            int engineIndex,
-            int multiEngineNum) {
+    /**
+     * Create one fully initialized service-discovery generation.
+     */
+    public static WorkerStatus createDiscovered(RoleType role,
+                                                String group,
+                                                String ip,
+                                                int port,
+                                                int grpcPort,
+                                                String site,
+                                                String deploymentName,
+                                                int engineIndex,
+                                                int multiEngineNum,
+                                                boolean pp0RoutingEnabled) {
         Objects.requireNonNull(role, "role");
         Objects.requireNonNull(ip, "ip");
         if (port <= 0 || grpcPort <= 0) {
@@ -435,24 +414,14 @@ public class WorkerStatus {
             throw new IllegalArgumentException("invalid logical worker index");
         }
         return new WorkerStatus(
-                new TopologySnapshot(
-                        group, ip, port, grpcPort, site, deploymentName,
-                        engineIndex, multiEngineNum),
-                new EngineObservation(
-                        role,
-                        null,
-                        0L,
-                        0L,
-                        Map.of(),
-                        0.0,
-                        0L,
-                        0L,
-                        0L,
-                        0L,
-                        0L,
-                        0L,
-                        0L,
-                        0L));
+                new TopologySnapshot(group, ip, port, grpcPort, site, deploymentName, engineIndex, multiEngineNum),
+                new EngineObservation(role, null, 0L, 0L, Map.of(), 0.0, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L),
+                pp0RoutingEnabled);
+    }
+
+    @JsonIgnore
+    public boolean isPp0RoutingEnabled() {
+        return pp0RoutingEnabled;
     }
 
     @JsonIgnore

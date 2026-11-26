@@ -18,8 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class EngineStatusConverterTest {
 
-    private final WorkerStatus owner = WorkerStatus.createDiscovered(
-            RoleType.PREFILL, "default", "127.0.0.1", 8001, 18002, "test");
+    private final WorkerStatus owner = WorkerStatus.createDiscovered(RoleType.PREFILL, "default", "127.0.0.1", 8001,
+            18002, "test", null, 0, 1, false);
 
     @Test
     void preservesAllActiveTaskPhasesAndKeepsFinishedTasksSeparate() {

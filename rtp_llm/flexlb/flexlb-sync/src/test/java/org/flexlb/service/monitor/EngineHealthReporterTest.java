@@ -85,8 +85,8 @@ class EngineHealthReporterTest {
     @Test
     void reportsStepAveragesByRoleGroupAndPhaseEveryTwentySeconds() {
         reporter.init();
-        WorkerStatus worker = WorkerStatus.createDiscovered(
-                RoleType.PDFUSION, "test-group", "10.0.0.1", 8080, 8081, null, null, 1, 2);
+        WorkerStatus worker = WorkerStatus.createDiscovered(RoleType.PDFUSION, "test-group", "10.0.0.1", 8080, 8081,
+                null, null, 1, 2, false);
         reporter.recordWorkerStepMetrics(worker,
                 new WorkerStatus.StepMetrics(42, 1700000000000L, 16000, 2, 15000, 32000, 0.5));
         reporter.recordWorkerStepMetrics(worker,
@@ -542,9 +542,8 @@ class EngineHealthReporterTest {
 
     @Test
     void workerPollDoesNotReportIndividualActiveTaskCounts() {
-        WorkerStatus workerStatus = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, null, "10.0.0.1", 8080, 8081,
-                null, null, 1, 2);
+        WorkerStatus workerStatus =
+                WorkerStatus.createDiscovered(RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, null, null, 1, 2, false);
 
         reporter.reportStatusCheckerSuccess(workerStatus, null, 3, 4);
 
@@ -612,8 +611,8 @@ class EngineHealthReporterTest {
         WorkerStatus encoder = workerStatus("10.0.0.4", RoleType.ENCODER, 800L, 1000L,
                 CacheStatus.builder().blockSize(32).build());
         when(workerDirectory.getWorkerStatuses(RoleType.PREFILL, null))
-                .thenReturn(List.of(WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "10.0.0.5", 8080, 8081, "test-site"), prefill, prefill));
+                .thenReturn(List.of(WorkerStatus.createDiscovered(RoleType.PREFILL, null, "10.0.0.5", 8080, 8081,
+                        "test-site", null, 0, 1, false), prefill, prefill));
         when(workerDirectory.getWorkerStatuses(RoleType.DECODE, null)).thenReturn(List.of(decode));
         when(workerDirectory.getWorkerStatuses(RoleType.PDFUSION, null)).thenReturn(List.of(fusion));
         when(workerDirectory.getWorkerStatuses(RoleType.ENCODER, null)).thenReturn(List.of(encoder));
@@ -660,12 +659,10 @@ class EngineHealthReporterTest {
 
     @Test
     void shouldSkipWorkerBlockSizeBeforeStatusIsAvailable() {
-        when(workerDirectory.getWorkerStatuses(RoleType.PREFILL, null))
-                .thenReturn(List.of(WorkerStatus.createDiscovered(
-                        RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, "test-site")));
-        when(workerDirectory.getWorkerStatuses(RoleType.DECODE, null))
-                .thenReturn(List.of(WorkerStatus.createDiscovered(
-                        RoleType.DECODE, null, "10.0.0.2", 8080, 8081, "test-site")));
+        when(workerDirectory.getWorkerStatuses(RoleType.PREFILL, null)).thenReturn(List.of(WorkerStatus
+                .createDiscovered(RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, "test-site", null, 0, 1, false)));
+        when(workerDirectory.getWorkerStatuses(RoleType.DECODE, null)).thenReturn(List.of(WorkerStatus
+                .createDiscovered(RoleType.DECODE, null, "10.0.0.2", 8080, 8081, "test-site", null, 0, 1, false)));
 
         org.springframework.test.util.ReflectionTestUtils.invokeMethod(reporter, "reportWorkerBlockSizes");
 
@@ -871,8 +868,8 @@ class EngineHealthReporterTest {
     @ParameterizedTest
     @ValueSource(ints = {1, 2})
     void comparisonUsesObservedWorkersMetricIdentity(int multiEngineNum) {
-        WorkerStatus worker = WorkerStatus.createDiscovered(RoleType.PREFILL, "test-group", "10.0.0.1",
-                8080, 8081, "test-site", null, 0, multiEngineNum);
+        WorkerStatus worker = WorkerStatus.createDiscovered(RoleType.PREFILL, "test-group", "10.0.0.1", 8080, 8081,
+                "test-site", null, 0, multiEngineNum, false);
         CacheHitComparisonResult comparison = new CacheHitComparisonResult(
                 "cache_hit_comparison", "request-1", "KVCM", "PREFILL", "test-group",
                 worker.getWorkerIdentity(), "running", 200, 120, null, null, null, null);
@@ -925,8 +922,8 @@ class EngineHealthReporterTest {
                                       CacheStatus cacheStatus,
                                       long runningQueryLen,
                                       long waitingQueryLen) {
-        WorkerStatus workerStatus = WorkerStatus.createDiscovered(
-                role, null, ip, 8080, 8081, "test-site");
+        WorkerStatus workerStatus =
+                WorkerStatus.createDiscovered(role, null, ip, 8080, 8081, "test-site", null, 0, 1, false);
         WorkerStatusPB.Builder response = WorkerStatusPBs.status(role)
                 .setBlockSize(cacheStatus == null ? 0L : cacheStatus.getBlockSize())
                 .setAlive(true)

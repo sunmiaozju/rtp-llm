@@ -516,9 +516,8 @@ class HttpMockCancelIntegrationTest {
     }
 
     private static DecodeEndpoint endpoint(int grpcPort) {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                RoleType.DECODE, "test", "127.0.0.1",
-                grpcPort - 2, grpcPort, null);
+        WorkerStatus status = WorkerStatus.createDiscovered(RoleType.DECODE, "test", "127.0.0.1", grpcPort - 2,
+                grpcPort, null, null, 0, 1, false);
         EndpointEventHandler events = mock(EndpointEventHandler.class);
         return new DecodeEndpoint(status, events);
     }
