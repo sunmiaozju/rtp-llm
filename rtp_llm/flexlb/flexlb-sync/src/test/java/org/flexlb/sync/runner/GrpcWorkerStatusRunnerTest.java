@@ -2,6 +2,7 @@ package org.flexlb.sync.runner;
 
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
+import org.flexlb.balance.scheduler.SchedulingTestConfig;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.config.ConfigService;
 import org.flexlb.dao.master.WorkerStatus;
@@ -14,8 +15,11 @@ import org.flexlb.sync.status.WorkerDirectory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -254,6 +258,193 @@ class GrpcWorkerStatusRunnerTest {
         WorkerStatus.PollLease nextPoll = status.tryBeginStatusPoll();
         assertNotNull(nextPoll, "the asynchronous owner must close the exact poll lease");
         nextPoll.close();
+    }
+
+    @Test
+    void pp0RoutingWaitsForThePodToConfirmItselfAndRetiresItWhenUnhealthy() {
+        WorkerDirectory directory = prefillDirectory();
+        WorkerStatus status = discoverPrefill(directory, "192.0.2.10", true);
+        String address = status.getLogicalIpPort();
+        WorkerStatus.AppliedStatusCursor initialCursor = status.appliedStatusCursor();
+
+        for (String pp0Ip : java.util.List.of("", "192.0.2.11", "192.0.2.10:8081")) {
+            poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, true, 20L, pp0Ip)));
+            assertNull(directory.findEndpoint(RoleType.PREFILL, address));
+            assertEquals(initialCursor, status.appliedStatusCursor());
+        }
+
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, true, 1L, status.getIp())));
+
+        assertNotNull(directory.findEndpoint(RoleType.PREFILL, address));
+        assertEquals(1L, status.appliedStatusCursor().statusVersion());
+
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, false, 2L, status.getIp())));
+
+        assertNull(directory.findEndpoint(RoleType.PREFILL, address));
+    }
+
+    @Test
+    void followerStatusAndRpcFailureKeepTheHeadRoutable() {
+        WorkerDirectory directory = prefillDirectory();
+        WorkerStatus head = discoverPrefill(directory, "192.0.2.20", true);
+        WorkerStatus follower = discoverPrefill(directory, "192.0.2.21", true);
+        WorkerStatus.AppliedStatusCursor followerCursor = follower.appliedStatusCursor();
+        poll(directory, head, CompletableFuture.completedFuture(pp0Response(head, true, 1L, head.getIp())));
+        WorkerEndpoint headEndpoint = directory.findEndpoint(RoleType.PREFILL, head.getLogicalIpPort());
+        assertNotNull(headEndpoint);
+
+        poll(directory, follower, CompletableFuture.completedFuture(pp0Response(follower, true, 20L, head.getIp())));
+        assertEquals(followerCursor, follower.appliedStatusCursor());
+        assertNull(directory.findEndpoint(RoleType.PREFILL, follower.getLogicalIpPort()));
+        assertEquals(java.util.List.of(head),
+                java.util.List.copyOf(directory.getWorkerStatuses(RoleType.PREFILL, null)));
+
+        poll(directory, follower, CompletableFuture.failedFuture(io.grpc.Status.UNAVAILABLE.asRuntimeException()));
+
+        assertSame(headEndpoint, directory.findEndpoint(RoleType.PREFILL, head.getLogicalIpPort()));
+        poll(directory, head, CompletableFuture.completedFuture(pp0Response(head, false, 2L, head.getIp())));
+        assertNull(directory.findEndpoint(RoleType.PREFILL, head.getLogicalIpPort()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 2, 3})
+    void failedPipelineStopsRoutingToItsPp0WhenHeadReportsUnhealthy(int failedStage) {
+        ConfigService config = mock(ConfigService.class);
+        when(config.loadBalanceConfig()).thenReturn(SchedulingTestConfig.newConfig());
+        EndpointRegistry registry = RunnerTestSupport.endpointRegistry(config);
+        try {
+            WorkerDirectory directory = new WorkerDirectory(registry);
+            int firstHost = 50 + failedStage * 10;
+            WorkerStatus affectedHead = discoverPrefill(directory, "192.0.2." + firstHost, true);
+            List<WorkerStatus> followers = List.of(discoverPrefill(directory, "192.0.2." + (firstHost + 1), true),
+                    discoverPrefill(directory, "192.0.2." + (firstHost + 2), true),
+                    discoverPrefill(directory, "192.0.2." + (firstHost + 3), true));
+            WorkerStatus healthyHead = discoverPrefill(directory, "192.0.2." + (firstHost + 4), true);
+            poll(directory, affectedHead,
+                    CompletableFuture.completedFuture(pp0Response(affectedHead, true, 1L, affectedHead.getIp())));
+            for (WorkerStatus follower : followers) {
+                poll(directory, follower,
+                        CompletableFuture.completedFuture(pp0Response(follower, true, 1L, affectedHead.getIp())));
+            }
+            var healthyStatus = pp0Response(healthyHead, true, 1L, healthyHead.getIp()).toBuilder()
+                    .setDpMasterAddress(healthyHead.getIp())
+                    .build();
+            poll(directory, healthyHead, CompletableFuture.completedFuture(healthyStatus));
+            assertEquals(Set.of(affectedHead.getLogicalIpPort(), healthyHead.getLogicalIpPort()),
+                    Set.copyOf(directory.getPrefillCandidates(RoleType.PREFILL)
+                            .stream()
+                            .map(EndpointRegistry.PrefillRoutingEntry::address)
+                            .toList()));
+
+            poll(directory, followers.get(failedStage - 1),
+                    CompletableFuture.failedFuture(io.grpc.Status.UNAVAILABLE.asRuntimeException()));
+            poll(directory, affectedHead,
+                    CompletableFuture.completedFuture(pp0Response(affectedHead, false, 2L, affectedHead.getIp())));
+
+            assertEquals(List.of(healthyHead.getLogicalIpPort()),
+                    directory.getPrefillCandidates(RoleType.PREFILL)
+                            .stream()
+                            .map(EndpointRegistry.PrefillRoutingEntry::address)
+                            .toList());
+            poll(directory, healthyHead, CompletableFuture
+                    .completedFuture(healthyStatus.toBuilder().setAlive(false).setStatusVersion(2L).build()));
+        } finally {
+            registry.close();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "192.0.2.32"})
+    void sameVersionKeepsConfirmedPp0AndStillChecksHealth(String reportedPp0Ip) {
+        WorkerDirectory directory = prefillDirectory();
+        WorkerStatus status = discoverPrefill(directory, "192.0.2.30", true);
+        String address = status.getLogicalIpPort();
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, true, 1L, status.getIp())));
+        WorkerEndpoint endpoint = directory.findEndpoint(RoleType.PREFILL, address);
+        assertNotNull(endpoint);
+
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, true, 1L, reportedPp0Ip)));
+
+        assertSame(endpoint, directory.findEndpoint(RoleType.PREFILL, address));
+
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, false, 1L, reportedPp0Ip)));
+
+        assertNull(directory.findEndpoint(RoleType.PREFILL, address));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", "192.0.2.32"})
+    void registeredPp0WithInvalidIdentityRetiresItsDpGroup(String reportedPp0Ip) {
+        ConfigService config = mock(ConfigService.class);
+        when(config.loadBalanceConfig()).thenReturn(SchedulingTestConfig.newConfig());
+        EndpointRegistry registry = RunnerTestSupport.endpointRegistry(config);
+        try {
+            WorkerDirectory directory = new WorkerDirectory(registry);
+            WorkerStatus firstRank = discoverPrefill(directory, "192.0.2.30", true);
+            WorkerStatus secondRank = discoverPrefill(directory, "192.0.2.31", true);
+            poll(directory, firstRank, CompletableFuture.completedFuture(
+                    pp0Response(firstRank, true, 1L, firstRank.getIp()).toBuilder().setDpSize(2).build()));
+            poll(directory, secondRank,
+                    CompletableFuture.completedFuture(pp0Response(secondRank, true, 1L, secondRank.getIp()).toBuilder()
+                            .setDpSize(2)
+                            .setDpRank(1)
+                            .build()));
+            assertNotNull(directory.findEndpoint(RoleType.PREFILL, firstRank.getLogicalIpPort()));
+            assertNotNull(directory.findEndpoint(RoleType.PREFILL, secondRank.getLogicalIpPort()));
+
+            poll(directory, firstRank, CompletableFuture
+                    .completedFuture(pp0Response(firstRank, true, 2L, reportedPp0Ip).toBuilder().setDpSize(2).build()));
+
+            assertNull(directory.findEndpoint(RoleType.PREFILL, firstRank.getLogicalIpPort()));
+            assertNull(directory.findEndpoint(RoleType.PREFILL, secondRank.getLogicalIpPort()));
+        } finally {
+            registry.close();
+        }
+    }
+
+    @Test
+    void disabledPp0RoutingAcceptsLegacyStatusWithoutPp0Identity() {
+        WorkerDirectory directory = prefillDirectory();
+        WorkerStatus status = discoverPrefill(directory, "192.0.2.40", false);
+
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, true, 1L, "")));
+
+        assertNotNull(directory.findEndpoint(RoleType.PREFILL, status.getLogicalIpPort()));
+        poll(directory, status, CompletableFuture.completedFuture(pp0Response(status, false, 2L, "")));
+    }
+
+    private static WorkerDirectory prefillDirectory() {
+        ConfigService config = mock(ConfigService.class);
+        when(config.loadBalanceConfig()).thenReturn(SchedulingTestConfig.newConfig());
+        return new WorkerDirectory(RunnerTestSupport.endpointRegistry(config));
+    }
+
+    private static WorkerStatus discoverPrefill(WorkerDirectory directory, String ip, boolean pp0RoutingEnabled) {
+        WorkerStatus status = WorkerStatus.createDiscovered(RoleType.PREFILL, null, ip, 8080, 8081, "test-site", null,
+                0, 1, pp0RoutingEnabled);
+        return directory.currentOrDiscover(RoleType.PREFILL, status.getLogicalIpPort(), () -> status);
+    }
+
+    private static EngineRpcService.WorkerStatusPB pp0Response(WorkerStatus status,
+                                                               boolean alive,
+                                                               long version,
+                                                               String pp0Ip) {
+        return RunnerTestSupport.response(status, alive, version)
+                .setDpSize(1)
+                .setDpMasterAddress("192.0.2.1")
+                .setLatestFinishedVersion(version)
+                .setPp0Ip(pp0Ip)
+                .build();
+    }
+
+    private static void poll(WorkerDirectory directory,
+                             WorkerStatus status,
+                             CompletableFuture<EngineRpcService.WorkerStatusPB> response) {
+        EngineGrpcService grpc = mock(EngineGrpcService.class);
+        when(grpc.getWorkerStatusAsync(anyString(), anyInt(), anyLong(), anyLong(), any())).thenReturn(response);
+        new GrpcWorkerStatusRunner(status.getLogicalIpPort(), status.getGrpcPort(), "test-site", status.getRole(),
+                status.getGroup(), status, status.tryBeginStatusPoll(), directory, mock(EngineHealthReporter.class),
+                grpc, 5000L, mock(CacheAwareService.class), Runnable::run, () -> 1).run();
     }
 
     private static WorkerDirectory directory(

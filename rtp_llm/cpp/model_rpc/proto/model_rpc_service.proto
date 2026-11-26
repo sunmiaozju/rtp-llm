@@ -714,6 +714,8 @@ message WorkerStatusPB {
     int32 cache_match_rollback_blocks = 26;
     WorkerStepMetricsPB last_step_metrics = 27;
     string dp_master_address = 28;
+    // Service discovery IP of pipeline stage 0, without a port.
+    string pp0_ip = 29;
 }
 
 message EmbeddingInputPB {

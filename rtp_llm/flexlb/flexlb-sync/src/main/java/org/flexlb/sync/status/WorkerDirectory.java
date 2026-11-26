@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -58,15 +59,17 @@ public final class WorkerDirectory implements WorkerStatusProvider {
             return List.of();
         }
         Collection<WorkerStatus> statuses = getStatusBy(role).values();
-        if (group == null) {
-            return statuses;
-        }
+        Predicate<WorkerStatus> visible =
+                status -> !status.isPp0RoutingEnabled() || getEndpoint(role, status.getLogicalIpPort(), status) != null;
         return statuses.stream()
-                .filter(status -> group.equals(status.getGroup()))
+                .filter(visible)
+                .filter(status -> group == null || group.equals(status.getGroup()))
                 .toList();
     }
 
-    /** Identity check used by asynchronous callbacks under the status lock. */
+    /**
+     * Identity check used by asynchronous callbacks under the status lock.
+     */
     public boolean isCurrentStatus(
             RoleType role, String address, WorkerStatus expected) {
         return expected != null && role != null && address != null
@@ -102,17 +105,23 @@ public final class WorkerDirectory implements WorkerStatusProvider {
         return total;
     }
 
-    /** Capacity means currently published routing capacity, not discovery. */
+    /**
+     * Capacity means currently published routing capacity, not discovery.
+     */
     public int routingCapacity(RoleType role) {
         return role == null ? 0 : endpointRegistry.getEndpointCount(role);
     }
 
-    /** Exact endpoint for a discovered generation, or {@code null}. */
+    /**
+     * Exact endpoint for a discovered generation, or {@code null}.
+     */
     public WorkerEndpoint getEndpoint(RoleType role, String address, WorkerStatus workerStatus) {
         return endpointRegistry.get(role, address, workerStatus);
     }
 
-    /** Publish the first endpoint for one exact discovered generation. */
+    /**
+     * Publish the first endpoint for one exact discovered generation.
+     */
     public EndpointRegistry.EndpointPublication publishPreparedEndpoint(
             String address,
             WorkerStatus status,
@@ -258,6 +267,7 @@ public final class WorkerDirectory implements WorkerStatusProvider {
     public Collection<String> endpointAddressView(RoleType role) {
         return endpointRegistry.endpointAddressView(role);
     }
+
     /**
      * Prefill candidates whose reported DP group has every rank available for routing.
      * The winning address must still be held and identity-checked.

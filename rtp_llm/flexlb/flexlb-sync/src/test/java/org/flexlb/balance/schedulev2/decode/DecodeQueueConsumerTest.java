@@ -92,11 +92,12 @@ class DecodeQueueConsumerTest {
     private final PlacementAvailability availability = new PlacementAvailability();
     private final EndpointEventHandler endpointEvents = new EndpointEventHandler(mock(RequestRegistry.class),
             mock(org.flexlb.balance.schedulev2.prefill.PrefillQueueRegistry.class), configService, reporter);
-    private final DecodeEndpoint decode =
-            spy(new DecodeEndpoint(WorkerStatus.createDiscovered(RoleType.DECODE, "g", "127.0.0.2", 8080, 8081, "test"),
-                    endpointEvents));
+    private final DecodeEndpoint decode = spy(new DecodeEndpoint(
+            WorkerStatus.createDiscovered(RoleType.DECODE, "g", "127.0.0.2", 8080, 8081, "test", null, 0, 1, false),
+            endpointEvents));
     private final DecodeEndpoint otherDecode = new DecodeEndpoint(
-            WorkerStatus.createDiscovered(RoleType.DECODE, "g", "127.0.0.3", 8080, 8081, "test"), endpointEvents);
+            WorkerStatus.createDiscovered(RoleType.DECODE, "g", "127.0.0.3", 8080, 8081, "test", null, 0, 1, false),
+            endpointEvents);
     private final List<Request> requests = new ArrayList<>();
     private DecodeQueueConsumerPoll pool;
 

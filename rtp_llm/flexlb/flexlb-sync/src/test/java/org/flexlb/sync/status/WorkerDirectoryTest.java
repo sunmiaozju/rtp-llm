@@ -80,12 +80,10 @@ class WorkerDirectoryTest {
 
     @Test
     void storesSiblingEnginesUnderTheirDistinctLogicalAddresses() {
-        WorkerStatus first = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081,
-                "site", null, 0, 2);
-        WorkerStatus second = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081,
-                "site", null, 1, 2);
+        WorkerStatus first = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081, "site",
+                null, 0, 2, false);
+        WorkerStatus second = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081, "site",
+                null, 1, 2, false);
 
         workerDirectory.currentOrDiscover(
                 RoleType.PREFILL, first.getLogicalIpPort(), () -> first);
@@ -101,12 +99,10 @@ class WorkerDirectoryTest {
 
     @Test
     void keepsPublishedLogicalEngineWhenSiblingIsNotPublished() {
-        WorkerStatus first = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081,
-                "site", null, 0, 2);
-        WorkerStatus second = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081,
-                "site", null, 1, 2);
+        WorkerStatus first = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081, "site",
+                null, 0, 2, false);
+        WorkerStatus second = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "127.0.0.1", 8080, 8081, "site",
+                null, 1, 2, false);
         discover(first);
         discover(second);
         RunnerTestSupport.publishEndpoint(registry,
@@ -464,15 +460,15 @@ class WorkerDirectoryTest {
     }
 
     @Test
-    void worker_status_provider_without_group_returns_live_view() {
+    void worker_status_provider_without_group_returns_fresh_snapshot_on_each_call() {
         var statuses = workerDirectory.getWorkerStatuses(RoleType.VIT, null);
         assertTrue(statuses.isEmpty());
 
         WorkerStatus status = status(RoleType.VIT, "group", 8080);
         discover(status);
 
-        assertEquals(1, statuses.size());
-        assertTrue(statuses.contains(status));
+        assertTrue(statuses.isEmpty());
+        assertEquals(List.of(status), workerDirectory.getWorkerStatuses(RoleType.VIT, null));
     }
 
     @Test

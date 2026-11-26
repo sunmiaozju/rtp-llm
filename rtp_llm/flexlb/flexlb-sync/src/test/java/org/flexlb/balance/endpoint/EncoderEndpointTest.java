@@ -31,7 +31,7 @@ class EncoderEndpointTest {
     }
 
     private static EncoderEndpoint endpoint(EndpointEventHandler events) {
-        return new EncoderEndpoint(WorkerStatus.createDiscovered(
-                RoleType.ENCODER, "default", "127.0.0.1", 8001, 8002, ""), events);
+        return new EncoderEndpoint(WorkerStatus.createDiscovered(RoleType.ENCODER, "default", "127.0.0.1", 8001, 8002,
+                "", null, 0, 1, false), events);
     }
 }

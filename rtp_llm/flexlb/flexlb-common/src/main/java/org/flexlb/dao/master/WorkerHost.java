@@ -35,6 +35,7 @@ public class WorkerHost {
     private final int engineIndex;
     /** Expected number of logical engines for this physical frontend. */
     private final int multiEngineNum;
+    private final boolean pp0RoutingEnabled;
     @Getter(AccessLevel.NONE)
     private final WorkerIdentity workerIdentity;
     /**
@@ -73,9 +74,31 @@ public class WorkerHost {
                 site, group, deploymentName, 0, 1);
     }
 
-    public WorkerHost(String ip, int httpPort, int grpcPort, int httpServerPort, int workerStatusPort,
-                      String site, String group, String deploymentName,
-                      int engineIndex, int multiEngineNum) {
+    public WorkerHost(String ip,
+                      int httpPort,
+                      int grpcPort,
+                      int httpServerPort,
+                      int workerStatusPort,
+                      String site,
+                      String group,
+                      String deploymentName,
+                      int engineIndex,
+                      int multiEngineNum) {
+        this(ip, httpPort, grpcPort, httpServerPort, workerStatusPort, site, group, deploymentName, engineIndex,
+                multiEngineNum, false);
+    }
+
+    public WorkerHost(String ip,
+                      int httpPort,
+                      int grpcPort,
+                      int httpServerPort,
+                      int workerStatusPort,
+                      String site,
+                      String group,
+                      String deploymentName,
+                      int engineIndex,
+                      int multiEngineNum,
+                      boolean pp0RoutingEnabled) {
         this.ip = ip;
         this.httpPort = httpPort;
         this.grpcPort = grpcPort;
@@ -83,6 +106,7 @@ public class WorkerHost {
         this.workerStatusPort = workerStatusPort;
         this.engineIndex = engineIndex;
         this.multiEngineNum = multiEngineNum;
+        this.pp0RoutingEnabled = pp0RoutingEnabled;
         this.workerIdentity = new WorkerIdentity(ip, httpPort, engineIndex);
         this.site = site != null ? site : "";
         this.group = group != null ? group : "";

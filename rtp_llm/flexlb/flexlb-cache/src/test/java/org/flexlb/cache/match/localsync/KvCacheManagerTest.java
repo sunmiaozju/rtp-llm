@@ -235,9 +235,8 @@ class KvCacheManagerTest {
     }
 
     private static WorkerStatus workerStatus(int engineIndex, int multiEngineNum) {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "rtp", "10.0.0.1", 8080, 9090,
-                "test-site", "rtp-deploy", engineIndex, multiEngineNum);
+        return WorkerStatus.createDiscovered(RoleType.PREFILL, "rtp", "10.0.0.1", 8080, 9090, "test-site", "rtp-deploy",
+                engineIndex, multiEngineNum, false);
     }
 
     private KvCacheManager kvCacheManagerWithRealIndexes() {

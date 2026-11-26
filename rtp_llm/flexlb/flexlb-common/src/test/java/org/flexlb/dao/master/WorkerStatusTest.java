@@ -35,16 +35,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WorkerStatusTest {
 
     private static WorkerStatus discovered() {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090, "site-a");
+        return WorkerStatus.createDiscovered(RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090, "site-a", null, 0, 1,
+                false);
     }
 
     @Test
     @DisplayName("Discovery identity keeps a physical transport address and logical engine key")
     void discoveredWorkerSeparatesPhysicalAndLogicalIdentity() {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090,
-                "site-a", "deployment-a", 1, 2);
+        WorkerStatus status = WorkerStatus.createDiscovered(RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090,
+                "site-a", "deployment-a", 1, 2, false);
 
         assertEquals("10.0.0.1:8080", status.getIpPort());
         assertEquals("10.0.0.1:8080", status.getPhysicalIpPort());
@@ -57,9 +56,8 @@ class WorkerStatusTest {
     @Test
     @DisplayName("Single-engine workers retain their physical metric identity")
     void singleEngineWorkerUsesPhysicalMetricIdentity() {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090,
-                "site-a", "deployment-a", 0, 1);
+        WorkerStatus status = WorkerStatus.createDiscovered(RoleType.PREFILL, "group-a", "10.0.0.1", 8080, 9090,
+                "site-a", "deployment-a", 0, 1, false);
 
         assertEquals("10.0.0.1:8080", status.getMetricIpPort());
     }

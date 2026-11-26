@@ -11,8 +11,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RoutingServiceDiscoveryTest {
 
@@ -71,6 +73,21 @@ class RoutingServiceDiscoveryTest {
         assertEquals(1, normalizedHost.getMultiEngineNum());
         assertEquals("10.0.0.1:8080", normalizedHost.getPhysicalIpPort());
         assertEquals("10.0.0.1:8080@0", normalizedHost.getLogicalIpPort());
+        assertFalse(normalizedHost.isPp0RoutingEnabled());
+    }
+
+    @Test
+    void carriesPp0RoutingModeFromEndpointToDiscoveredPods() {
+        RecordingProvider provider =
+                new RecordingProvider(List.of(WorkerHost.of("10.0.0.1", 8081), WorkerHost.of("10.0.0.2", 8081)));
+        RoutingServiceDiscovery discovery = new RoutingServiceDiscovery(List.of(provider));
+        Endpoint endpoint = endpoint();
+        endpoint.setPp0RoutingEnabled(true);
+
+        List<WorkerHost> hosts = discovery.getHosts(endpoint);
+
+        assertEquals(2, hosts.size());
+        assertTrue(hosts.stream().allMatch(WorkerHost::isPp0RoutingEnabled));
     }
 
     @Test
