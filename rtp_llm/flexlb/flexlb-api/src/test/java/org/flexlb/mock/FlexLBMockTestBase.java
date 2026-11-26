@@ -547,8 +547,8 @@ public abstract class FlexLBMockTestBase {
                                            long dpRank,
                                            long availableKv,
                                            long totalKv) {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                role, "test-group", ip, httpPort, grpcPort, null);
+        WorkerStatus status =
+                WorkerStatus.createDiscovered(role, "test-group", ip, httpPort, grpcPort, null, null, 0, 1, false);
         WorkerStatusPB.Builder initial = workerStatusResponse(role, dpRank, availableKv, totalKv, 1L);
         status.lock.lock();
         try {

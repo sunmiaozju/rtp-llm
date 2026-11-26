@@ -21,15 +21,14 @@ public final class WorkerStatusTestSupport {
         return workerStatus(ip, port, role, alive, cacheStatus, 0);
     }
 
-    public static WorkerStatus workerStatus(
-            String ip,
-            int port,
-            RoleType role,
-            boolean alive,
-            CacheStatus cacheStatus,
-            int cacheMatchRollbackBlocks) {
-        WorkerStatus workerStatus = WorkerStatus.createDiscovered(
-                role, "default", ip, port, port + 1, "");
+    public static WorkerStatus workerStatus(String ip,
+                                            int port,
+                                            RoleType role,
+                                            boolean alive,
+                                            CacheStatus cacheStatus,
+                                            int cacheMatchRollbackBlocks) {
+        WorkerStatus workerStatus =
+                WorkerStatus.createDiscovered(role, "default", ip, port, port + 1, "", null, 0, 1, false);
         publishObservation(workerStatus, role, alive, cacheMatchRollbackBlocks);
         if (cacheStatus != null) {
             workerStatus.lock.lock();

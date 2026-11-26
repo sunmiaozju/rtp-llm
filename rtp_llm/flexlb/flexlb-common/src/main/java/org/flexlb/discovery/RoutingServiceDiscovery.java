@@ -105,9 +105,7 @@ public class RoutingServiceDiscovery implements ServiceDiscovery {
         }
     }
 
-    private List<WorkerHost> normalizeHosts(
-            List<WorkerHost> discoveredHosts,
-            Endpoint endpoint) {
+    private List<WorkerHost> normalizeHosts(List<WorkerHost> discoveredHosts, Endpoint endpoint) {
         if (discoveredHosts == null || discoveredHosts.isEmpty()) {
             return List.of();
         }
@@ -129,17 +127,9 @@ public class RoutingServiceDiscovery implements ServiceDiscovery {
             requireValidPort(workerStatusBasePort, "workerStatusPort");
             requireValidPort((long) workerStatusBasePort + multiEngineNum - 1, "lastWorkerStatusPort");
             for (int engineIndex = 0; engineIndex < multiEngineNum; engineIndex++) {
-                normalizedHosts.add(new WorkerHost(
-                        host.getIp(),
-                        httpPort,
-                        grpcPort,
-                        httpPort + 5,
-                        workerStatusBasePort + engineIndex,
-                        host.getSite(),
-                        endpoint.getGroup(),
-                        host.getDeploymentName(),
-                        engineIndex,
-                        multiEngineNum));
+                normalizedHosts.add(new WorkerHost(host.getIp(), httpPort, grpcPort, httpPort + 5,
+                        workerStatusBasePort + engineIndex, host.getSite(), endpoint.getGroup(),
+                        host.getDeploymentName(), engineIndex, multiEngineNum, endpoint.isPp0RoutingEnabled()));
             }
         }
         return normalizedHosts;

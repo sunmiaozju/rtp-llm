@@ -174,15 +174,9 @@ class WorkerStatusResponseTest {
         assertEquals(8429L, converted.errorCode());
     }
 
-    private static StatusObservation convert(
-            EngineRpcService.WorkerStatusPB response) {
-        WorkerStatus owner = WorkerStatus.createDiscovered(
-                RoleType.PREFILL,
-                "test-group",
-                "127.0.0.1",
-                8080,
-                8081,
-                "test-site");
+    private static StatusObservation convert(EngineRpcService.WorkerStatusPB response) {
+        WorkerStatus owner = WorkerStatus.createDiscovered(RoleType.PREFILL, "test-group", "127.0.0.1", 8080, 8081,
+                "test-site", null, 0, 1, false);
         return EngineStatusConverter.convertToStatusObservation(
                 owner, response);
     }

@@ -49,8 +49,7 @@ class WorkerStatusPollLeaseTest {
     }
 
     private static WorkerStatus workerStatus() {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, null, "127.0.0.1",
-                8080, 8081, "test-site");
+        return WorkerStatus.createDiscovered(RoleType.PREFILL, null, "127.0.0.1", 8080, 8081, "test-site", null, 0, 1,
+                false);
     }
 }

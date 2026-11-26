@@ -81,14 +81,8 @@ class KvcmWorkerMetadataResolverTest {
     }
 
     private WorkerStatus workerStatus(String deploymentName, KvCacheGroupMode mode) {
-        WorkerStatus workerStatus = WorkerStatus.createDiscovered(
-                RoleType.PREFILL,
-                "default",
-                "127.0.0.1",
-                8080,
-                8081,
-                "test",
-                deploymentName);
+        WorkerStatus workerStatus = WorkerStatus.createDiscovered(RoleType.PREFILL, "default", "127.0.0.1", 8080, 8081,
+                "test", deploymentName, 0, 1, false);
         publishMode(workerStatus, mode, 1L);
         return workerStatus;
     }

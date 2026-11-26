@@ -602,7 +602,8 @@ class PrefillQueueTest {
         useFormula("100 + sum(computeTokens) + 2*sum(hitCacheTokens)");
         Request request = V2TestSupport.request(config, "wire-progress", 50, 1000L);
         V2TestSupport.dispatch(queue, new DispatchedRequest(request, 900L, configService));
-        var owner = WorkerStatus.createDiscovered(RoleType.PREFILL, "default", "p1", 8000, 8001, "test");
+        var owner =
+                WorkerStatus.createDiscovered(RoleType.PREFILL, "default", "p1", 8000, 8001, "test", null, 0, 1, false);
         var queues = mock(PrefillQueueRegistry.class);
         when(queues.find(endpoint)).thenReturn(queue);
         var events = new EndpointEventHandler(mock(RequestRegistry.class), queues, configService, reporter);

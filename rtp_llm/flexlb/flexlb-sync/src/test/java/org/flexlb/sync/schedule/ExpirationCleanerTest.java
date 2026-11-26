@@ -130,7 +130,7 @@ class ExpirationCleanerTest {
     }
 
     private static WorkerStatus status(String ip, int port) {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL, null, ip, port, port + 1, "test-site");
+        return WorkerStatus.createDiscovered(RoleType.PREFILL, null, ip, port, port + 1, "test-site", null, 0, 1,
+                false);
     }
 }

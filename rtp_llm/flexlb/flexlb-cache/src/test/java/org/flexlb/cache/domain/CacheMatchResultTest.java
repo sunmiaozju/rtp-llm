@@ -131,15 +131,7 @@ class CacheMatchResultTest {
     }
 
     private static WorkerStatus worker(String ip, int port, int engineIndex, int multiEngineNum) {
-        return WorkerStatus.createDiscovered(
-                RoleType.PREFILL,
-                "default",
-                ip,
-                port,
-                port + 1,
-                "",
-                null,
-                engineIndex,
-                multiEngineNum);
+        return WorkerStatus.createDiscovered(RoleType.PREFILL, "default", ip, port, port + 1, "", null, engineIndex,
+                multiEngineNum, false);
     }
 }

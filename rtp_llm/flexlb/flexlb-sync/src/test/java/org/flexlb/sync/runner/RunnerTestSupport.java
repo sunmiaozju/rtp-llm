@@ -33,15 +33,8 @@ public final class RunnerTestSupport {
                 org.mockito.Mockito.mock(org.flexlb.service.monitor.RequestSchedulerReporter.class));
     }
 
-    public static WorkerStatus discovered(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site) {
-        return WorkerStatus.createDiscovered(
-                role, group, ip, port, grpcPort, site);
+    public static WorkerStatus discovered(RoleType role, String group, String ip, int port, int grpcPort, String site) {
+        return WorkerStatus.createDiscovered(role, group, ip, port, grpcPort, site, null, 0, 1, false);
     }
 
     public static WorkerStatus alive(
@@ -88,7 +81,13 @@ public final class RunnerTestSupport {
                                                  RoleType role,
                                                  String address,
                                                  WorkerStatus status) {
-        WorkerStatusPB.Builder response = response(status, true, 1L);
+        return publishEndpoint(registry, address, status, response(status, true, 1L));
+    }
+
+    static WorkerEndpoint publishEndpoint(EndpointRegistry registry,
+                                          String address,
+                                          WorkerStatus status,
+                                          WorkerStatusPB.Builder response) {
         status.lock.lock();
         try {
             WorkerStatus.PreparedStatus prepared =

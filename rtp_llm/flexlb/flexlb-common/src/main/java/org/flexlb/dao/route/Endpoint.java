@@ -28,6 +28,15 @@ public class Endpoint {
     private Integer workerStatusPort;
 
     /**
+     * Enables PP0-only routing when service discovery returns all pipeline stages.
+     * FlexLB polls every discovered Pod and routes only to healthy workers whose reported
+     * {@code pp0_ip} matches their own discovered IP. Defaults to {@code false}.
+     * Changes take effect after restarting FlexLB.
+     */
+    @JsonProperty("pp0_routing_enabled")
+    private boolean pp0RoutingEnabled;
+
+    /**
      * Number of engine processes sharing this physical endpoint (DS_LLM_MULTI_ENGINE_NUM).
      * Service discovery expands one endpoint into this many logical workers, each identified
      * by an engine index in {@code [0, multiEngineNum)} and its own worker status port.

@@ -49,8 +49,8 @@ class TheoryCacheKeyHistoryTest {
         when(provider.getWorkerStatuses(RoleType.PREFILL, null)).thenReturn(List.of());
         TheoryCacheKeyHistory window = new TheoryCacheKeyHistory(configService, provider);
         assertNull(window.record(List.of(11L)));
-        when(provider.getWorkerStatuses(RoleType.PREFILL, null)).thenReturn(List.of(
-                WorkerStatus.createDiscovered(RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, "test-site")));
+        when(provider.getWorkerStatuses(RoleType.PREFILL, null)).thenReturn(List.of(WorkerStatus
+                .createDiscovered(RoleType.PREFILL, null, "10.0.0.1", 8080, 8081, "test-site", null, 0, 1, false)));
         assertNull(window.record(List.of(11L)));
         WorkerStatusProvider ready = prefillCapacity(100L, 100L);
         var readyWorkers = ready.getWorkerStatuses(RoleType.PREFILL, null);

@@ -110,9 +110,8 @@ class DecodeSelectorTest {
 
     @Test
     void selectedDecodePreservesLogicalEngineIdentity() {
-        WorkerStatus worker = WorkerStatus.createDiscovered(
-                RoleType.DECODE, null, "127.0.0.1", 8080, 9090,
-                "test-site", "deployment", 1, 2);
+        WorkerStatus worker = WorkerStatus.createDiscovered(RoleType.DECODE, null, "127.0.0.1", 8080, 9090, "test-site",
+                "deployment", 1, 2, false);
         StrategyTestSupport.publish(worker, StrategyTestSupport.response(
                 RoleType.DECODE, true, 10_000L, 10_000L, 1L));
         decodeStatuses.put(worker.getLogicalIpPort(), worker);

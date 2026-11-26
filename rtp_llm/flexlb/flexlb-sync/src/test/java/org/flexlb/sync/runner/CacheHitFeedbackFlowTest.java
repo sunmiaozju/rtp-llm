@@ -341,8 +341,8 @@ class CacheHitFeedbackFlowTest {
 
     @Test
     void feedbackPreservesLogicalEngineIdentityAndExactCachePrediction() throws Exception {
-        WorkerStatus engine = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "10.0.0.1",
-                8080, 8081, "test", null, 1, 2);
+        WorkerStatus engine = WorkerStatus.createDiscovered(RoleType.PREFILL, "group", "10.0.0.1", 8080, 8081, "test",
+                null, 1, 2, false);
         CacheMatchResult matches = new CacheMatchResult(
                 Map.of("10.0.0.1:8080@0", new HostCacheMatch(5, 6), "10.0.0.1:8080@1", new HostCacheMatch(4, 6)),
                 CacheMatchSource.KVCM, 1, 100);

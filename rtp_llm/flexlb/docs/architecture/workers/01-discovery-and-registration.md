@@ -97,6 +97,21 @@ worker 作为独立节点按可用性规则选择。
 
 例如，两个 P 上报相同 `dp_master_address` 和 `dp_size=2`。即使 rank 0 已注册且健康，只要 rank 1 尚未注册，rank 0 也不参加缓存匹配。若第二个节点错误地也上报 rank 0，虽然节点数已达到 2，仍不算完整。等 rank 0、1 各出现一次后，两者才进入候选集，最终只为这次请求选其中一个 P。
 
+## TPU PP 全 Pod 发现
+
+PP 部署的缓存匹配使用 `KVCM` 或 `LOCAL_STANDBY`。`LOCAL_SYNC` 仅支持 `PP=1` 的部署。
+
+服务发现返回每组全部 PP Pod 时，可在对应 endpoint 启用 `pp0_routing_enabled`。
+FlexLB 对每个发现的 Pod 轮询 `GetWorkerStatus`。首次提交状态或 `status_version` 增大时，
+FlexLB 校验回包的 `pp0_ip` 是否等于被轮询的 Pod IP。只有校验通过且状态有效并为
+`alive=true`，该 Pod 才能注册调度入口并参与缓存匹配。TPU 确定 PP0 后，各 Pod 在新版本状态中
+返回同一个 PP0 裸 IP。同版本回包沿用已确认的 PP0 身份，仍按 `alive` 判断整条 pipeline 是否可用。
+
+PP0 是整组的调度入口。PP0 上报 `alive=false`、状态探测达到失败阈值，或已注册入口的
+新版本状态的 `pp0_ip` 校验失败时，FlexLB 关闭该 PP 组的入口。有 `dp_master_address` 时，同 role、同 DP
+master 的成员也按原有流程退役。发现列表缺少 PP0 时，FlexLB 等距上次成功轮询超过状态过期阈值
+后，再执行相同的退役流程。发现结果为空或查询异常时，继续探测最近一次非空快照中的 Pod。
+
 ## 跨机 TP：只有 TP rank 0 是调度入口
 
 TP（tensor parallelism，张量并行）把同一次模型计算分给多个 rank。跨机 TP 部署中，**服务发现只返回每个 TP 组的 TP rank 0 worker 地址**。这是部署暴露的业务入口，不是 FlexLB 先发现全部 rank，再根据 `tp_size` 挑出 rank 0。

@@ -38,24 +38,17 @@ public final class EndpointTestSupport {
         return events;
     }
 
-    public static WorkerStatus workerStatus(
-            RoleType role,
-            String ip,
-            int port,
-            int grpcPort) {
-        return WorkerStatus.createDiscovered(
-                role, null, ip, port, grpcPort, null);
+    public static WorkerStatus workerStatus(RoleType role, String ip, int port, int grpcPort) {
+        return WorkerStatus.createDiscovered(role, null, ip, port, grpcPort, null, null, 0, 1, false);
     }
 
-    public static WorkerStatus workerStatus(
-            RoleType role,
-            String group,
-            String ip,
-            int port,
-            int grpcPort,
-            String site) {
-        return WorkerStatus.createDiscovered(
-                role, group, ip, port, grpcPort, site);
+    public static WorkerStatus workerStatus(RoleType role,
+                                            String group,
+                                            String ip,
+                                            int port,
+                                            int grpcPort,
+                                            String site) {
+        return WorkerStatus.createDiscovered(role, group, ip, port, grpcPort, site, null, 0, 1, false);
     }
 
     static Runnable applyStatus(WorkerEndpoint endpoint, WorkerStatusPB.Builder response) {

@@ -1,10 +1,12 @@
 package org.flexlb.sync.runner;
 
+import com.google.common.net.InetAddresses;
 import org.flexlb.balance.endpoint.EndpointRegistry;
 import org.flexlb.balance.endpoint.WorkerEndpoint;
 import org.flexlb.cache.match.CacheAwareService;
 import org.flexlb.dao.master.WorkerStatus;
 import org.flexlb.dao.route.RoleType;
+import org.flexlb.engine.grpc.EngineRpcService;
 import org.flexlb.enums.BalanceStatusEnum;
 import org.flexlb.service.grpc.EngineGrpcService;
 import org.flexlb.service.grpc.EngineStatusConverter;
@@ -106,20 +108,12 @@ public class GrpcWorkerStatusRunner implements Runnable {
             long latestFinishedTaskVersion = workerStatus.appliedStatusCursor()
                     .latestFinishedTaskVersion();
 
-            engineGrpcService.getWorkerStatusAsync(
-                            ip, workerStatusPort, latestFinishedTaskVersion,
-                            syncRequestTimeoutMs, roleType)
-                    .thenApply(response -> EngineStatusConverter
-                            .convertToStatusObservation(workerStatus, response))
-                    .handleAsync((observation, failure) -> {
+            engineGrpcService
+                    .getWorkerStatusAsync(ip, workerStatusPort, latestFinishedTaskVersion, syncRequestTimeoutMs,
+                            roleType)
+                    .handleAsync((response, failure) -> {
                         try {
-                            Throwable cause = unwrapCompletionFailure(failure);
-                            if (cause != null) {
-                                handleException(cause, startTime);
-                                recordStatusCheckFailure(cause);
-                            } else {
-                                handleStatusResponse(observation, startTime);
-                            }
+                            handleStatusReply(response, unwrapCompletionFailure(failure), startTime);
                         } catch (Throwable callbackFailure) {
                             logger.error("Worker status callback failed for {}",
                                     ipPort, callbackFailure);
@@ -147,6 +141,62 @@ public class GrpcWorkerStatusRunner implements Runnable {
         return failure instanceof CompletionException
                 && failure.getCause() != null
                 ? failure.getCause() : failure;
+    }
+
+    private void handleStatusReply(EngineRpcService.WorkerStatusPB response, Throwable failure, long startTime) {
+        if (failure != null) {
+            handleException(failure, startTime);
+            recordStatusCheckFailure(failure);
+            return;
+        }
+        if (workerStatus.isPp0RoutingEnabled()
+                && response != null
+                && response.getStatusVersion() > workerStatus.appliedStatusCursor().statusVersion()
+                && !confirmsPp0(response.getPp0Ip())) {
+            handleUnconfirmedPp0();
+            return;
+        }
+        WorkerStatus.StatusObservation observation;
+        try {
+            observation = EngineStatusConverter.convertToStatusObservation(workerStatus, response);
+        } catch (Throwable conversionFailure) {
+            handleException(conversionFailure, startTime);
+            recordStatusCheckFailure(conversionFailure);
+            return;
+        }
+        handleStatusResponse(observation, startTime);
+    }
+
+    private boolean confirmsPp0(String pp0Ip) {
+        if (pp0Ip.isEmpty()) {
+            return false;
+        }
+        try {
+            return InetAddresses.forString(ip).equals(InetAddresses.forString(pp0Ip));
+        } catch (IllegalArgumentException malformedAddress) {
+            return false;
+        }
+    }
+
+    private void handleUnconfirmedPp0() {
+        EndpointRegistry.DetachedGeneration detached;
+        workerStatus.lock.lock();
+        try {
+            if (!workerDirectory.isCurrentStatus(roleType, ipPort, workerStatus)
+                    || !workerStatus.isActiveGeneration()) {
+                return;
+            }
+            if (workerDirectory.getEndpoint(roleType, ipPort, workerStatus) == null) {
+                // Keep probing this Pod without committing its engine status or cursor.
+                workerStatus.recordSuccessfulPoll(false);
+                return;
+            }
+            detached = workerDirectory.beginRetirement(roleType, ipPort, workerStatus);
+        } finally {
+            workerStatus.lock.unlock();
+        }
+        workerDirectory.completeRetirement(roleType, ipPort, workerStatus, detached, cacheAwareService, logger);
+        logger.info("Retired worker after PP0 identity check failed, role={}, worker={}", roleType, ipPort);
     }
 
     private void handleStatusResponse(WorkerStatus.StatusObservation observation, long startTime) {

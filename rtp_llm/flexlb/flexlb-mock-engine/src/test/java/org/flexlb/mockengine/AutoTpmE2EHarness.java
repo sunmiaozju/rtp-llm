@@ -173,8 +173,8 @@ final class AutoTpmE2EHarness implements AutoCloseable {
     }
 
     private WorkerStatus publishEndpoint(RoleType role, JavaMockEngineCluster.FastRpcService svc) {
-        WorkerStatus status = WorkerStatus.createDiscovered(
-                role, "g1", "127.0.0.1", httpPort(svc.getGrpcPort()), svc.getGrpcPort(), null);
+        WorkerStatus status = WorkerStatus.createDiscovered(role, "g1", "127.0.0.1", httpPort(svc.getGrpcPort()),
+                svc.getGrpcPort(), null, null, 0, 1, false);
         // Discovery and polling share the Engine's version sequence. A synthetic
         // version can collide with the first real response and hide completions.
         EngineRpcService.WorkerStatusPB initial = workerStatus(svc, 0L);

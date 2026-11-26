@@ -268,7 +268,7 @@ UniConfig / Nacos 的 v3 部分更新示例：
 - `cacheMatching`：默认 `KVCM`，要求 `MODEL_SERVICE_CONFIG.kvcm` 提供定位信息。
   支持 `LOCAL_SYNC` / `KVCM` / `LOCAL_STANDBY`；KVCM 和 LOCAL_STANDBY 共用查询、健康、远端命中
   （`medium` / `topKHostCount` / `backendTypes`）和 Local Standby 参数。
-  使用 Worker 本地同步缓存时显式设置 `cacheMatching.type=LOCAL_SYNC`。
+  `LOCAL_SYNC` 通过 Worker 的 `GetCacheStatus` 同步缓存索引，支持范围为 `PP=1` 的部署。
   仅按本机成功调度的历史匹配时，设置 `cacheMatching.type=LOCAL_STANDBY` 即可，可省略 `MODEL_SERVICE_CONFIG.kvcm`。
   Java 配置接口通过 `getType()` 提供模式；`isKvcmAndStandbyEnabled()` 对 KVCM 和 LOCAL_STANDBY
   返回 true，`getKvcmAndStandbyConfig()` 提供这两个模式共用的参数。
@@ -349,6 +349,7 @@ Nacos 监听更新通过 `ConfigService` 校验并发布到 `CacheMatchConfigura
 
 - `role_endpoints`；
 - endpoint 的 `address`、`protocol`、`path`、`worker_status_port`、`discovery`；
+- TPU PP 全 Pod 发现时，在对应 endpoint 设置 `"pp0_routing_enabled": true`，默认 `false`。修改后需重启 FlexLB；
 - discovery 定位字段：类型 `static-env`、`vipserver`、`dashscope`，以及可选
   `base_url` / `hosts`；
 - 可选 KVCM 定位字段 `address`、`namespace`、`port`、`discovery`；
